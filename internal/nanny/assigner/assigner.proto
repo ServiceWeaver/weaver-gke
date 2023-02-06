@@ -17,7 +17,7 @@ syntax = "proto3";
 option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner";
 
 package assigner;
-import "weaver/runtime/protos/runtime.proto";
+import "runtime/protos/runtime.proto";
 
 // AppVersionState contains state managed for an application version by
 // the assigner.

@@ -20,7 +20,7 @@ package distributor;
 import "google/protobuf/timestamp.proto";
 import "internal/config/config.proto";
 import "internal/nanny/nanny.proto";
-import "weaver/runtime/protos/runtime.proto";
+import "runtime/protos/runtime.proto";
 
 // AppState contains the state managed for an application by the distributor.
 message AppState {

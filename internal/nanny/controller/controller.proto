@@ -21,7 +21,7 @@ import "internal/config/config.proto";
 import "internal/nanny/nanny.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
-import "weaver/runtime/protos/runtime.proto";
+import "runtime/protos/runtime.proto";
 
 // RolloutRequest is a request to the controller to roll out a new application
 // version across a number of deploying locations.

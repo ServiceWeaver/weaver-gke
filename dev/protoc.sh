@@ -18,8 +18,8 @@
 
 # Find the go bin directory and add it to the PATH.
 gobin=$(go env GOBIN)
+gopath=$(go env GOPATH)
 if test -z $gobin; then
-  gopath=$(go env GOPATH)
   if test -z $gopath; then
     gopath="$HOME/go"
   fi
@@ -39,23 +39,20 @@ if test -z $gengo; then
   exit 1
 fi
 
-# Get the version for the github.com/ServiceWeaver/weaver module dependency.
+# Get the local module directory that stores protos for the
+# github.com/ServiceWeaver/weaver module.
 go mod download github.com/ServiceWeaver/weaver
-dep=$(go mod graph | grep "github.com/ServiceWeaver/weaver-gke github.com/ServiceWeaver/weaver@")
-if test -z "$dep"; then
+weaver_dep=$(go mod graph | grep "github.com/ServiceWeaver/weaver-gke github.com/ServiceWeaver/weaver@")
+if test -z "$weaver_dep"; then
   printf "Go module github.com/ServiceWeaver/weaver not found.  Please run:\n\tgo mod tidy\n and then re-run this command."
   exit 1
 fi
-split=(${dep//@/ })
-weaver=${split[2]}
-if test -z $weaver; then
+weaver_split=(${weaver_dep//@/ })
+weaver_version=${weaver_split[2]}
+if test -z $weaver_version; then
   printf "Internal error: cannot determine version for github.com/ServiceWeaver/weaver module."
   exit 1
 fi
+weaver_dir=$gopath/pkg/mod/github.com/\!service\!weaver/weaver@$weaver_version
 
-# Create a local copy of all proto dependencies.
-tmpdir=$(mktemp -d)
-mkdir -p $tmpdir/weaver/runtime/protos/
-cp $(go env GOPATH)/pkg/mod/github.com/\!service\!weaver/weaver@$weaver/runtime/protos/*.proto $tmpdir/weaver/runtime/protos/
-
-exec protoc -I . -I $tmpdir --go_out=. --go_opt=paths=source_relative,Mgoogle/protobuf/timestamp.proto=google.golang.org/protobuf/types/known/timestamppb ${1+"$@"}
+exec protoc -I . -I $weaver_dir --go_out=. --go_opt=paths=source_relative,Mgoogle/protobuf/timestamp.proto=google.golang.org/protobuf/types/known/timestamppb ${1+"$@"}

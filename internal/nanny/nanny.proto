@@ -19,7 +19,7 @@ option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny";
 package nanny;
 import "internal/config/config.proto";
 import "google/protobuf/duration.proto";
-import "weaver/runtime/protos/runtime.proto";
+import "runtime/protos/runtime.proto";
 
 // ApplicationDistributionRequest is a request to the distributor to start a
 // set of versions for a given application in their deployment locations (e.g.,

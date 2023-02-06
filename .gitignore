@@ -1,0 +1,4 @@
+cmd/babysitter/babysitter
+cmd/weaver-gke/weaver-gke
+cmd/weaver-gke-local/weaver-gke-local
+cmd/nanny/nanny
