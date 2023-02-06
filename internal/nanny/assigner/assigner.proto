@@ -1,0 +1,221 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner";
+
+package assigner;
+import "weaver/runtime/protos/runtime.proto";
+
+// AppVersionState contains state managed for an application version by
+// the assigner.
+message AppVersionState {
+  map<string, ColocationGroupState> groups = 1;  // per group information
+  map<string, ProcessState> processes = 2;       // per process information
+}
+
+message ColocationGroupState {
+  // It contains the set of processes that a colocation group in a given
+  // deployment should be running.
+  repeated string processes = 1;
+}
+
+message ProcessState {
+  // It contains the set of components that a process in a given deployment
+  // should be running, along with their routing status (whether a component is
+  // routed).
+  map<string, bool> components = 1;
+
+  // It contains the list of replica addresses for the process.
+  repeated string replicas = 2;
+
+  // Network listeners exported by the process, if any.
+  repeated runtime.Listener listeners = 3;
+
+  // TODO(rgrandl): should we also track the routing info here?
+}
+
+// AssignerState stores the assigners' state.
+message AssignerState {
+  repeated string applications = 1;
+}
+
+// AppState stores the state for a single Service Weaver application.
+message AppState {
+  // pids stores the pid of every active process of every version of this app.
+  repeated ProcessId pids = 1;
+}
+
+// ProcessInfo contains information for each managed process.
+message ProcessInfo {
+  // Every time (1) the set of replica changes, or (2) the set of healthy
+  // replicas changes, or (3) any assignment changes, a ProcessInfo's version
+  // should be incremented. An assignment's load may change without incrementing
+  // the version.
+  //
+  // This version is used to avoid races between writing a ProcessInfo and
+  // writing the corresponding RoutingInfo.
+  uint64 version = 3;
+
+  map<string, Assignment> components = 1; // routed components and their assignments
+  map<string, Replica> replicas = 2;      // replicas, keyed by weavelet address
+
+  // Network listeners exported by the process, if any.
+  repeated runtime.Listener listeners = 4;
+
+}
+
+// Replica contains information for a single replica (aka weavelet).
+message Replica {
+  // Name of Pod that hosts the replica.
+  string pod_name = 3;
+
+  // Address of babysitter that manages the replica.
+  string babysitter_address = 1;
+
+  // Is the replica healthy? Note that every assigner individually decides the
+  // health status of every replica. When an assigner writes a ProcessInfo, it
+  // also records the set of replicas it thought were healthy.
+  runtime.HealthStatus health_status = 2;
+}
+
+// ProcessId uniquely identifies a process.
+message ProcessId {
+  string App = 1;      // Service Weaver application (e.g., todo)
+  string Id = 2;       // deployment id (e.g., bb6b3172)
+  string Process = 3;  // process name (e.g., Cache)
+}
+
+// VersionedRoutingInfo stores a versioned RoutingInfo. The version should
+// be a version of a written ProcessInfo, and the info should be derived from
+// that ProcessInfo. Versions should only every increase over time.
+message VersionedRoutingInfo {
+  uint64 version = 1;
+  runtime.RoutingInfo info = 2;
+}
+
+// SliceKey is an abstraction for keys used in slices.
+message SliceKey {
+  uint64 val = 1;
+}
+
+// Slice contains the allocation of a key range to a set of resources.
+//
+// The range covers [startInclusive, endExclusive).
+message Slice {
+  SliceKey start_inclusive = 1;
+  SliceKey end_exclusive = 2;
+  LoadTracker load_info = 3;
+}
+
+// Assignment is a wrapper class that creates and decodes assignment protos.
+message Assignment {
+  string app = 1;
+  string deploymentId = 2;
+  string component = 3;
+  uint64 version = 4;
+  repeated Slice slices = 5;
+  map<string, bool> candidate_resources = 6;
+  AlgoConstraints constraints = 7;
+  Statistics stats = 8;
+}
+
+// loadTracker tracks load information for a given slice across all the assigned
+// resources.
+//
+// Note that for a replicated slice (len(resources) > 1):
+// * perResourceload contains the total load as reported by the latest resource
+//   that has the slice assigned
+// * distribution contains the load distribution along split points for the
+//   given replica
+//
+// Most of the slices will have a single replica; ideally, only hot keys should
+// be replicated. Given that our load metric is req/s it is fair to assume that
+// the load is evenly distributed across the replicas of a slice, hence the
+// load, and the load distribution for a given replica should be representative
+// for all replicas. Otherwise, it is challenging for the weavelets to report
+// exactly the same split points for all replicas, and challenging for the
+// assigner to compute split points that make sense across all replicas.
+//
+// TODO(rgrandl): mwhittaker@ has an interesting idea. Instead of taking the
+// latest load report, we take the load report with the largest number of
+// requests received. That way if a resource was down for some reason or lagging
+// behind in an assignment and reports an almost empty load report, we won't use
+// it.
+//
+// TODO(rgrandl): revisit these decisions if we ever decide to support a
+// different load metric.
+message LoadTracker {
+  // Slice load on a given resource.
+  double per_resource_load = 1;
+
+  // Resources to which the slice is assigned.
+  map<string, bool> resources = 2;
+
+  // Distribution of the load along split points.
+  map<uint64, double> distribution = 3;
+}
+
+// AlgoConstraints contains various constraints needed by the routing algos to
+// generate assignments.
+message AlgoConstraints {
+  // Upper bound on the load allowed on any resource.
+  double max_load_limit_resource = 1;
+
+  // Lower bound on the load allowed on any resource.
+  double min_load_limit_resource = 2;
+
+  // Any slice with replica load above this threshold should be split to enable
+  // the algo to move slices around, in order to provide load balancing
+  // guarantees.
+  double split_threshold = 3;
+
+  // Any slice with replica load above this threshold should be replicated to
+  // enable the algo to move slices around, in order to provide load balancing
+  // guarantees.
+  //
+  // In practice, this threshold should be set to a value equal to or higher
+  // than the splitThreshold, because it is preferred for a slice to be split
+  // first.
+  //
+  // Also, a good algorithm should replicate a slice iff the slice has a single
+  // key; otherwise splitting is always preferred because it incurs less churn.
+  double replicate_threshold = 4;
+
+  // Any slice with replica load below this threshold should be dereplicated if
+  // the number of replicas is greater than 1.
+  //
+  // Dereplication creates more opportunities for merging slices, hence
+  // controlling the assignment size.
+  double dereplicate_threshold = 5;
+
+  // Maximum number of slices a resource should be assigned in a given
+  // assignment. Note that this is just a hint, because in reality the algorithm
+  // might not be able to provide a hard guarantee.
+  //
+  // The role of this constraint is to ensure that the number of slices in an
+  // assignment is bounded.
+  int64 max_num_slices_resource_hint = 6;
+}
+
+// Statistics contains various statistics for a given assignment.
+message Statistics {
+  int64 splitOps = 1;
+  int64 mergeOps = 2;
+  int64 replicateOps = 3;
+  int64 dereplicateOps = 4;
+  int64 moveDueToBalanceOps = 5;
+  int64 moveDueToUnhealthyOps = 6;
+}

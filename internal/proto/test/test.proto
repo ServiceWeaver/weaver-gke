@@ -1,0 +1,56 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+option go_package = "github.com/ServiceWeaver/weaver-gke/internal/proto;proto_test";
+
+package proto_test;
+
+// Computer represents a personal computer.
+message Computer {
+  // Motherboard component of the computer.
+  Motherboard motherboard = 1;
+}
+
+// Motherboard represents a computer motherboard.
+message Motherboard {
+  string chipset = 1;  // Motherboard chipset.
+  repeated Memory memory_slots = 2;  // Motherboard memory slots.
+  CPU cpu = 3;  // CPU attached to the motherboard.
+}
+
+// Memory represents computer memory.
+message Memory {
+  string manufacturer = 1;  // Memory manufacturer.
+  repeated MemoryChip chips = 2;  // Memory chips.
+}
+
+// MemoryChip represents a computer memory chip that appears on a memory card.
+message MemoryChip {
+  string manufacturer = 1;  // Memory chip manufacturer.
+  int64 capacity_bytes = 2;  // Memory chip capacity, in bytes.
+}
+
+// CPU represent a computer central processing unit.
+message CPU {
+  string model = 1;  // CPU model.
+  map<string, CPUCore> cores = 4;  // Map from core label to CPU core
+}
+
+// CPUCore represents a core inside a CPU.
+message CPUCore {
+  int32 min_mhz = 1;  // Minimum core clock.
+  int32 max_mhz = 2;  // Maximum core clock.
+  int64 cache_size_bytes = 3;  // L1 Cache size for the core, in bytes.
+}

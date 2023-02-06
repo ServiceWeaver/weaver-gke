@@ -1,0 +1,278 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny/controller";
+
+package controller;
+import "internal/config/config.proto";
+import "internal/nanny/nanny.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "weaver/runtime/protos/runtime.proto";
+
+// RolloutRequest is a request to the controller to roll out a new application
+// version across a number of deploying locations.
+message RolloutRequest {
+  // Deployment information for the application.
+  config.GKEConfig config = 1;
+
+  // Address of the nanny in charge of the rollout.
+  string NannyAddr = 2;
+
+  // RolloutRequest_Location stores information about the location where
+  // the application is being rolled out.
+  message Location {
+    // A descriptive name for the location (e.g., a cloud region).
+    string name = 1;
+
+    // Address of the distributor that manages traffic for the application.
+    string distributor_addr = 2;
+  }
+
+  // A list of locations to rollout the application to.
+  repeated Location locations = 3;
+}
+
+// AppVersionDistributorStatus specifies the latest status for a particular
+// distributor in a given application version.
+enum AppVersionDistributorStatus {
+  UNKNOWN = 0;
+  STARTING = 1;
+  ROLLING_OUT = 2;
+  ROLLED_OUT = 3;
+  DELETING = 4;
+  DELETED = 5;
+}
+
+// AppState contains the state managed for each application by the controller.
+message AppState {
+  // Application versions, keyed by version id.
+  map<string, AppVersionState> versions = 1;
+
+  // TODO(mwhittaker): Record deleted versions to avoid the race between killing
+  // and starting a version.
+}
+
+// AppVersionState contains the state managed for each application version by
+// the controller.
+message AppVersionState {
+  config.GKEConfig config = 1;
+  RolloutStrategy rollout_strategy = 2;
+
+  // Distributors state for a given application version.
+  map<string, AppVersionDistributorState> distributors = 4;
+
+  // Unique identifier that captures the order in which the application version
+  // was submitted for rollout at the controller.
+  int64 submission_id = 5;
+
+  // The time when the application version was submitted to the controller.
+  google.protobuf.Timestamp submission_time = 8;
+
+  // The following fields contain per wave rollout state.
+
+  // The wave idx that has been rolling out.
+  int64 wave_idx = 6;
+
+  // The time when the current wave was started, or nil if rollout is done
+  // (i.e., wave_idx equals the number of waves).
+  google.protobuf.Timestamp time_wave_started = 9;
+
+  // The time when the wave was successfully rolled out.
+  google.protobuf.Timestamp time_wave_rolled_out = 7;
+}
+
+// AppVersionDistributorState contains the state for a particular distributor
+// in charge of managing an application version.
+message AppVersionDistributorState {
+  int64 wave_idx = 1;
+  AppVersionDistributorStatus status = 2;
+
+  // All known processes for this application version at the distributor.
+  nanny.ProcessState processes = 3;
+}
+
+// rolloutStrategy contains the strategy for rolling out an application version.
+//
+// A rollout strategy consists of a number of waves. Each wave consists of a
+// number of locations and their assigned traffic fractions.
+//
+// E.g.,
+// Application version X should be rolled out in 8 locations (loc0...loc7)
+// Expected duration to complete the rollout is 8h.
+// Half of the time should be spent applying traffic and half of the time
+// waiting to see whether there are any errors.
+//
+// A possible rollout strategy is as follows:
+//  * Allocate 4 waves (i.e, in each wave 1h will be spent applying the traffic
+//    function, and 1h will be spent waiting)
+//  * First wave will contain the canary location (loc0)
+//  * All other locations will be assigned to the other waves
+//  * For each location, the target function can be the same and consists of:
+//    * 4 pairs (duration, trafficFraction)
+//    * e.g., targetFn: {(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//
+//  * The rollout strategy will look as follows:
+//    wave 0:
+//      rollouts: {
+//       loc0 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//
+//       validationTime: 1h
+//      }
+//    wave 1:
+//      rollouts: {
+//       loc1 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//       loc4 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//
+//       validationTime: 1h
+//      }
+//    wave 2:
+//      rollouts: {
+//       loc2 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//       loc5 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//
+//       validationTime: 1h
+//      }
+//    wave 3:
+//      rollouts: {
+//       loc3 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//       loc6 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//       loc7 : nanny.TargetFn{(15m: 10%), (15m, 25%), (15m, 50%), (15m, 100%)}
+//
+//       validationTime: 1h
+//      }
+message RolloutStrategy {
+  repeated RolloutWave waves = 1;
+}
+
+// RolloutWave contains per rollout wave information.
+message RolloutWave {
+  // List of traffic target functions, keyed by location.
+  map<string, nanny.TargetFn> target_functions = 1;
+
+  // Time to wait after all the target functions have been applied before
+  // declaring the wave as complete.
+  google.protobuf.Duration wait_time = 2;
+}
+
+// DistributorState contains the traffic assignment at a given distributor.
+message DistributorState {
+  // Distributor location.
+  RolloutRequest.Location location = 1;
+
+  // Latest traffic assignment for public listeners received from the
+  // corresponding distributor.
+  nanny.TrafficAssignment traffic_assignment = 2;
+}
+
+// ControllerState contains the state maintained by the controller.
+message ControllerState {
+  map<string, bool> applications = 1;
+  map<string, DistributorState> distributors = 2;
+}
+
+// StatusRequest is a request to fetch status for a given Service Weaver application
+// version.
+message StatusRequest {
+  // Application whose status should be retrieved. If empty, the status for
+  // all known applications is retrieved.
+  string app = 1;
+
+  // Application version whose status should be retrieved. If empty, the status
+  // for all known application versions is retrieved.
+  string version = 2;
+
+  // TODO(spetrovic): Add location?
+}
+
+// Status contains basic information about all of the Service Weaver applications.
+message Status {
+  // The status of every app.
+  repeated AppStatus apps = 1;
+  // The current public traffic assignment.
+  nanny.TrafficAssignment traffic = 2;
+  // The current private traffic assignments at every location.
+  repeated nanny.TrafficAssignment private_traffic = 3;
+}
+
+// AppStatus contains basic information about a given Service Weaver application.
+message AppStatus {
+  // The app's name.
+  string app = 1;
+  // The status of every version of this app.
+  repeated AppVersionStatus versions = 2;
+  // The rollout schedule of this app.
+  ProjectedTraffic projected_traffic = 3;
+}
+
+// AppVersionStatus contains basic information about a given Service Weaver application
+// version.
+message AppVersionStatus {
+  string app = 1;           // the app name (e.g., collatz)
+  string id = 2;            // the deployment id (e.g., a83903259a93)
+  int64 submission_id = 3;  // the unique sequence number (e.g., 0, 1, 2)
+  google.protobuf.Timestamp submission_time = 4;
+  config.GKEConfig gke_config = 5; // GKE config for this deployment.
+  runtime.AppConfig config = 6;  // Config for this deployment.
+
+  enum Status {
+    UNKNOWN = 0;
+    ROLLING_OUT = 1;  // the version is rolling out
+    ACTIVE = 2;       // the version has been fully rolled out
+    DELETING = 3;     // the version is being deleted
+  }
+  Status status = 7;
+  repeated ProcessStatus processes = 8;
+  repeated ListenerStatus listeners = 9;
+}
+
+message ProcessStatus {
+  string name = 1;                       // process name
+  string location = 2;                   // location (e.g., us-east1)
+  int64 healthy_replicas = 3;            // number of healthy replicas
+  int64 total_replicas = 4;              // number of total replicas
+  repeated string components = 5;        // active components
+}
+
+message ListenerStatus {
+  string name = 1;              // listener name
+  bool public = 2;              // is the listener public?
+  repeated string hostname = 3; // hostnames the listener is reachable at.
+}
+
+// ProjectedTraffic contains the projected traffic assignments for a particular
+// application.
+message ProjectedTraffic {
+  string app = 1;
+  repeated Projection projections = 2;
+}
+
+// Projection is the projected traffic assignment at a given point in time.
+message Projection {
+  google.protobuf.Timestamp time = 1;
+  nanny.TrafficAssignment traffic = 2;
+}
+
+// KillRequest is a request to kill every deployment of a Service Weaver application.
+message KillRequest {
+  string app = 1;  // the app to kill
+}
+
+// SubmissionId contains a unique, monotonically increasing id that is
+// associated with a rollout at the submission time.
+message SubmissionId {
+  int64 id = 1;
+}

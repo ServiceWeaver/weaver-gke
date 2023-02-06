@@ -1,0 +1,66 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+option go_package = "github.com/ServiceWeaver/weaver-gke;gke";
+
+package gke;
+
+// ContainerMetadata contains metadata about a container running on GKE.
+//
+// Typically, when Service Weaver launches a container, it places the container's
+// ContainerMetadata in an environment variable (see container.go). The running
+// container can then parse the ContainterMetadata from the environment and use
+// the metadata for various things.
+//
+// For example, the stdout and stderr of a container run on GKE are captured
+// and logged to Google Cloud Logging [1]. Every one of these log entries
+// contains a "labels" and "resource" field that looks something like this:
+//
+//   labels: {
+//     compute.googleapis.com/resource_name:
+//     "gke-serviceweaver-default-pool-05ad7bcf-55vd" k8s-pod/app: "todo-main-ac9156"
+//     k8s-pod/pod-template-hash: "56ffc498d"
+//   }
+//   resource: {
+//     labels: {
+//       cluster_name: "serviceweaver"
+//       container_name: "serviceweaver"
+//       region: "us-east1"
+//       namespace_name: "serviceweaver"
+//       pod_name: "todo-main-ac9156-56ffc498d-l57rm"
+//       project_id: "serviceweaver-gke-dev"
+//     }
+//     type: "k8s_container"
+//   }
+//
+// When you click on the "LOGS" tab on the page for a pod, deployment, or
+// stateful set, the Google Cloud Console forms a query over these fields
+// and shows you the resulting log entries. We're logging entries directly
+// to Google Cloud Logging---not printing them to stdout or stderr---so in
+// order for the logs to appear in the "LOGS" tab, we have to embed the
+// same "labels" and "resource" fields. These fields are populated using a
+// ContainerMetadata.
+//
+// [1]: https://kubernetes.io/docs/concepts/cluster-administration/logging/
+message ContainerMetadata {
+  string project = 1;         // GCP project
+  string cluster_name = 2;    // GKE cluster name
+  string cluster_region = 3;  // GKE cluster region (e.g., us-east1)
+  string namespace = 4;       // Kubernetes namespace (e.g., default)
+  string node_name = 5;       // GCP node name
+  string pod_name = 6;        // Kubernetes pod name
+  string container_name = 7;  // Kubernetes container name
+  string app = 8;             // Kubernetes app label
+}

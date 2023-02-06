@@ -1,0 +1,30 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+option go_package = "github.com/ServiceWeaver/weaver-gke/internal/store";
+package store;
+
+// SetProto contains the set of elements stored under a key in the store.
+message SetProto {
+  repeated bytes elements = 1;
+}
+
+// SequenceProto contains a sequence of unique values.
+message SequenceProto {
+  // sequence maps a value to its index in the sequence. For example, if we
+  // sequenced "a", "b", and "c" in order, then "a" maps to 0, "b" maps to 1,
+  // and "c" maps to 2.
+  map<string, int64> sequence = 1;
+}
