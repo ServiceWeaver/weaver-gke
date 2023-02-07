@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<!--
+ Copyright 2022 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Status.App}} Dashboard</title>
+  <script src="/assets/copy.js"></script>
+  <link href="/assets/main.css" rel="stylesheet" />
+  <!-- https://css-tricks.com/emoji-as-a-favicon/ -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧶</text></svg>">
+  <style>
+    .healthy {
+      color: green;
+    }
+    .unhealthy {
+      color: red;
+    }
+
+    // Draw a gray line between each colocation group.
+    #components tbody:nth-child(n+3) tr:nth-child(1) td {
+      border-top: 1pt solid #E7E7E7;
+    }
+
+    // Highlight colocation group rowspans when hovered.
+    #components tbody:hover td[rowspan] {
+      background-color: #E7E7E7;
+    }
+
+    #traffic th {
+      text-align: left;
+    }
+  </style>
+</head>
+
+<body>
+  <header class="navbar">
+    <a href="/">{{.Tool}} dashboard</a>
+  </header>
+
+  <div class="container">
+    <details open class="card" style="width: 49%">
+      <summary class="card-title">Summary</summary>
+      <div class="card-body">
+        <table class="kv-table">
+          <tr>
+            <th scope="row">App</th>
+            <td>{{.Status.App}}</td>
+          </tr>
+          <tr>
+            <th scope="row">Deployment</th>
+            <td>{{.Status.Id}}</td>
+          </tr>
+          <tr>
+            <th scope="row">Age</th>
+            <td>{{age .Status.SubmissionTime}}</td>
+          </tr>
+          <tr>
+            <th scope="row">Status</th>
+            <td>{{.Status.Status}}</td>
+          </tr>
+          <tr>
+            <th scope="row">Listeners</th>
+            <td>
+              {{range .Status.Listeners}}
+                {{.Name}} &nbsp {{if .Public}} Public {{else}} Private {{end}} &nbsp {{strjoin .Hostname}}<br>
+              {{end}}
+            </td>
+          </tr>
+          <tr>
+            <th scope="row">Logs</th>
+            <td><code>{{.Tool}} logs 'version=="{{shorten .Status.Id}}"'<code></td>
+          </tr>
+        </table>
+      </div>
+    </details>
+
+    <div style="width: 49%">
+      <details open class="card">
+        <summary class="card-title">Links</summary>
+        <div class="card-body">
+          <ul>
+            {{ if .Links.Logs }}
+            <li><a href="{{.Links.Logs}}">Logs</a></li>
+            {{ end }}
+            {{ if .Links.Metrics }}
+            <li><a href="{{.Links.Metrics}}">Metrics</a></li>
+            {{ end }}
+            {{ if .Links.Traces }}
+            <li><a href="{{.Links.Traces}}">Traces</a></li>
+            {{ end }}
+          </ul>
+        </div>
+      </details>
+
+      <details class="card">
+        <summary class="card-title">Config</summary>
+        <div class="card-body">
+          <pre>{{range $k, $v := .Status.Config.Sections}}
+[{{$k}}]
+{{$v}}{{end}}</pre>
+        </div>
+      </details>
+    </div>
+
+    <details class="card">
+      <summary class="card-title">Commands</summary>
+      <div class="card-body">
+        <table class="kv-table">
+          {{range .Commands}}
+            <tr>
+              <th scope="row">{{.Label}}</th>
+              <td class="copyable"><code>{{.Command}}</code></td>
+            </tr>
+          {{end}}
+        </table>
+      </div>
+    </details>
+
+    <details open class="card">
+      <summary class="card-title">Components</summary>
+      <div class="card-body">
+        <table id="components" class="data-table">
+          <thead>
+            <tr>
+              <th>Colocation Group</th>
+              <th>Component</th>
+              <th>Location</th>
+              <th>Healthy</th>
+            </tr>
+          </thead>
+          {{range $i, $p := .Status.Processes}}
+            <tbody>
+            {{range $j, $c := $p.Components}}
+              <tr>
+                {{if (eq $j 0)}}<td rowspan="{{len $p.Components}}">{{$i}}</td>{{end}}
+                <td>{{shorten_component $c}}</td>
+                <td>{{$p.Location}}</td>
+                <td class={{if (eq $p.HealthyReplicas $p.TotalReplicas)}}"healthy"{{else}}"unhealthy"{{end}}>
+                  {{$p.HealthyReplicas}}/{{$p.TotalReplicas}}
+                </td>
+              </tr>
+            {{end}}
+            </tbody>
+          {{end}}
+        </table>
+      </div>
+    </details>
+
+    <details open class="card">
+      <summary class="card-title">Traffic</summary>
+      <div class="card-body">
+        <table id="traffic" class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Host</th>
+              <th scope="col">Visibility</th>
+              <th scope="col">Location</th>
+              <th scope="col">Traffic Fraction</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range $host, $assignment := .GlobalStatus.Traffic.HostAssignment}}
+              {{range $alloc := $assignment.Allocs}}
+                {{if (and (eq $alloc.AppName $.Status.App) (eq $alloc.VersionId $.Status.Id))}}
+                <tr>
+                  <td>{{$host}}</td>
+                  <td>Public</td>
+                  <td>{{$alloc.Location}}</td>
+                  <td>{{$alloc.TrafficFraction}}</td>
+                </tr>
+                {{end}}
+              {{end}}
+            {{end}}
+
+            {{range $traffic := .GlobalStatus.PrivateTraffic}}
+              {{range $host, $assignment := $traffic.HostAssignment}}
+                {{range $alloc := $assignment.Allocs}}
+                {{if (and (eq $alloc.AppName $.Status.App) (eq $alloc.VersionId $.Status.Id))}}
+                  <tr>
+                    <td>{{$host}}</td>
+                    <td>Private</td>
+                    <td>{{$alloc.Location}}</td>
+                    <td>{{$alloc.TrafficFraction}}</td>
+                  </tr>
+                  {{end}}
+                {{end}}
+              {{end}}
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+</body>
+</html>

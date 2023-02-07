@@ -1,0 +1,254 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+
+option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny";
+
+package nanny;
+import "internal/config/config.proto";
+import "google/protobuf/duration.proto";
+import "runtime/protos/runtime.proto";
+
+// ApplicationDistributionRequest is a request to the distributor to start a
+// set of versions for a given application in their deployment locations (e.g.,
+// a cloud region), and gradually shift traffic to them.
+message ApplicationDistributionRequest {
+  string app_name = 1;
+  repeated VersionDistributionRequest requests = 2;
+}
+
+// VersionDistributionRequest is a request to the distributor to start a new
+// application version in its deployment location.
+message VersionDistributionRequest {
+  // Deployment information for the new application version.
+  config.GKEConfig config = 1;
+
+  // Rollout information for the new application version.
+  TargetFn target_fn = 2;
+
+  // Unique identifier that captures the order in which the application version
+  // was submitted for rollout at the controller.
+  int64 submission_id = 3;
+}
+
+// ApplicationCleanupRequest is a request to the distributor to clean up a set
+// of versions for a given application.
+message ApplicationCleanupRequest {
+  string app_name = 1;
+  repeated string versions = 2;
+}
+
+// ExportListenerRequest is a request to the manager to export a listener.
+message ExportListenerRequest {
+  string app_name = 1;
+  runtime.ListenerToExport listener = 2;
+  config.GKEConfig config = 3;
+}
+
+// ColocationGroupStartEequest is a request to the manager to start
+// a colocation group for a given application version.
+message ColocationGroupStartRequest {
+  string app_name = 1;
+  runtime.ColocationGroup group = 2;
+  config.GKEConfig config = 3;
+}
+
+// ApplicationDeploymentRequest is a request to the manager to deploy a set of
+// versions for a given application.
+message ApplicationDeploymentRequest {
+  string app_name = 1;
+  repeated config.GKEConfig versions = 2;
+}
+
+// ApplicationStopRequest is a request to the manager to stop a set of versions
+// for a given application.
+message ApplicationStopRequest {
+  string app_name = 1;
+  repeated string versions = 2;
+}
+
+// ApplicationDeleteRequest is a request to the manager to delete a set of
+// versions for a given application.
+message ApplicationDeleteRequest {
+  string app_name = 1;
+  repeated string versions = 2;
+}
+
+// ReplicaToRegister is a request to the manager to register the given Service Weaver
+// replica, running in the given babysitter.
+message ReplicaToRegister {
+  string pod_name = 1;           // Replica pod name (e.g., main-012345-6789)
+  string babysitter_address = 2; // e.g., host:1234
+  runtime.ReplicaToRegister replica = 3;
+}
+
+// ApplicationStateAtDistributorRequest is a request to the distributor to get
+// the latest state for a given application.
+message ApplicationStateAtDistributorRequest {
+  string app_name = 1;
+}
+
+// ApplicationStateAtDistributor contains the latest state for a given
+// application at a particular distributor.
+message ApplicationStateAtDistributor {
+  repeated VersionStateAtDistributor version_state = 1;
+  repeated string deleted_versions = 2;
+}
+
+// VersionStateAtDistributor stores the state of an application version at a
+// particular distributor.
+message VersionStateAtDistributor {
+  string version_id = 1;
+
+  // Last traffic fraction that was applied.
+  float last_traffic_fraction_applied = 2;
+
+  // Whether the rollout has successfully completed. Note that a rollout is not
+  // necessarily completed when the last traffic fraction was applied (e.g.,
+  // the local gateway might have transient failures and the distributor has to
+  // reapply).
+  bool rollout_completed = 3;
+
+  // Whether the main process is deployed.
+  bool is_deployed = 4;
+
+  // All known processes for this application version.
+  ProcessState processes = 5;
+}
+
+// ProcessStateRequest is a request to receive the state of processes for
+// the given application version or a collection of applications and their
+// versions.
+message ProcessStateRequest {
+  // Application name and version.
+  //
+  // If the application name is non-empty, the request is for retrieving
+  // process state only for the given application; otherwise, the request is
+  // for retrieving process state for all active applications.
+  // If the application version is non-empty, the request is for retrieving
+  // process state only for a particular version of an application; otherwise,
+  // the request is for retrieving process state for all versions of an
+  // application (or a collection of applications).
+  // It is illegal to specify the version and not the application name.
+  string app_name = 1;
+  string version_id = 2;
+}
+
+// ProcessState stores the process state for an application version or a
+// collection of applications and their versions.
+message ProcessState {
+  // Process stores information about an application version process.
+  message Process {
+    string name = 1;
+
+    // Replica stores information about a process replica.
+    message Replica {
+      string weavelet_addr = 1;               // Weavelet address.
+      string babysitter_addr = 2;             // Babysitter address.
+      runtime.HealthStatus health_status = 3; // Health status.
+    }
+    repeated Replica replicas = 2; // All known process replicas.
+    repeated string components = 3; // Active components hosted by the process.
+    repeated runtime.Listener listeners = 4; // Listeners hosted by the process.
+  }
+  repeated Process processes = 3;
+
+  // Errors encountered collecting the process state.
+  // Note that the process data may be partially populated even if there were
+  // collection errors.
+  repeated string errors = 4;
+}
+
+// TargetFn is a target function that controls the traffic rollout for a given
+// application version inside a deployment location (e.g., a cloud region).
+//
+// Each entry F_i in TargetFn stores a traffic fraction that should be assigned
+// to the application version, as well as the duration of that traffic
+// assignment.
+//
+// Traffic assignment starts with entry F_0. Once the traffic fraction
+// in F_i has been applied for longer than the duration specified in
+// F_i, the traffic fraction in the entry F_(i+1) is applied.  This
+// process continues until all entries in the array have been exhausted,
+// at which point the traffic fraction of 1.0 is applied and the application
+// version is considered "installed".
+//
+// Note that the traffic fraction is considered "applied" the moment it is
+// successfully assigned to the application version. Failed fraction assignments
+// don't count toward the fraction duration; instead, the earlier fraction
+// remains applied.  This means that some traffic fractions may be applied
+// for significantly longer than the specified duration (e.g., cluster
+// becomes unreachable); the only guarantee we provide is that a given
+// fraction will never be applied for less than a specified duration.
+message TargetFn {
+  repeated FractionSpec fractions = 1;
+}
+
+// FractionSpec represents one stage in the TargetFn that should be applied to
+// a given application version.
+//
+// It stores the traffic fraction that should be assigned to the application
+// version, as well as the duration of that traffic assignment. Once the traffic
+// fraction has been applied for longer than the specified duration, the target
+// function moves to the next rollout stage (see comments above TargetFn).
+message FractionSpec {
+  // Minimum duration the traffic fraction should be applied.
+  google.protobuf.Duration duration = 1;
+
+  // Traffic fraction in the range [0, 1] to be sent to the application version.
+  float traffic_fraction = 2;
+}
+
+// Schedule represents a target function being applied.
+//
+// A target function is a sequence of traffic fractions and the duration for
+// which they should be applied. A schedule represents the actual application of
+// the traffic fractions, as we progress from one traffic fraction to the next.
+message Schedule {
+  // The target function being applied.
+  //
+  // TODO(mwhittaker): Right now, the code is inconsistent about whether a
+  // target function ends with a fraction of 1.0. Try to clean that up.
+  TargetFn target_fn = 1;
+
+  // The index of the current traffic fraction in target_fn. After the final
+  // traffic fraction has been applied for its specified duration, index is
+  // incremented to be equal to the length of the number of traffic fractions.
+  // This signals that the target function has been fully applied.
+  int64 index = 2;
+
+  // Total duration the current traffic fraction has been applied.
+  google.protobuf.Duration applied_duration = 3;
+}
+
+// TrafficAssignment contains a traffic assignment keyed by hostname.
+message TrafficAssignment {
+  map<string, HostTrafficAssignment> host_assignment = 1;
+}
+
+// HostTrafficAssignment contains the traffic assignment for a given hostname.
+message HostTrafficAssignment {
+  repeated TrafficAllocation allocs = 1;
+}
+
+// TrafficAllocation contains a traffic allocation. It is the finest granularity
+// in terms of traffic assignment.
+message TrafficAllocation {
+  string location = 1;            // location (e.g., a cloud region)
+  string app_name = 2;            // name of the application
+  string version_id = 3;          // application version id
+  float traffic_fraction = 4;     // traffic fraction allocated for version id
+  runtime.Listener listener = 5;  // network listener
+}

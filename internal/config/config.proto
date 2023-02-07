@@ -1,0 +1,74 @@
+// Copyright 2022 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto3";
+option go_package = "github.com/ServiceWeaver/weaver-gke/internal/config";
+
+package config;
+import "runtime/protos/runtime.proto";
+
+// GKEConfig holds configuration information for one execution of a
+// Service Weaver application on GKE. Fields are populated from a combination
+// of user specified configuration and Service Weaver provided information
+// specific to a particular execution.
+message GKEConfig {
+  // Cloud project the application should be deployed to. If empty, the
+  // project value will be extracted from the active gcloud configuration
+  // on the deploying machine.
+  string project = 1;
+
+  // Cloud account that should be used to deploy the application. If empty,
+  // the account value will be extracted from the active gcloud
+  // configuration on the deploying machine.
+  string account = 2;
+
+  // List of unique regions to deploy the application to. Service Weaver will manage the
+  // clusters in the given regions.
+  //
+  // If empty, Service Weaver will pick regions automatically.
+  //
+  // For a list of Google Cloud regions, see:
+  //   https://cloud.google.com/compute/docs/regions-zones
+  repeated string regions = 3;
+
+  // Publicly accessible HTTP listeners for the application.
+  //
+  // Service Weaver applications create HTTP listeners dynamically, i.e., via calls to
+  // Listener(). Only listeners listed here will be configured to receive
+  // ingress traffic; all other listeners will be configured only for
+  // VPC-internal access.
+  message PublicListener {
+    // Name of the listener. Must match the name the listener is created
+    // with in the application binary (i.e., via a call to Listener()).
+    string name = 1;
+
+    // Hostname under which the listener will be accessible.
+    //
+    // The hostname is used for routing ingress traffic to the listener.
+    // It is an error to leave this field empty.
+    string hostname = 2;
+  }
+  repeated PublicListener public_listener = 4;
+
+  // Address of the manager local to a Service Weaver process. This field is typically
+  // filled by the manager, before starting a Service Weaver process.
+  string manager_addr = 5;
+
+  // The URL of the container used to deploy the application (e.g.,
+  // us-docker.pkg.dev/my-project/serviceweaver-repo/todo:tag4df65e28), or the
+  // empty string if containers are not being used.
+  string container = 6;
+
+  runtime.Deployment deployment = 7;
+}

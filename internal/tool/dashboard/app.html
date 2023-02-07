@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<!--
+ Copyright 2022 Google LLC
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+-->
+
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.App}} Dashboard</title>
+  <link href="/assets/main.css" rel="stylesheet" />
+  <!-- https://css-tricks.com/emoji-as-a-favicon/ -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🧶</text></svg>">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+  <script src="/assets/copy.js"></script>
+  <style>
+    #deployments {
+      width: 100%;
+    }
+    #deployments th, #deployments td {
+      border: 1pt solid black;
+    }
+    #traffic th {
+      text-align: left;
+    }
+  </style>
+</head>
+
+<body>
+  <header class="navbar">
+    <a href="/">{{.Tool}} dashboard</a>
+  </header>
+
+  <div class="container">
+    <details open class="card" style="width: 49%">
+      <summary class="card-title">Summary</summary>
+      <div class="card-body">
+        <table class="kv-table">
+          <tr>
+            <th scope="row">App</th>
+            <td>{{.App}}</td>
+          </tr>
+        </table>
+      </div>
+    </details>
+
+    <details open class="card" style="width: 49%">
+      <summary class="card-title">Links</summary>
+      <div class="card-body">
+        <ul>
+          {{ if .Links.Logs }}
+          <li><a href="{{.Links.Logs}}">Logs</a></li>
+          {{ end }}
+          {{ if .Links.Metrics }}
+          <li><a href="{{.Links.Metrics}}">Metrics</a></li>
+          {{ end }}
+          {{ if .Links.Traces }}
+          <li><a href="{{.Links.Traces}}">Traces</a></li>
+          {{ end }}
+        </ul>
+      </div>
+    </details>
+
+    <details class="card">
+      <summary class="card-title">Commands</summary>
+      <div class="card-body">
+        <table class="kv-table">
+          {{range .Commands}}
+            <tr>
+              <th scope="row">{{.Label}}</th>
+              <td class="copyable"><code>{{.Command}}</code></td>
+            </tr>
+          {{end}}
+        </table>
+      </div>
+    </details>
+
+    <details open class="card">
+      <summary class="card-title">Traffic</summary>
+      <div class="card-body">
+        <table id="traffic" class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">Host</th>
+              <th scope="col">Visibility</th>
+              <th scope="col">Deployment</th>
+              <th scope="col">Location</th>
+              <th scope="col">Traffic Fraction</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range $host, $assignment := .GlobalStatus.Traffic.HostAssignment}}
+              {{range $alloc := $assignment.Allocs}}
+                {{if (eq $alloc.AppName $.App)}}
+                <tr>
+                  <td>{{$host}}</td>
+                  <td>Public</td>
+                  <td>{{shorten $alloc.VersionId}}</td>
+                  <td>{{$alloc.Location}}</td>
+                  <td>{{$alloc.TrafficFraction}}</td>
+                </tr>
+                {{end}}
+              {{end}}
+            {{end}}
+
+            {{range $traffic := .GlobalStatus.PrivateTraffic}}
+              {{range $host, $assignment := $traffic.HostAssignment}}
+                {{range $alloc := $assignment.Allocs}}
+                  {{if (eq $alloc.AppName $.App)}}
+                  <tr>
+                    <td>{{$host}}</td>
+                    <td>Private</td>
+                    <td>{{shorten $alloc.VersionId}}</td>
+                    <td>{{$alloc.Location}}</td>
+                    <td>{{$alloc.TrafficFraction}}</td>
+                  </tr>
+                  {{end}}
+                {{end}}
+              {{end}}
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <details open class="card">
+      <summary class="card-title">Deployments</summary>
+      <div class="card-body">
+        <table id="deployments" class="data-table">
+          <thead>
+            <tr>
+              <th scope="col">App</th>
+              <th scope="col">Version</th>
+              <th scope="col">Age</th>
+              <th scope="col">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {{range .Status.Versions}}
+              <tr>
+                <td><a href="/app?app={{.App}}">{{.App}}</a></td>
+                <td><a href="/version?app={{.App}}&version={{.Id}}">{{.Id}}</a></td>
+                <td>{{age .SubmissionTime}}</td>
+                <td>{{.Status}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+    </details>
+
+    <!-- TODO(mwhittaker): Show traffic for every region, not just global? -->
+    <!-- TODO(mwhittaker): Don't show graphs when there's only one version. -->
+    <details open class="card">
+      <summary class="card-title">Rollout Plan</summary>
+      <div class="card-body">
+        <canvas id="traffic-{{.Traffic.Location}}"></canvas>
+      </div>
+    </details>
+
+    <script>
+      new Chart(document.getElementById('traffic-{{.Traffic.Location}}'), {
+        type: 'line',
+        data: {
+          datasets: [
+            {{range .Traffic.Lines}}
+              {
+                label: '{{.Label}}',
+                data: [
+                  {{range .Points}}
+                    {x: {{unixmilli .Time}}, y: {{.Fraction}}},
+                  {{end}}
+                ],
+                borderColor: '{{.Color}}',
+                backgroundColor: '{{.Color}}66',
+                color: '{{.Color}}',
+                stepped: true,
+              },
+            {{end}}
+          ],
+        },
+        options: {
+          plugins: {
+            title: {
+              text: '{{.Traffic.Title}}',
+              display: true
+            }
+          },
+          scales: {
+            x: {
+              type: 'time',
+              min: {{unixmilli .Traffic.Min}},
+              max: {{unixmilli .Traffic.Max}},
+            },
+            y: {
+              title: {
+                display: true,
+                text: 'Traffic Fraction'
+              },
+              beginAtZero: true,
+            }
+          },
+        },
+      });
+    </script>
+  </div>
+</body>
+</html>
