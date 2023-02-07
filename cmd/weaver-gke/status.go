@@ -39,7 +39,7 @@ var statusSpec = tool.StatusSpec{
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(os.Stderr, "Using account %s in project %s", config.Account, config.Project)
+		fmt.Fprintf(os.Stderr, "Using account %s in project %s\n", config.Account, config.Project)
 		return gke.Controller(ctx, config)
 	},
 }
