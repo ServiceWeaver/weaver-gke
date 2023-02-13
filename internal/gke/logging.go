@@ -26,6 +26,9 @@ import (
 	"cloud.google.com/go/logging"
 	apiv2 "cloud.google.com/go/logging/apiv2"
 	"cloud.google.com/go/logging/logadmin"
+	wlogging "github.com/ServiceWeaver/weaver/runtime/logging"
+	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/google/cel-go/common/operators"
 	"google.golang.org/api/iterator"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
@@ -33,9 +36,6 @@ import (
 	loggingpb "google.golang.org/genproto/googleapis/logging/v2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	wlogging "github.com/ServiceWeaver/weaver/runtime/logging"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 )
 
 // CloudLoggingClient is a Google Cloud Logging client. Code running on GKE can
@@ -73,7 +73,7 @@ func (cl *CloudLoggingClient) Log(entry *protos.LogEntry) {
 	// may need to periodically flush if necessary for freshness.
 	cl.logger.Log(logging.Entry{
 		Labels:  labelsFromEntry(entry, cl.meta),
-		Payload: entry.Payload,
+		Payload: entry.Msg,
 		Resource: &mrpb.MonitoredResource{
 			Type: "k8s_container",
 			Labels: map[string]string{
@@ -211,7 +211,7 @@ func (gc *gcpCatter) Read(ctx context.Context) (*protos.LogEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	logentry.Payload = entry.Payload.(string)
+	logentry.Msg = entry.Payload.(string)
 	return logentry, nil
 }
 
@@ -337,7 +337,7 @@ func (gf *gcpFollower) makeEntry(entry *loggingpb.LogEntry) (*protos.LogEntry, e
 	}
 	switch payload := entry.Payload.(type) {
 	case *loggingpb.LogEntry_TextPayload:
-		logentry.Payload = payload.TextPayload
+		logentry.Msg = payload.TextPayload
 	default:
 		return nil, fmt.Errorf("unexpected payload %v", payload)
 	}
@@ -375,7 +375,7 @@ func Translate(project string, query wlogging.Query) (string, error) {
 	// The translation is relatively straightforward, with the following
 	// notable changes:
 	//
-	//     - The payload field is translated to "textPayload".
+	//     - The msg field is translated to "textPayload".
 	//     - The time field is translated to "timestamp".
 	//     - All other fields, like app and component, are changed to
 	//       "labels.serviceweaver/app" and "labels.serviceweaver/component".
@@ -514,7 +514,7 @@ func translateLHS(w io.Writer, hasTime *bool, e *exprpb.Expr) error {
 	switch t := e.ExprKind.(type) {
 	case *exprpb.Expr_IdentExpr:
 		switch name := e.GetIdentExpr().GetName(); name {
-		case "payload":
+		case "msg":
 			fmt.Fprint(w, "textPayload")
 		case "time":
 			*hasTime = true
@@ -587,9 +587,8 @@ func labelsFromEntry(entry *protos.LogEntry, meta *ContainerMetadata) map[string
 	ls["serviceweaver/component"] = wlogging.ShortenComponent(entry.Component)
 	ls["serviceweaver/full_component"] = entry.Component
 	ls["serviceweaver/time"] = time.UnixMicro(entry.TimeMicros).Format(time.RFC3339)
-	ls["serviceweaver/severity"] = entry.Severity
-	ls["serviceweaver/file"] = entry.File
-	ls["serviceweaver/line"] = fmt.Sprintf("%d", entry.Line)
+	ls["serviceweaver/level"] = entry.Level
+	ls["serviceweaver/source"] = fmt.Sprintf("%s:%d", entry.File, entry.Line)
 
 	return ls
 }
@@ -628,7 +627,7 @@ func entryFromLabels(labels map[string]string) (*protos.LogEntry, error) {
 		Component:  ex("serviceweaver/full_component"),
 		Node:       ex("serviceweaver/full_node"),
 		TimeMicros: time.UnixMicro(),
-		Severity:   ex("serviceweaver/severity"),
+		Level:      ex("serviceweaver/level"),
 		File:       ex("serviceweaver/file"),
 		Line:       int32(line),
 	}
