@@ -26,20 +26,17 @@ func TestTranslate(t *testing.T) {
 		want    string
 		hasTime bool
 	}{
-		{`payload == "todo"`, `(textPayload="todo")`, false},
+		{`msg == "todo"`, `(textPayload="todo")`, false},
 		{`version == "v1"`, `(labels."serviceweaver/version"="v1")`, false},
 		{`full_version == "v1"`, `(labels."serviceweaver/full_version"="v1")`, false},
 		{`app == "todo"`, `(labels."serviceweaver/app"="todo")`, false},
 		{`app != "todo"`, `(labels."serviceweaver/app"!="todo")`, false},
-		{`line < 1`, `(labels."serviceweaver/line"<1)`, false},
-		{`line <= 1`, `(labels."serviceweaver/line"<=1)`, false},
-		{`line > 1`, `(labels."serviceweaver/line">1)`, false},
-		{`line >= 1`, `(labels."serviceweaver/line">=1)`, false},
 		{`app.contains("todo")`, `(labels."serviceweaver/app":"todo")`, false},
 		{`app.matches("todo")`, `(labels."serviceweaver/app"=~"todo")`, false},
 		{`attrs["name"] == "foo"`, `(labels."name"="foo")`, false},
 		{`attrs["name"].contains("foo")`, `(labels."name":"foo")`, false},
 		{`"foo" in attrs`, `(labels."foo":"")`, false},
+		{`source.contains("foo")`, `(labels."serviceweaver/source":"foo")`, false},
 		{`time < timestamp("1972-01-01T10:00:20Z")`, `(timestamp<"1972-01-01T10:00:20Z")`, true},
 		{`app == "todo" && component == "a"`, `((labels."serviceweaver/app"="todo") AND (labels."serviceweaver/component"="a"))`, false},
 		{`app == "todo" || app == "collatz"`, `((labels."serviceweaver/app"="todo") OR (labels."serviceweaver/app"="collatz"))`, false},
