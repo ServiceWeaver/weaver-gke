@@ -26,13 +26,13 @@ import (
 	"strings"
 	"time"
 
-	"golang.org/x/exp/maps"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver/runtime/colors"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"golang.org/x/exp/maps"
 )
 
 var dimColor = colors.Color256(245) // a light gray
@@ -80,7 +80,8 @@ func deploymentsStatus(w io.Writer, status *controller.Status) {
 		return status.Apps[i].App < status.Apps[j].App
 	})
 
-	t := colors.NewTabularizer(w, colors.Atom{S: "Deployments", Bold: true}, colors.PrefixDim)
+	title := []colors.Text{{{S: "Deployments", Bold: true}}}
+	t := colors.NewTabularizer(w, title, colors.PrefixDim)
 	defer t.Flush()
 	t.Row("APP", "DEPLOYMENT", "AGE", "STATUS")
 	for _, app := range status.Apps {
@@ -102,7 +103,8 @@ func componentsStatus(w io.Writer, status *controller.Status) {
 		return status.Apps[i].App < status.Apps[j].App
 	})
 
-	t := colors.NewTabularizer(w, colors.Atom{S: "COMPONENTS", Bold: true}, colors.PrefixDim)
+	title := []colors.Text{{{S: "COMPONENTS", Bold: true}}}
+	t := colors.NewTabularizer(w, title, colors.PrefixDim)
 	defer t.Flush()
 	t.Row("APP", "DEPLOYMENT", "LOCATION", "COMPONENT", "HEALTHY")
 	for _, app := range status.Apps {
@@ -139,7 +141,8 @@ func trafficStatus(w io.Writer, status *controller.Status) {
 		}
 	}
 
-	t := colors.NewTabularizer(w, colors.Atom{S: "TRAFFIC", Bold: true}, colors.PrefixDim)
+	title := []colors.Text{{{S: "TRAFFIC", Bold: true}}}
+	t := colors.NewTabularizer(w, title, colors.PrefixDim)
 	defer t.Flush()
 	t.Row("HOST", "VISIBILITY", "APP", "DEPLOYMENT", "LOCATION", "ADDRESS", "TRAFFIC FRACTION")
 	show := func(traffic *nanny.TrafficAssignment, visibility string) {
@@ -237,7 +240,8 @@ func rolloutStatus(w io.Writer, status *controller.Status, p *controller.Project
 			locs[i+1] = colors.Atom{S: col.loc}
 		}
 	}
-	tab := colors.NewTabularizer(w, colors.Atom{S: fmt.Sprintf("ROLLOUT OF %s", p.App), Bold: true}, colors.FullDim)
+	title := []colors.Text{{{S: fmt.Sprintf("ROLLOUT OF %s", p.App), Bold: true}}}
+	tab := colors.NewTabularizer(w, title, colors.FullDim)
 	defer tab.Flush()
 	tab.Row(locs...)
 
