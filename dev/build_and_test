@@ -45,6 +45,8 @@ function cmd_generate() {
 
 function cmd_build() {
   go build ./...
+  (cd cmd/weaver-gke && go build)
+  (cd cmd/weaver-gke-local && go build)
 }
 
 function cmd_vet() {
