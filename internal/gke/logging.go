@@ -588,6 +588,8 @@ func labelsFromEntry(entry *protos.LogEntry, meta *ContainerMetadata) map[string
 	ls["serviceweaver/full_component"] = entry.Component
 	ls["serviceweaver/time"] = time.UnixMicro(entry.TimeMicros).Format(time.RFC3339)
 	ls["serviceweaver/level"] = entry.Level
+	ls["serviceweaver/file"] = entry.File
+	ls["serviceweaver/line"] = fmt.Sprintf("%d", entry.Line)
 	ls["serviceweaver/source"] = fmt.Sprintf("%s:%d", entry.File, entry.Line)
 
 	return ls
@@ -611,6 +613,7 @@ func entryFromLabels(labels map[string]string) (*protos.LogEntry, error) {
 	ex("serviceweaver/version")
 	ex("serviceweaver/node")
 	ex("serviceweaver/component")
+	ex("serviceweaver/source")
 
 	// Process remaining labels.
 	time, err := time.Parse(time.RFC3339, ex("serviceweaver/time"))
