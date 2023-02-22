@@ -61,10 +61,10 @@ var dashboardSpec = tool.DashboardSpec{
 		return gke.Controller(ctx, config)
 	},
 	AppLinks: func(ctx context.Context, app string) (tool.Links, error) {
-		return links(app, "")
+		return links(app, "" /*version*/)
 	},
-	DeploymentLinks: func(ctx context.Context, depId string) (tool.Links, error) {
-		return links("", depId)
+	DeploymentLinks: func(ctx context.Context, app, version string) (tool.Links, error) {
+		return links(app, version)
 	},
 	AppCommands: func(app string) []tool.Command {
 		return []tool.Command{
@@ -84,8 +84,8 @@ var dashboardSpec = tool.DashboardSpec{
 	},
 }
 
-// links returns links for the provided app or version. Only one of app or
-// version should be non-empty.
+// links returns links for the provided app or app version. If version is empty,
+// links are provided for the app.
 func links(app, version string) (tool.Links, error) {
 	// Get the account and project.
 	config, err := setupCloudConfig()
@@ -101,9 +101,9 @@ func links(app, version string) (tool.Links, error) {
 	// output was never intended to be shown to humans. Now that we are, we
 	// might want to prettify it.
 	var query string
-	if app != "" {
+	if version == "" { // app
 		query = fmt.Sprintf(`app == %q`, app)
-	} else {
+	} else { // app version
 		query = fmt.Sprintf(`full_version == %q`, version)
 	}
 	query += ` && !("serviceweaver/system" in attrs)`

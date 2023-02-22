@@ -27,14 +27,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/browser"
-	"golang.org/x/exp/maps"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"github.com/pkg/browser"
+	"golang.org/x/exp/maps"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 var (
@@ -93,10 +93,12 @@ type DashboardSpec struct {
 	// that we can use to contact the controller.
 	Controller func(context.Context) (string, *http.Client, error)
 
-	AppLinks           func(ctx context.Context, app string) (Links, error)   // app links
-	DeploymentLinks    func(ctx context.Context, depId string) (Links, error) // deployment links
-	AppCommands        func(app string) []Command                             // app commands
-	DeploymentCommands func(depId string) []Command                           // deployment commands
+	Init func(ctx context.Context) error // initializes the dashboard
+
+	AppLinks           func(ctx context.Context, app string) (Links, error)          // app links
+	DeploymentLinks    func(ctx context.Context, app, version string) (Links, error) // version links
+	AppCommands        func(app string) []Command                                    // app commands
+	DeploymentCommands func(depId string) []Command                                  // deployment commands
 }
 
 // DashboardCmd implements the "weaver dashboard" command. "weaver dashboard"
@@ -118,6 +120,11 @@ Flags:
 }
 
 func (s *DashboardSpec) dashboardFn(ctx context.Context, _ []string) error {
+	if s.Init != nil {
+		if err := s.Init(ctx); err != nil {
+			return err
+		}
+	}
 	addr, client, err := s.Controller(ctx)
 	if err != nil {
 		return err
@@ -411,7 +418,7 @@ func (s *server) appVersionHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sortAppsAndVersions(status)
-	links, err := s.spec.DeploymentLinks(r.Context(), version)
+	links, err := s.spec.DeploymentLinks(r.Context(), app, version)
 	if err != nil {
 		http.Error(w, "internal error: cannot get links", http.StatusInternalServerError)
 		return

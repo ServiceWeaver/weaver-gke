@@ -18,25 +18,46 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/url"
+	"os"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/local"
 	"github.com/ServiceWeaver/weaver-gke/internal/tool"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
+	"github.com/ServiceWeaver/weaver/runtime/perfetto"
 )
 
 var dashboardSpec = tool.DashboardSpec{
 	Tool:       "weaver gke-local",
 	Flags:      flag.NewFlagSet("dashboard", flag.ContinueOnError),
 	Controller: local.Nanny,
+	Init: func(ctx context.Context) error {
+		db, err := perfetto.Open(ctx)
+		if err != nil {
+			return err
+		}
+		go func() {
+			defer db.Close()
+			if db.Serve(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, "Error serving local traces", err)
+			}
+		}()
+		return nil
+	},
 	AppLinks: func(ctx context.Context, app string) (tool.Links, error) {
 		// TODO(mwhittaker): Add a metrics and tracing link, to /metrics and
 		// perfetto respectively.
 		return tool.Links{}, nil
 	},
-	DeploymentLinks: func(ctx context.Context, depId string) (tool.Links, error) {
-		// TODO(mwhittaker): Add a metrics and tracing link, to /metrics and
-		// perfetto respectively.
-		return tool.Links{}, nil
+	DeploymentLinks: func(ctx context.Context, app, version string) (tool.Links, error) {
+		// TODO(mwhittaker): Add a metrics link to /metrics.
+		v := url.Values{}
+		v.Set("app", app)
+		v.Set("version", version)
+		tracerURL := url.QueryEscape("http://127.0.0.1:9001?" + v.Encode())
+		return tool.Links{
+			Traces: "https://ui.perfetto.dev/#!/?url=" + tracerURL,
+		}, nil
 	},
 	AppCommands: func(app string) []tool.Command {
 		return []tool.Command{
