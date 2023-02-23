@@ -19,25 +19,24 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/exporters/jaeger"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
-	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
-	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/ServiceWeaver/weaver/runtime/perfetto"
+	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
+	"github.com/google/uuid"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // createBabysitter creates a babysitter in a gke-local deployment.
 func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	group *protos.ColocationGroup, logDir string) (*babysitter.Babysitter, error) {
 	groupReplicaID := uuid.New().String()
-
 	ls, err := logging.NewFileStore(logDir)
 	if err != nil {
 		return nil, fmt.Errorf("creating log store: %w", err)
@@ -45,46 +44,16 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	defer ls.Close()
 	logSaver := ls.Add
 
-	// Export traces to the Jaeger collector. By default, traces are exported to
-	// http://localhost:14268/api/traces. The user can override the exporting
-	// URL by setting the OTEL_EXPORTER_JAEGER_ENDPOINT environment variable.
-	//
-	// Traces are exported without any user or password options. The user
-	// can override the username and password by setting the
-	// OTEL_EXPORTER_JAEGER_USER and OTEL_EXPORTER_JAEGER_PASSWORD environment
-	// variables.
-	traceExporter, err := jaeger.New(jaeger.WithCollectorEndpoint())
+	// Setup trace recording.
+	traceDB, err := perfetto.Open(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot open Perfetto database: %w", err)
 	}
-	defer traceExporter.Shutdown(ctx)
-	const traceMinLogInterval = 5 * time.Second
-	const traceMaxLogInterval = 5 * time.Minute
-	var traceLogInterval time.Duration
-	var traceLastLogTime time.Time
 	traceSaver := func(spans []sdktrace.ReadOnlySpan) error {
-		err := traceExporter.ExportSpans(ctx, spans)
-		if err == nil {
-			traceLogInterval = 0 // reset the log interval
-			return nil
-		}
-		if time.Since(traceLastLogTime) < traceLogInterval {
-			// Swallow the error to avoid spamming the logs.
-			return nil
-		}
-		traceLastLogTime = time.Now()
-		traceLogInterval *= 2
-		if traceLogInterval < traceMinLogInterval {
-			traceLogInterval = traceMinLogInterval
-		}
-		if traceLogInterval > traceMaxLogInterval {
-			traceLogInterval = traceMaxLogInterval
-		}
-		return fmt.Errorf("Cannot save traces. Note: To force Service Weaver to"+
-			"export traces to a different Jaeger endpoint, restart your "+
-			"application with the OTEL_EXPORTER_JAEGER_ENDPOINT set: %w", err)
+		return traceDB.Store(ctx, cfg.Deployment.App.Name, cfg.Deployment.Id, spans)
 	}
 
+	// Setup metrics recording.
 	metricDBFile, err := metricDBFilename()
 	if err != nil {
 		return nil, err
