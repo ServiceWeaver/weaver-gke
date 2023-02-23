@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 var now = time.Now()
@@ -54,7 +54,7 @@ func m(id uint64, name string, val float64, labels ...string) *metrics.MetricSna
 func TestGetMetricCounts(t *testing.T) {
 	ctx := context.Background()
 	fname := filepath.Join(t.TempDir(), "local.metrics_test.db")
-	db, err := metricdb.Open(ctx, fname)
+	db, err := metricdb.OpenFile(ctx, fname)
 	if err != nil {
 		t.Fatal(err)
 	}

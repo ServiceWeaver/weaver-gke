@@ -20,11 +20,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 var now = time.Now()
@@ -69,7 +69,7 @@ func hm(id uint64, name string, bounds []float64, counts []uint64, labels ...str
 func TestDB(t *testing.T) {
 	ctx := context.Background()
 	fname := filepath.Join(t.TempDir(), "metricdb.db_test.db")
-	db, err := metricdb.Open(ctx, fname)
+	db, err := metricdb.OpenFile(ctx, fname)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -93,7 +93,8 @@ type DashboardSpec struct {
 	// that we can use to contact the controller.
 	Controller func(context.Context) (string, *http.Client, error)
 
-	Init func(ctx context.Context) error // initializes the dashboard
+	// Initializes the dashboard.
+	Init func(ctx context.Context, mux *http.ServeMux) error
 
 	AppLinks           func(ctx context.Context, app string) (Links, error)          // app links
 	DeploymentLinks    func(ctx context.Context, app, version string) (Links, error) // version links
@@ -120,11 +121,6 @@ Flags:
 }
 
 func (s *DashboardSpec) dashboardFn(ctx context.Context, _ []string) error {
-	if s.Init != nil {
-		if err := s.Init(ctx); err != nil {
-			return err
-		}
-	}
 	addr, client, err := s.Controller(ctx)
 	if err != nil {
 		return err
@@ -134,6 +130,19 @@ func (s *DashboardSpec) dashboardFn(ctx context.Context, _ []string) error {
 		controllerAddr:   addr,
 		controllerClient: client,
 	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", srv.homeHandler)
+	mux.HandleFunc("/favicon.ico", http.NotFound)
+	mux.HandleFunc("/app", srv.appHandler)
+	mux.HandleFunc("/version", srv.appVersionHandler)
+	mux.Handle("/assets/", http.FileServer(http.FS(assets)))
+
+	if s.Init != nil {
+		if err := s.Init(ctx, mux); err != nil {
+			return err
+		}
+	}
+
 	lis, err := (&net.ListenConfig{}).Listen(ctx, "tcp", ":0")
 	if err != nil {
 		return err
@@ -150,12 +159,7 @@ func (s *DashboardSpec) dashboardFn(ctx context.Context, _ []string) error {
 		fmt.Fprintln(os.Stderr, "Dashboard available at:", dashboardURL)
 		browser.OpenURL(dashboardURL)
 	}()
-	http.HandleFunc("/", srv.homeHandler)
-	http.HandleFunc("/favicon.ico", http.NotFound)
-	http.HandleFunc("/app", srv.appHandler)
-	http.HandleFunc("/version", srv.appVersionHandler)
-	http.Handle("/assets/", http.FileServer(http.FS(assets)))
-	return http.Serve(lis, nil /*handler*/)
+	return http.Serve(lis, mux)
 }
 
 type server struct {
