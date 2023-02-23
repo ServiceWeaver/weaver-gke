@@ -21,7 +21,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 )
 
-// DefaultDataDir returns the default directory, $XDG_DATA_HOME/serviceweaver, in
+// defaultDataDir returns the default directory, $XDG_DATA_HOME/serviceweaver, in
 // which the gke-local data should be stored. If XDG_DATA_HOME is not set,
 // then ~/.local/share is used. See [1] for more information.
 //

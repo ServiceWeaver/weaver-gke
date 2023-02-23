@@ -39,9 +39,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/ServiceWeaver/weaver-gke/internal"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
@@ -55,6 +52,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/uuid"
 )
 
 // URL on the controller where the metrics are exported in the Prometheus format.
@@ -129,11 +127,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
 
-	metricDBFile, err := metricDBFilename()
-	if err != nil {
-		return err
-	}
-	metricDB, err := metricdb.Open(ctx, metricDBFile)
+	metricDB, err := metricdb.Open(ctx)
 	if err != nil {
 		return err
 	}
@@ -159,9 +153,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		}
 
 		// Add the Prometheus metric handler.
-		reg := prometheus.NewRegistry() // New registry so we're the only collector
-		reg.Register(newMetricExporter(metricDB, logger))
-		mux.Handle(PrometheusURL, promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+		mux.Handle("/metrics", NewPrometheusHandler(metricDB, logger))
 	}
 
 	if opts.StartDistributor {

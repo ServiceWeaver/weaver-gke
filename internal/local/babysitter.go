@@ -54,11 +54,7 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	}
 
 	// Setup metrics recording.
-	metricDBFile, err := metricDBFilename()
-	if err != nil {
-		return nil, err
-	}
-	metricDB, err := metricdb.Open(ctx, metricDBFile)
+	metricDB, err := metricdb.Open(ctx)
 	if err != nil {
 		return nil, err
 	}

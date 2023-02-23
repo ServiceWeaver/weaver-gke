@@ -18,10 +18,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"net/url"
 	"os"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/local"
+	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
 	"github.com/ServiceWeaver/weaver-gke/internal/tool"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/perfetto"
@@ -31,7 +33,18 @@ var dashboardSpec = tool.DashboardSpec{
 	Tool:       "weaver gke-local",
 	Flags:      flag.NewFlagSet("dashboard", flag.ContinueOnError),
 	Controller: local.Nanny,
-	Init: func(ctx context.Context) error {
+	Init: func(ctx context.Context, mux *http.ServeMux) error {
+		logger := logging.StderrLogger(logging.Options{})
+
+		// Add the Prometheus handler.
+		metricDB, err := metricdb.Open(ctx)
+		if err != nil {
+			return err
+		}
+		mux.Handle("/metrics", local.NewPrometheusHandler(metricDB, &logger))
+
+		// Start a separate Perfetto server, which has to run on
+		// a specific port.
 		db, err := perfetto.Open(ctx)
 		if err != nil {
 			return err
@@ -45,9 +58,13 @@ var dashboardSpec = tool.DashboardSpec{
 		return nil
 	},
 	AppLinks: func(ctx context.Context, app string) (tool.Links, error) {
-		// TODO(mwhittaker): Add a metrics and tracing link, to /metrics and
-		// perfetto respectively.
-		return tool.Links{}, nil
+		v := url.Values{}
+		v.Set("app", app)
+		tracerURL := url.QueryEscape("http://127.0.0.1:9001?" + v.Encode())
+		return tool.Links{
+			Traces:  "https://ui.perfetto.dev/#!/?url=" + tracerURL,
+			Metrics: "/metrics?" + v.Encode(),
+		}, nil
 	},
 	DeploymentLinks: func(ctx context.Context, app, version string) (tool.Links, error) {
 		// TODO(mwhittaker): Add a metrics link to /metrics.
@@ -56,7 +73,8 @@ var dashboardSpec = tool.DashboardSpec{
 		v.Set("version", version)
 		tracerURL := url.QueryEscape("http://127.0.0.1:9001?" + v.Encode())
 		return tool.Links{
-			Traces: "https://ui.perfetto.dev/#!/?url=" + tracerURL,
+			Traces:  "https://ui.perfetto.dev/#!/?url=" + tracerURL,
+			Metrics: "/metrics?" + v.Encode(),
 		}, nil
 	},
 	AppCommands: func(app string) []tool.Command {
