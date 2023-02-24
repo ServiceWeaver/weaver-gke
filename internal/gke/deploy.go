@@ -30,6 +30,11 @@ import (
 
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
+	"github.com/ServiceWeaver/weaver-gke/internal/proto"
+	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/iam/v1"
@@ -48,11 +53,6 @@ import (
 	vautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	backendconfigv1 "k8s.io/ingress-gce/pkg/apis/backendconfig/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
-	"github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
-	"github.com/ServiceWeaver/weaver-gke/internal/proto"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 )
 
 // All of the functions in this file are invoked only from the user machine,
@@ -1055,6 +1055,12 @@ func ensurePermanentSpareCapacity(ctx context.Context, cluster *ClusterInfo, cpu
 // hostnames of the form "*.<region>.serviceweaver.internal" to the given internal
 // regional gateway IP address.
 func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP string) error {
+	networkURL := getComputeURL(cluster.CloudConfig, computeResource{
+		Region: "", // global
+		Type:   "networks",
+		Name:   "default",
+	})
+
 	// Ensure a Service Weaver managed DNS zone has been created.
 	if err := patchDNSZone(ctx, cluster.CloudConfig, patchOptions{}, &dns.ManagedZone{
 		Name: managedDNSZoneName,
@@ -1062,6 +1068,13 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 			"Managed zone for domain %s", distributor.InternalDNSDomain),
 		DnsName:    distributor.InternalDNSDomain + ".",
 		Visibility: "private",
+		PrivateVisibilityConfig: &dns.ManagedZonePrivateVisibilityConfig{
+			Networks: []*dns.ManagedZonePrivateVisibilityConfigNetwork{
+				{
+					NetworkUrl: networkURL,
+				},
+			},
+		},
 	}); err != nil {
 		return err
 	}
