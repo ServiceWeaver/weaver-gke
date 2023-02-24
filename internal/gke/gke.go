@@ -530,7 +530,7 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *lo
 			Namespace: namespaceName,
 			Annotations: map[string]string{
 				serviceListenerKey:                lisEnc,
-				backendConfigServiceAnnotationKey: fmt.Sprintf(`{"default": "%s"}`, svcName),
+				backendConfigServiceAnnotationKey: fmt.Sprintf(`{"default": "%s"}`, backendConfigName),
 			},
 			Labels: map[string]string{
 				appNameKey:      dep.App.Name,

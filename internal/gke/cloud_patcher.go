@@ -25,6 +25,8 @@ import (
 	compute "cloud.google.com/go/compute/apiv1"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
+	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/googleapis/gax-go/v2/apierror"
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/googleapi"
@@ -33,8 +35,6 @@ import (
 	artifactregistrypb "google.golang.org/genproto/googleapis/devtools/artifactregistry/v1beta2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 )
 
 // noRetryErr is an error that shouldn't be retried.
@@ -428,7 +428,6 @@ func patchCluster(ctx context.Context, config CloudConfig, opts patchOptions, lo
 }
 
 // patchDNSZone update the managed DNS zone with the new configuration.
-// TODO(spetrovic): Delete this function.
 func patchDNSZone(ctx context.Context, config CloudConfig, opts patchOptions, zone *dns.ManagedZone) error {
 	dnsService, err := dns.NewService(ctx, config.ClientOptions()...)
 	if err != nil {
