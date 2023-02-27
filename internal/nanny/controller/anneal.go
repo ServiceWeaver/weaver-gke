@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // ticker returns a new time.Ticker with the provided duration. If the
@@ -198,8 +198,9 @@ func (c *controller) applyLocationUpdate(ctx context.Context, location string, s
 			c.logger.Debug("version not found", "version", dv.VersionId)
 			continue
 		}
-
 		distributor := v.Distributors[location]
+		distributor.Processes = dv.Processes
+
 		if v.WaveIdx != distributor.WaveIdx ||
 			distributor.Status == AppVersionDistributorStatus_ROLLED_OUT ||
 			distributor.Status == AppVersionDistributorStatus_DELETING ||
@@ -212,8 +213,6 @@ func (c *controller) applyLocationUpdate(ctx context.Context, location string, s
 			// This version has been fully rolled out in this location.
 			distributor.Status = AppVersionDistributorStatus_ROLLED_OUT
 		}
-
-		distributor.Processes = dv.Processes
 
 		// Check if every location in the current wave has fully rolled out.
 		waveRolledOut := true
