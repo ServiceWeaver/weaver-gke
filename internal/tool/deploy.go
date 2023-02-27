@@ -26,7 +26,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver/runtime"
@@ -37,6 +36,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"github.com/google/uuid"
 )
 
 const (
@@ -219,6 +219,10 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 
 // startRollout starts the rollout of the given application version.
 func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) error {
+	if err := pickDeployRegions(cfg); err != nil {
+		return err
+	}
+
 	req, client, err := d.PrepareRollout(ctx, cfg)
 	if err != nil {
 		return err
@@ -241,4 +245,29 @@ func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) er
 	}
 	fmt.Fprintln(os.Stderr, "Error")
 	return fmt.Errorf("timeout trying to deploy the app; last error: %w", err)
+}
+
+// pickDeployRegions ensures that the application config has a valid set of
+// unique regions to deploy the application. If the app config doesn't specify
+// any regions where to deploy the app, we pick the regions.
+//
+// TODO(rgrandl): We pick "us-west1" as the default region. However, we should
+// determine the set of regions to deploy the app based on various constraints
+// (e.g., traffic patterns, geographical location, etc.).
+func pickDeployRegions(cfg *config.GKEConfig) error {
+	if len(cfg.Regions) == 0 {
+		cfg.Regions = []string{"us-west1"}
+		return nil
+	}
+
+	// Ensure that the set of regions is unique.
+	unique := make(map[string]bool, len(cfg.Regions))
+	for _, elem := range cfg.Regions {
+		if unique[elem] {
+			return fmt.Errorf("the set of regions should be unique; found %s "+
+				"multiple times", elem)
+		}
+		unique[elem] = true
+	}
+	return nil
 }
