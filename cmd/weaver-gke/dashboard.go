@@ -16,11 +16,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/gke"
@@ -100,22 +102,66 @@ func links(app, version string) (tool.Links, error) {
 	// TODO(mwhittaker): Translate produces ugly queries because it's
 	// output was never intended to be shown to humans. Now that we are, we
 	// might want to prettify it.
-	var query string
+	var logQuery string
 	if version == "" { // app
-		query = fmt.Sprintf(`app == %q`, app)
+		logQuery = fmt.Sprintf(`app == %q`, app)
 	} else { // app version
-		query = fmt.Sprintf(`full_version == %q`, version)
+		logQuery = fmt.Sprintf(`full_version == %q`, version)
 	}
-	query += ` && !("serviceweaver/system" in attrs)`
-	query, err = gke.Translate(config.Project, query)
+	logQuery += ` && !("serviceweaver/system" in attrs)`
+	logQuery, err = gke.Translate(config.Project, logQuery)
 	if err != nil {
 		return tool.Links{}, err
 	}
-	query = url.QueryEscape(query)
+	logQuery = url.QueryEscape(logQuery)
 
+	var traceFilter string
+	if version == "" { // app
+		traceFilter, err = encodeTraceFilter("serviceweaver.app", app)
+	} else { // app version
+		traceFilter, err = encodeTraceFilter("serviceweaver.version", version)
+	}
+	if err != nil {
+		return tool.Links{}, err
+	}
+	traceQuery := url.QueryEscape(fmt.Sprintf(`("traceFilter":("chips":"%s"))`, traceFilter))
 	return tool.Links{
 		Metrics: fmt.Sprintf("https://console.cloud.google.com/monitoring/metrics-explorer?authuser=%s&project=%s", account, project),
-		Logs:    fmt.Sprintf("https://console.cloud.google.com/logs/query?authuser=%s&project=%s&query=%s", account, project, query),
-		Traces:  fmt.Sprintf("https://console.cloud.google.com/traces/list?authuser=%s&project=%s", account, project),
+		Logs:    fmt.Sprintf("https://console.cloud.google.com/logs/query?authuser=%s&project=%s&query=%s", account, project, logQuery),
+		Traces:  fmt.Sprintf("https://console.cloud.google.com/traces/list?authuser=%s&project=%s&pageState=%s", account, project, traceQuery),
 	}, nil
+}
+
+// NOTE: A bit of reverse-engineered magic below to encode the trace filter into
+// the Google Cloud Tracing URL.
+
+const (
+	urlSafeColon = "_3A"
+	urlSafeQuote = "_22"
+	urlSafeComma = "_2C"
+	urlSafeSlash = "_5C"
+)
+
+type traceFilterData struct {
+	K string `json:"k"`
+	T int    `json:"t"`
+	V string `json:"v"`
+}
+
+func encodeTraceFilter(key, value string) (string, error) {
+	safe := func(val string) string {
+		val = strings.ReplaceAll(val, "\"", urlSafeQuote)
+		val = strings.ReplaceAll(val, ":", urlSafeColon)
+		val = strings.ReplaceAll(val, ",", urlSafeComma)
+		return strings.ReplaceAll(val, "\\", urlSafeSlash)
+	}
+	b, err := json.Marshal([]traceFilterData{{
+		K: key,
+		T: 10,
+		V: safe(fmt.Sprintf(`\"%s\"`, value)),
+	}})
+	if err != nil {
+		return "", err
+	}
+	return url.QueryEscape(safe(string(b))), nil
 }
