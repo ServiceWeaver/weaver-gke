@@ -305,7 +305,7 @@ func finalizeConfig(config CloudConfig, cfg *config.GKEConfig) error {
 		scanner := bufio.NewScanner(os.Stdin)
 		fmt.Print(
 			`No rollout duration specified in the config: the app version will be
-	rolled out in all locations right away. Are you sure you want to proceed? [Y/n] `)
+rolled out in all locations right away. Are you sure you want to proceed? [Y/n] `)
 		scanner.Scan()
 		text := scanner.Text()
 		if text == "" || text == "y" || text == "Y" {
@@ -318,33 +318,6 @@ func finalizeConfig(config CloudConfig, cfg *config.GKEConfig) error {
 	// Update the application binary path to point to a path inside the
 	// container.
 	cfg.Deployment.App.Binary = fmt.Sprintf("/weaver/%s", filepath.Base(cfg.Deployment.App.Binary))
-	return pickDeployRegions(cfg)
-}
-
-// pickDeployRegions ensures that the application config has a valid set of
-// unique regions to deploy the application.
-//
-// If the app config doesn't specify any regions where to deploy the app, Service Weaver
-// will pick the regions.
-//
-// TODO(rgrandl): We pick "us-west1" as the default region. However, we should
-// determine the set of regions to deploy the app based on various constraints
-// (e.g., traffic patterns, geographical location, etc.).
-func pickDeployRegions(cfg *config.GKEConfig) error {
-	if len(cfg.Regions) == 0 {
-		cfg.Regions = []string{"us-west1"}
-		return nil
-	}
-
-	// Ensure that the set of regions is unique.
-	unique := make(map[string]bool, len(cfg.Regions))
-	for _, elem := range cfg.Regions {
-		if unique[elem] {
-			return fmt.Errorf("the set of regions should be unique; found %s "+
-				"multiple times", elem)
-		}
-		unique[elem] = true
-	}
 	return nil
 }
 
