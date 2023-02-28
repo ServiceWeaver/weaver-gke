@@ -20,11 +20,11 @@ import (
 	"sort"
 	"time"
 
-	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // This file contains code for the distributor's annealing loop.
@@ -496,7 +496,11 @@ func (d *Distributor) detectAppliedTraffic(ctx context.Context, cadence time.Dur
 		app, version string
 		count        float64
 	}
-	hosts := map[string][]appVersionCount{}
+	type hostInfo struct {
+		totalCount float64
+		versions   []appVersionCount
+	}
+	hosts := map[string]*hostInfo{}
 	for _, mc := range counts {
 		if len(mc.LabelVals) != 3 { // should never happen
 			return fmt.Errorf("internal error: unexpected number of label values %v", mc.LabelVals)
@@ -505,11 +509,17 @@ func (d *Distributor) detectAppliedTraffic(ctx context.Context, cadence time.Dur
 		app := mc.LabelVals[0]
 		version := mc.LabelVals[1]
 		host := mc.LabelVals[2]
-		hosts[host] = append(hosts[host], appVersionCount{
+		info, ok := hosts[host]
+		if !ok {
+			info = &hostInfo{}
+			hosts[host] = info
+		}
+		info.versions = append(info.versions, appVersionCount{
 			app:     app,
 			version: version,
 			count:   mc.Count,
 		})
+		info.totalCount += mc.Count
 	}
 
 	// Compute the actual traffic fraction for each application version at
@@ -518,22 +528,18 @@ func (d *Distributor) detectAppliedTraffic(ctx context.Context, cadence time.Dur
 		app, version, host string
 	}
 	actualTraffic := map[appVersionHost]float32{}
-	for host, counts := range hosts {
-		var total float64
-		for _, c := range counts {
-			total += c.count
-		}
-		if total == 0 {
+	for host, info := range hosts {
+		if info.totalCount == 0 {
 			// Zero traffic for the host: it means that the per-app-version
 			// traffic is zero for all app versions.
 			continue
 		}
-		for _, c := range counts {
-			traffic := float32(c.count / total)
+		for _, v := range info.versions {
+			traffic := float32(v.count / info.totalCount)
 			if traffic == 0 {
 				continue
 			}
-			actualTraffic[appVersionHost{c.app, c.version, host}] = traffic
+			actualTraffic[appVersionHost{v.app, v.version, host}] = traffic
 		}
 	}
 
@@ -557,10 +563,18 @@ func (d *Distributor) detectAppliedTraffic(ctx context.Context, cadence time.Dur
 			for _, lis := range v.Listeners {
 				host, _ := d.hostname(lis, v.Config)
 				actual := actualTraffic[appVersionHost{app, v.Config.Deployment.Id, host}]
-				if actual < (expected - maxDivergence) {
-					matches = false
-					d.logger.Debug("traffic fraction not reached", "host", host, "app", app, "version", v.Config.Deployment.Id, "want", expected, "got", actual)
+				if actual >= (expected - maxDivergence) {
+					// Matches the expected traffic.
+					continue
 				}
+				if hosts[host] == nil || hosts[host].totalCount == 0 {
+					// No traffic for the host across all versions.
+					// We count the traffic fraction as applied, as we don't
+					// know if the user plans to send any traffic at all.
+					continue
+				}
+				matches = false
+				d.logger.Debug("traffic fraction not reached", "host", host, "app", app, "version", v.Config.Deployment.Id, "want", expected, "got", actual)
 			}
 			if matches {
 				nanny.IncrementAppliedDuration(v.Schedule, cadence)

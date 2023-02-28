@@ -25,15 +25,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/types/known/durationpb"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // hostsState represents the traffic state for all hosts at a given time.
@@ -251,11 +251,11 @@ func TestUpdate(t *testing.T) {
 					h("l1.us-west1.serviceweaver.internal", false /*public*/, share("v1", 1.0))),
 				stateAt(0,
 					h("l1.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.9), share("v2", 0.1))),
-				stateAt(14,
+				stateAt(11,
 					h("l1.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.7), share("v2", 0.3))),
-				stateAt(28,
+				stateAt(25,
 					h("l1.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.2), share("v2", 0.8))),
-				stateAt(42, // v2 fully rolled out
+				stateAt(39, // v2 fully rolled out
 					h("l1.us-west1.serviceweaver.internal", false /*public*/, share("v2", 1.0))),
 			},
 		},
@@ -374,15 +374,15 @@ func TestUpdate(t *testing.T) {
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.9), share("v2", 0.1)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(14,
+				stateAt(11,
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.7), share("v2", 0.3)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(28,
+				stateAt(25,
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.2), share("v2", 0.8)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(42, // v2 fully rolled out
+				stateAt(39, // v2 fully rolled out
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v2", 1.0)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
@@ -433,15 +433,15 @@ func TestUpdate(t *testing.T) {
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.8), share("v2", 0.2)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(14,
+				stateAt(10,
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.6), share("v2", 0.4)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(28,
+				stateAt(24,
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.3), share("v2", 0.7)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(42, // v1 fully rolled out
+				stateAt(38, // v1 fully rolled out
 					// NOTE: v2 traffic fraction hasn't changed since the
 					// previous state, so v2 won't experience any traffic
 					// application delays. This state will therefore take only
@@ -449,7 +449,7 @@ func TestUpdate(t *testing.T) {
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.3), share("v2", 0.7)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
-				stateAt(52, // v2 fully rolled out
+				stateAt(48, // v2 fully rolled out
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v2", 1.0)),
 					h("l3.host.com", true /*public*/, share("v2", 1.0))),
@@ -538,19 +538,19 @@ func TestUpdate(t *testing.T) {
 					h("l3.host.com", true /*public*/, share("v1", 0.9), share("v2", 0.1)),
 					h("l4.us-west1.serviceweaver.internal", false /*public*/, share("v2", 0.8), share("v3", 0.2)),
 					h("l5.host.com", true /*public*/, share("v3", 1.0))),
-				stateAt(14,
+				stateAt(11,
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v1", 0.3), share("v2", 0.3), share("v3", 0.4)),
 					h("l3.host.com", true /*public*/, share("v1", 0.7), share("v2", 0.3)),
 					h("l4.us-west1.serviceweaver.internal", false /*public*/, share("v2", 0.6), share("v3", 0.4)),
 					h("l5.host.com", true /*public*/, share("v3", 1.0))),
-				stateAt(28,
+				stateAt(25,
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v2", 0.3), share("v3", 0.7)),
 					h("l3.host.com", true /*public*/, share("v1", 0.2), share("v2", 0.8)),
 					h("l4.us-west1.serviceweaver.internal", false /*public*/, share("v2", 0.3), share("v3", 0.7)),
 					h("l5.host.com", true /*public*/, share("v3", 1.0))),
-				stateAt(42,
+				stateAt(39,
 					// NOTE: v2 rollout is paused forever at this point because
 					// its l2 listener hasn't been getting the expected traffic
 					// (i.e., 0.8) to successfully validate, due to v3.
@@ -563,7 +563,7 @@ func TestUpdate(t *testing.T) {
 					h("l3.host.com", true /*public*/, share("v1", 0.2), share("v2", 0.8)),
 					h("l4.us-west1.serviceweaver.internal", false /*public*/, share("v2", 0.3), share("v3", 0.7)),
 					h("l5.host.com", true /*public*/, share("v3", 1.0))),
-				stateAt(52, // v3 fully rolled out
+				stateAt(49, // v3 fully rolled out
 					h("l1.host.com", true /*public*/, share("v1", 1.0)),
 					h("l2.us-west1.serviceweaver.internal", false /*public*/, share("v3", 1.0)),
 					h("l3.host.com", true /*public*/, share("v1", 0.2), share("v2", 0.8)),
@@ -600,9 +600,9 @@ func TestUpdate(t *testing.T) {
 					h("l1.host.com", true /*public*/, share("v1", 1.0))),
 				stateAt(0,
 					h("l1.host.com", true /*public*/, share("v1", 0.8), share("v3", 0.1), share("v2", 0.1))),
-				stateAt(14,
+				stateAt(11,
 					h("l1.host.com", true /*public*/, share("v3", 0.2), share("v2", 0.8))),
-				stateAt(28, // v2 fully rolled out
+				stateAt(25, // v2 fully rolled out
 					h("l1.host.com", true /*public*/, share("v2", 1.0))),
 			},
 		},
