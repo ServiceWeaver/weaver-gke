@@ -2,16 +2,6 @@ module github.com/ServiceWeaver/weaver-gke
 
 go 1.19
 
-exclude (
-	// Cannot use Kubernetes library versions newer than v0.26 until the
-	// `gcloud get-credentials` command beings respecting the --account
-	// and --project flags again.
-	k8s.io/api v0.26.0
-	k8s.io/apiextensions-apiserver v0.26.0
-	k8s.io/apimachinery v0.26.0
-	k8s.io/client-go v0.26.0
-)
-
 require (
 	cloud.google.com/go/artifactregistry v1.10.0
 	cloud.google.com/go/compute v1.18.0
@@ -40,11 +30,11 @@ require (
 	google.golang.org/genproto v0.0.0-20230202175211-008b39050e57
 	google.golang.org/grpc v1.52.3
 	google.golang.org/protobuf v1.28.1
-	k8s.io/api v0.25.4
-	k8s.io/apiextensions-apiserver v0.25.4
-	k8s.io/apimachinery v0.25.4
+	k8s.io/api v0.26.0
+	k8s.io/apiextensions-apiserver v0.26.0
+	k8s.io/apimachinery v0.26.0
 	k8s.io/autoscaler/vertical-pod-autoscaler v0.13.0
-	k8s.io/client-go v0.25.4
+	k8s.io/client-go v0.26.0
 	k8s.io/ingress-gce v1.20.2
 	sigs.k8s.io/gateway-api v0.6.0
 )
