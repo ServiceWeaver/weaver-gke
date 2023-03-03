@@ -88,7 +88,6 @@ func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region str
 	if _, err := runGcloud(config, "", cmdOptions{
 		EnvOverrides: []string{
 			fmt.Sprintf("KUBECONFIG=%s", kubeFileName),
-			"USE_GKE_GCLOUD_AUTH_PLUGIN=False",
 		}},
 		"container", "clusters", "get-credentials", cluster, "--region", region,
 	); err != nil {
