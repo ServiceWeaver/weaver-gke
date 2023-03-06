@@ -916,6 +916,9 @@ func scaleDownSystemServices(ctx context.Context, cluster *ClusterInfo) error {
 		if errors.IsNotFound(err) { // deployment doesn't exist: ok.
 			continue
 		}
+		if err != nil {
+			return err
+		}
 		if dep.Spec.Replicas != nil && *dep.Spec.Replicas == 0 {
 			// Nothing to do.
 			continue
