@@ -29,13 +29,14 @@ import (
 
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
-	"github.com/mattn/go-sqlite3"
 	"golang.org/x/exp/maps"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // T represents a metrics database.
 type T struct {
-	// We store metrics in a sqlite3 DB spread across three tables:
+	// We store metrics in a sqlite DB spread across three tables:
 	// (1) defs:    definitions of known metrics.
 	// (2) labels:  labels attached to metric definitions.
 	// (3) records: recorded metric values.
@@ -75,7 +76,7 @@ func OpenFile(ctx context.Context, fname string) (*T, error) {
 	//   https://www.sqlite.org/pragma.html#pragma_locking_mode
 	//   https://www.sqlite.org/pragma.html#pragma_busy_timeout
 	const params = "?_locking_mode=NORMAL&_busy_timeout=10000"
-	db, err := sql.Open("sqlite3", fname+params)
+	db, err := sql.Open("sqlite", fname+params)
 	if err != nil {
 		return nil, fmt.Errorf("open metric db %q: %w", fname, err)
 	}
@@ -318,7 +319,7 @@ func (s *T) execDB(ctx context.Context, query string, args ...any) (sql.Result, 
 
 // isLocked returns whether the error is a "database is locked" error. See Note above.
 func isLocked(err error) bool {
-	var sqlError sqlite3.Error
+	sqlError := &sqlite.Error{}
 	ok := errors.As(err, &sqlError)
-	return ok && (sqlError.Code == sqlite3.ErrBusy || sqlError.Code == sqlite3.ErrLocked)
+	return ok && (sqlError.Code() == sqlite3.SQLITE_BUSY || sqlError.Code() == sqlite3.SQLITE_LOCKED)
 }

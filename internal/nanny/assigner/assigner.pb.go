@@ -799,13 +799,10 @@ func (x *Assignment) GetStats() *Statistics {
 // resources.
 //
 // Note that for a replicated slice (len(resources) > 1):
-// * perResourceload contains the total load as reported by the latest resource
-//
-//	that has the slice assigned
-//
-// * distribution contains the load distribution along split points for the
-//
-//	given replica
+//   - perResourceload contains the total load as reported by the latest resource
+//     that has the slice assigned
+//   - distribution contains the load distribution along split points for the
+//     given replica
 //
 // Most of the slices will have a single replica; ideally, only hot keys should
 // be replicated. Given that our load metric is req/s it is fair to assume that
