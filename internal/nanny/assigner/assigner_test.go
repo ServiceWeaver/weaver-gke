@@ -21,14 +21,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/google/uuid"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/google/uuid"
 )
 
 // op is an operation performed against an assigner.
@@ -37,39 +37,39 @@ type op interface {
 }
 
 type registerReplica struct {
-	app, id, process string
-	replica          string
+	app, id, group string
+	replica        string
 }
 
 type registerComponent struct {
-	app, id, process string
-	component        string
-	routed           bool
+	app, id, group string
+	component      string
+	routed         bool
 }
 
 type registerListener struct {
-	app, id, process string
-	listener         string
+	app, id, group string
+	listener       string
 }
 
 type reportHealth struct {
-	app, id, process string
-	replica          string
-	health           []protos.HealthStatus
+	app, id, group string
+	replica        string
+	health         []protos.HealthStatus
 }
 
 type checkRoutingInfo struct {
-	app, id, process string
-	numAssignments   int
-	replicas         []string
+	app, id, group string
+	numAssignments int
+	replicas       []string
 }
 
-type checkProcessState struct {
+type checkGroupState struct {
 	app, id string
-	procs   map[string]processState
+	groups  map[string]groupState
 }
 
-type processState struct {
+type groupState struct {
 	Replicas   []string
 	Components []string
 	Listeners  []string
@@ -80,7 +80,7 @@ func (r registerReplica) do(ctx context.Context, assigner *Assigner) error {
 		Replica: &protos.ReplicaToRegister{
 			App:          r.app,
 			DeploymentId: r.id,
-			Process:      r.process,
+			Group:        r.group,
 			Address:      r.replica,
 		},
 	})
@@ -88,33 +88,33 @@ func (r registerReplica) do(ctx context.Context, assigner *Assigner) error {
 
 func (r registerComponent) do(ctx context.Context, assigner *Assigner) error {
 	return assigner.RegisterComponentToStart(ctx, &protos.ComponentToStart{
-		App:          r.app,
-		DeploymentId: r.id,
-		Process:      r.process,
-		Component:    r.component,
-		IsRouted:     r.routed,
+		App:             r.app,
+		DeploymentId:    r.id,
+		ColocationGroup: r.group,
+		Component:       r.component,
+		IsRouted:        r.routed,
 	})
 }
 
 func (r registerListener) do(ctx context.Context, assigner *Assigner) error {
-	return assigner.RegisterListener(ctx, &protos.ListenerToExport{
-		App:          r.app,
-		DeploymentId: r.id,
-		Process:      r.process,
-		Listener:     &protos.Listener{Name: r.listener},
-	})
+	dep := &protos.Deployment{
+		App: &protos.AppConfig{Name: r.app},
+		Id:  r.id,
+	}
+	return assigner.RegisterListener(ctx, dep,
+		&protos.ColocationGroup{Name: r.group}, &protos.Listener{Name: r.listener})
 }
 
 func (r reportHealth) do(ctx context.Context, assigner *Assigner) error {
 	// Give the assigner a chance to learn about weavelets and create probers
-	// for them. It's pointless to report the health for a process that a
+	// for them. It's pointless to report the health for a group that a
 	// weavelet doesn't know about.
 	if err := assigner.annealCheckers(ctx); err != nil {
 		return err
 	}
 
 	for _, h := range r.health {
-		pid := &ProcessId{App: r.app, Id: r.id, Process: r.process}
+		pid := &GroupId{App: r.app, Id: r.id, Group: r.group}
 		if err := reportHealthStatus(ctx, assigner, pid, r.replica, h); err != nil {
 			return err
 		}
@@ -126,7 +126,7 @@ func (c checkRoutingInfo) do(_ context.Context, assigner *Assigner) error {
 	info, err := assigner.GetRoutingInfo(&protos.GetRoutingInfo{
 		App:          c.app,
 		DeploymentId: c.id,
-		Process:      c.process,
+		Group:        c.group,
 		Version:      "",
 	})
 	if err != nil {
@@ -158,8 +158,8 @@ func (c checkRoutingInfo) do(_ context.Context, assigner *Assigner) error {
 	return nil
 }
 
-func (c checkProcessState) do(ctx context.Context, assigner *Assigner) error {
-	state, err := assigner.GetProcessState(ctx, &nanny.ProcessStateRequest{
+func (c checkGroupState) do(ctx context.Context, assigner *Assigner) error {
+	state, err := assigner.GetGroupState(ctx, &nanny.GroupStateRequest{
 		AppName:   c.app,
 		VersionId: c.id,
 	})
@@ -167,12 +167,12 @@ func (c checkProcessState) do(ctx context.Context, assigner *Assigner) error {
 		return err
 	}
 	if state == nil {
-		return fmt.Errorf("nil version process state")
+		return fmt.Errorf("nil version group state")
 	}
-	got := map[string]processState{}
-	for _, proc := range state.Processes {
+	got := map[string]groupState{}
+	for _, group := range state.Groups {
 		var replicas []string
-		for _, replica := range proc.Replicas {
+		for _, replica := range group.Replicas {
 			health := "healthy"
 			if replica.HealthStatus != protos.HealthStatus_HEALTHY {
 				health = "un" + health
@@ -180,18 +180,18 @@ func (c checkProcessState) do(ctx context.Context, assigner *Assigner) error {
 			replicas = append(replicas, fmt.Sprintf("%s:%s", replica.WeaveletAddr, health))
 		}
 		var listeners []string
-		for _, l := range proc.Listeners {
+		for _, l := range group.Listeners {
 			listeners = append(listeners, l.Name)
 		}
-		got[proc.Name] = processState{
+		got[group.Name] = groupState{
 			Replicas:   replicas,
-			Components: proc.Components,
+			Components: group.Components,
 			Listeners:  listeners,
 		}
 	}
 	less := func(x, y string) bool { return x < y }
-	if diff := cmp.Diff(c.procs, got, cmpopts.SortSlices(less)); diff != "" {
-		return fmt.Errorf("bad processes (-want +got)\n%s", diff)
+	if diff := cmp.Diff(c.groups, got, cmpopts.SortSlices(less)); diff != "" {
+		return fmt.Errorf("bad groups (-want +got)\n%s", diff)
 	}
 	return nil
 }
@@ -223,13 +223,13 @@ func TestAssigner(t *testing.T) {
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				checkRoutingInfo{
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 0,
 					replicas:       []string{"replica1"},
 				},
@@ -237,7 +237,7 @@ func TestAssigner(t *testing.T) {
 		},
 		{
 			// Test plan: Register a component to start. Verify that no routing
-			// info is generated because there is no process and replica
+			// info is generated because there is no group and replica
 			// started that manage the component.
 			name: "register_component",
 			operations: []op{
@@ -245,70 +245,70 @@ func TestAssigner(t *testing.T) {
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					process:   "process1",
+					group:     "group1",
 					routed:    false,
 				},
 				checkRoutingInfo{
-					app:     "app1",
-					id:      depId,
-					process: "process1",
+					app:   "app1",
+					id:    depId,
+					group: "group1",
 				},
 			},
 		},
 		{
-			// Test plan: Register a replica for a process 1 and a component to
-			// start but for a different process 2 Verify that routing info is
-			// generated for process 1 but not for process 2.
-			name: "register_component_for_different_process",
+			// Test plan: Register a replica for a group 1 and a component to
+			// start but for a different group 2. Verify that routing info is
+			// generated for group 1 but not for group 2.
+			name: "register_component_for_different_groups",
 			operations: []op{
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					process:   "process2",
+					group:     "group2",
 					routed:    false,
 				},
 				checkRoutingInfo{
 					app:      "app1",
 					id:       depId,
-					process:  "process1",
+					group:    "group1",
 					replicas: []string{"replica1"},
 				},
 				checkRoutingInfo{
-					app:     "app1",
-					id:      depId,
-					process: "process2",
+					app:   "app1",
+					id:    depId,
+					group: "group2",
 				},
 			},
 		},
 		{
-			// Test plan: Register a process to start and a corresponding
-			// unrouted component.  Verify that no routing information is
-			// generated, because the process has no replica.
-			name: "register_process_to_start_register_unrouted_component",
+			// Test plan: Register a group to start and a corresponding
+			// unrouted component. Verify that no routing information is
+			// generated, because the group has no replica.
+			name: "register_group_to_start_register_unrouted_component",
 			operations: []op{
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					process:   "process1",
+					group:     "group1",
 					routed:    false,
 				},
 				checkRoutingInfo{
-					app:     "app1",
-					id:      depId,
-					process: "process1",
+					app:   "app1",
+					id:    depId,
+					group: "group1",
 				},
 			},
 		},
 		{
-			// Test plan: Register a replica for a given process, along with an
+			// Test plan: Register a replica for a given group, along with an
 			// unrouted and a routed component. Verify that routing information is
 			// generated that contains one assignment for the routed component.
 			// Next, register a new replica and verify that new routing info is
@@ -318,47 +318,47 @@ func TestAssigner(t *testing.T) {
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				registerComponent{ // unrouted component
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					process:   "process1",
+					group:     "group1",
 					routed:    false,
 				},
 				registerComponent{ // routed component
 					app:       "app1",
 					id:        depId,
 					component: "component2",
-					process:   "process1",
+					group:     "group1",
 					routed:    true,
 				},
 				checkRoutingInfo{
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica1"},
 				},
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica2",
 				},
 				checkRoutingInfo{
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica1", "replica2"},
 				},
 			},
 		},
 		{
-			// Test plan: Register two replicas for a given process, along with
+			// Test plan: Register two replicas for a given group, along with
 			// a routed component. Verify that routing information considers both
 			// replicas. Next, make one of the replicas unhealthy. Verify that
 			// a new assignment is generated only for the healthy replica.
@@ -369,33 +369,33 @@ func TestAssigner(t *testing.T) {
 				registerReplica{ // replica 1
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				registerReplica{ // replica 2
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica2",
 				},
 				registerComponent{ // routed component
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					process:   "process1",
+					group:     "group1",
 					routed:    true,
 				},
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica1", "replica2"},
 				},
 				reportHealth{ // replica 1 becomes unhealthy
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 					health: []protos.HealthStatus{
 						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -405,14 +405,14 @@ func TestAssigner(t *testing.T) {
 				checkRoutingInfo{ // an assignment is generated that contains only the healthy replica 2
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica2"},
 				},
 				reportHealth{ // replica 1 becomes healthy again
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 					health: []protos.HealthStatus{
 						protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
@@ -423,33 +423,33 @@ func TestAssigner(t *testing.T) {
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica1", "replica2"},
 				},
 			},
 		},
 		{
-			// Test plan: Register a process replica to start for two
+			// Test plan: Register a group replica to start for two
 			// applications. Verify that routing info is generated for both.
 			name: "register_two_apps",
 			operations: []op{
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				registerReplica{
 					app:     "app2",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				reportHealth{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 					health: []protos.HealthStatus{
 						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -459,180 +459,180 @@ func TestAssigner(t *testing.T) {
 				checkRoutingInfo{
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 0,
 					replicas:       nil,
 				},
 				checkRoutingInfo{
 					app:            "app2",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 0,
 					replicas:       []string{"replica1"},
 				},
 			},
 		},
 		{
-			// Test plan: Register a number of process replicas, and verify
-			// that the process state is as expected.
-			name: "process_state",
+			// Test plan: Register a number of group replicas, and verify
+			// that the group state is as expected.
+			name: "group_state",
 			operations: []op{
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica2",
 				},
 				registerReplica{
 					app:     "app1",
 					id:      depId,
-					process: "process2",
+					group:   "group2",
 					replica: "replica1",
 				},
 				registerReplica{
 					app:     "app1",
 					id:      uuid.New().String(),
-					process: "process3",
+					group:   "group3",
 					replica: "replica1",
 				},
 				registerReplica{
 					app:     "app2",
 					id:      depId,
-					process: "process4",
+					group:   "group4",
 					replica: "replica1",
 				},
 				registerReplica{
 					app:     "app2",
 					id:      uuid.New().String(),
-					process: "process5",
+					group:   "group5",
 					replica: "replica2",
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
-					process:   "process1",
+					group:     "group1",
 					component: "component1",
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
-					process:   "process1",
+					group:     "group1",
 					component: "component2",
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
-					process:   "process2",
+					group:     "group2",
 					component: "component3",
 				},
 				registerComponent{
 					app:       "app2",
 					id:        depId,
-					process:   "process4",
+					group:     "group4",
 					component: "component4",
 				},
 				registerListener{
 					app:      "app1",
 					id:       depId,
-					process:  "process1",
+					group:    "group1",
 					listener: "listener1",
 				},
 				registerListener{
 					app:      "app1",
 					id:       depId,
-					process:  "process2",
+					group:    "group2",
 					listener: "listener2",
 				},
 				registerListener{
 					app:      "app1",
 					id:       depId,
-					process:  "process2",
+					group:    "group2",
 					listener: "listener3",
 				},
 				reportHealth{
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 					health: []protos.HealthStatus{
 						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
 						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
 						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY},
 				},
-				checkProcessState{
+				checkGroupState{
 					app: "app1",
 					id:  depId,
-					procs: map[string]processState{
-						"process1": {
+					groups: map[string]groupState{
+						"group1": {
 							Replicas:   []string{"replica1:unhealthy", "replica2:healthy"},
 							Components: []string{"component1", "component2"},
 							Listeners:  []string{"listener1"},
 						},
-						"process2": {
+						"group2": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{"component3"},
 							Listeners:  []string{"listener2", "listener3"},
 						},
 					},
 				},
-				checkProcessState{
+				checkGroupState{
 					app: "app2",
 					id:  depId,
-					procs: map[string]processState{
-						"process4": {
+					groups: map[string]groupState{
+						"group4": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{"component4"},
 						},
 					},
 				},
-				checkProcessState{
+				checkGroupState{
 					app: "app1",
 					// id intentionally empty
-					procs: map[string]processState{
-						"process1": {
+					groups: map[string]groupState{
+						"group1": {
 							Replicas:   []string{"replica1:unhealthy", "replica2:healthy"},
 							Components: []string{"component1", "component2"},
 							Listeners:  []string{"listener1"},
 						},
-						"process2": {
+						"group2": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{"component3"},
 							Listeners:  []string{"listener2", "listener3"},
 						},
-						"process3": {
+						"group3": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{},
 						},
 					},
 				},
-				checkProcessState{
+				checkGroupState{
 					// app and id intentionally empty
-					procs: map[string]processState{
-						"process1": {
+					groups: map[string]groupState{
+						"group1": {
 							Replicas:   []string{"replica1:unhealthy", "replica2:healthy"},
 							Components: []string{"component1", "component2"},
 							Listeners:  []string{"listener1"},
 						},
-						"process2": {
+						"group2": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{"component3"},
 							Listeners:  []string{"listener2", "listener3"},
 						},
-						"process3": {
+						"group3": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{},
 						},
-						"process4": {
+						"group4": {
 							Replicas:   []string{"replica1:healthy"},
 							Components: []string{"component4"},
 						},
-						"process5": {
+						"group5": {
 							Replicas:   []string{"replica2:healthy"},
 							Components: []string{},
 						},
@@ -641,7 +641,7 @@ func TestAssigner(t *testing.T) {
 			},
 		},
 		{
-			// Test plan: Register two replicas for a given process, along with
+			// Test plan: Register two replicas for a given group, along with
 			// a routed component. Verify that routing information considers both
 			// replicas. Next, make one of the replicas terminated. Verify that
 			// a new assignment is generated only for the healthy replica.
@@ -650,40 +650,40 @@ func TestAssigner(t *testing.T) {
 				registerReplica{ // replica 1
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 				},
 				registerReplica{ // replica 2
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica2",
 				},
 				registerComponent{ // routed component
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					process:   "process1",
+					group:     "group1",
 					routed:    true,
 				},
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica1", "replica2"},
 				},
 				reportHealth{ // replica 1 becomes terminated
 					app:     "app1",
 					id:      depId,
-					process: "process1",
+					group:   "group1",
 					replica: "replica1",
 					health:  []protos.HealthStatus{protos.HealthStatus_TERMINATED},
 				},
 				checkRoutingInfo{ // an assignment is generated that contains only the healthy replica 2
 					app:            "app1",
 					id:             depId,
-					process:        "process1",
+					group:          "group1",
 					numAssignments: 1,
 					replicas:       []string{"replica2"},
 				},
@@ -724,7 +724,7 @@ func TestConcurrentAssigners(t *testing.T) {
 					registerReplica{
 						app:     "app1",
 						id:      depId,
-						process: "process1",
+						group:   "group1",
 						replica: "replica1",
 					},
 				},
@@ -732,7 +732,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			check: checkRoutingInfo{
 				app:            "app1",
 				id:             depId,
-				process:        "process1",
+				group:          "group1",
 				numAssignments: 0,
 				replicas:       []string{"replica1"},
 			},
@@ -746,7 +746,7 @@ func TestConcurrentAssigners(t *testing.T) {
 						app:       "app1",
 						id:        depId,
 						component: "component1",
-						process:   "process1",
+						group:     "group1",
 						routed:    false,
 					},
 				},
@@ -754,7 +754,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			check: checkRoutingInfo{
 				app:            "app1",
 				id:             depId,
-				process:        "process1",
+				group:          "group1",
 				numAssignments: 0,
 				replicas:       nil,
 			},
@@ -764,17 +764,17 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "multiple_replicas",
 			ops: [][]op{
 				{
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r5"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r2"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r3"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r4"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r5"},
 				},
 			},
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 0,
 				replicas:       []string{"r1", "r2", "r3", "r4", "r5"},
 			},
@@ -784,18 +784,18 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "one_component_multiple_replicas",
 			ops: [][]op{
 				{
-					registerComponent{app: "a1", id: depId, process: "p1", component: "o1", routed: true},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r5"},
+					registerComponent{app: "a1", id: depId, group: "g1", component: "o1", routed: true},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r2"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r3"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r4"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r5"},
 				},
 			},
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 1,
 				replicas:       []string{"r1", "r2", "r3", "r4", "r5"},
 			},
@@ -805,22 +805,22 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "multiple_components_multiple_replicas",
 			ops: [][]op{
 				{
-					registerComponent{app: "a1", id: depId, process: "p1", component: "o1", routed: true},
-					registerComponent{app: "a1", id: depId, process: "p1", component: "o2", routed: true},
-					registerComponent{app: "a1", id: depId, process: "p1", component: "o3", routed: true},
-					registerComponent{app: "a1", id: depId, process: "p1", component: "o4", routed: true},
-					registerComponent{app: "a1", id: depId, process: "p1", component: "o5", routed: true},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r5"},
+					registerComponent{app: "a1", id: depId, group: "g1", component: "o1", routed: true},
+					registerComponent{app: "a1", id: depId, group: "g1", component: "o2", routed: true},
+					registerComponent{app: "a1", id: depId, group: "g1", component: "o3", routed: true},
+					registerComponent{app: "a1", id: depId, group: "g1", component: "o4", routed: true},
+					registerComponent{app: "a1", id: depId, group: "g1", component: "o5", routed: true},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r2"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r3"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r4"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r5"},
 				},
 			},
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 5,
 				replicas:       []string{"r1", "r2", "r3", "r4", "r5"},
 			},
@@ -830,13 +830,13 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "one_replica_die",
 			ops: [][]op{
 				{
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
 				},
 				{
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r1",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -851,7 +851,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 0,
 				replicas:       nil,
 			},
@@ -862,13 +862,13 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "one_replica_resurrect",
 			ops: [][]op{
 				{
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
 				},
 				{
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r1",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -883,7 +883,7 @@ func TestConcurrentAssigners(t *testing.T) {
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r1",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
@@ -898,7 +898,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 0,
 				replicas:       []string{"r1"},
 			},
@@ -909,17 +909,17 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "multiple_replicas_die",
 			ops: [][]op{
 				{
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r5"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r2"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r3"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r4"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r5"},
 				},
 				{
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r1",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_UNHEALTHY,
@@ -937,7 +937,7 @@ func TestConcurrentAssigners(t *testing.T) {
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r2",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -952,7 +952,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 0,
 				replicas:       []string{"r3", "r4", "r5"},
 			},
@@ -963,17 +963,17 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "multiple_replicas_health_changes",
 			ops: [][]op{
 				{
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, process: "p1", replica: "r5"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r1"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r2"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r3"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r4"},
+					registerReplica{app: "a1", id: depId, group: "g1", replica: "r5"},
 				},
 				{
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r1",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -986,7 +986,7 @@ func TestConcurrentAssigners(t *testing.T) {
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r2",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
@@ -1001,7 +1001,7 @@ func TestConcurrentAssigners(t *testing.T) {
 					reportHealth{
 						app:     "a1",
 						id:      depId,
-						process: "p1",
+						group:   "g1",
 						replica: "r1",
 						health: []protos.HealthStatus{
 							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
@@ -1016,7 +1016,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			check: checkRoutingInfo{
 				app:            "a1",
 				id:             depId,
-				process:        "p1",
+				group:          "g1",
 				numAssignments: 0,
 				replicas:       []string{"r1", "r3", "r4", "r5"},
 			},
@@ -1078,7 +1078,7 @@ func TestConcurrentAssigners(t *testing.T) {
 	}
 }
 
-func TestUnregisterProcesses(t *testing.T) {
+func TestUnregisterGroups(t *testing.T) {
 	ctx := context.Background()
 	assigner := NewAssigner(ctx, store.NewFakeStore(), &logging.NewTestLogger(t).FuncLogger,
 		EqualDistributionAlgorithm, func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
@@ -1088,12 +1088,12 @@ func TestUnregisterProcesses(t *testing.T) {
 	v1 := uuid.New().String()
 	v2 := uuid.New().String()
 	for i, op := range []op{
-		registerComponent{app: "a", id: v1, process: "p", component: "o", routed: true},
-		registerReplica{app: "a", id: v1, process: "p", replica: "r1"},
-		registerReplica{app: "a", id: v1, process: "p", replica: "r2"},
-		registerComponent{app: "a", id: v2, process: "p", component: "o", routed: true},
-		registerReplica{app: "a", id: v2, process: "p", replica: "r1"},
-		registerReplica{app: "a", id: v2, process: "p", replica: "r2"},
+		registerComponent{app: "a", id: v1, group: "g", component: "o", routed: true},
+		registerReplica{app: "a", id: v1, group: "g", replica: "r1"},
+		registerReplica{app: "a", id: v1, group: "g", replica: "r2"},
+		registerComponent{app: "a", id: v2, group: "g", component: "o", routed: true},
+		registerReplica{app: "a", id: v2, group: "g", replica: "r1"},
+		registerReplica{app: "a", id: v2, group: "g", replica: "r2"},
 	} {
 		t.Logf("> Operation %d: %T%+v", i, op, op)
 		if err := op.do(ctx, assigner); err != nil {
@@ -1102,7 +1102,7 @@ func TestUnregisterProcesses(t *testing.T) {
 	}
 
 	// Unregister one of the versions.
-	if err := assigner.UnregisterProcesses(ctx, "a", []string{v1}); err != nil {
+	if err := assigner.UnregisterGroups(ctx, "a", []string{v1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1111,14 +1111,14 @@ func TestUnregisterProcesses(t *testing.T) {
 		{
 			app:            "a",
 			id:             v1,
-			process:        "p",
+			group:          "g",
 			numAssignments: 0,
 			replicas:       nil,
 		},
 		{
 			app:            "a",
 			id:             v2,
-			process:        "p",
+			group:          "g",
 			numAssignments: 1,
 			replicas:       []string{"r1", "r2"},
 		},
@@ -1130,35 +1130,35 @@ func TestUnregisterProcesses(t *testing.T) {
 		}
 	}
 
-	// Check that v1's process info was deleted.
-	pid := &ProcessId{App: "a", Id: v1, Process: "p"}
-	_, version, err := assigner.loadProcessInfo(ctx, pid)
+	// Check that v1's group info was deleted.
+	pid := &GroupId{App: "a", Id: v1, Group: "g"}
+	_, version, err := assigner.loadGroupInfo(ctx, pid)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if *version != store.Missing {
-		t.Fatalf("bad process info version: got %v, want Missing", *version)
+		t.Fatalf("bad group info version: got %v, want Missing", *version)
 	}
 
 	// Check that the assigner's health checkers were deleted.
 	assigner.mu.Lock()
 	defer assigner.mu.Unlock()
-	if _, found := assigner.replicas[unprotoPid(pid)]; found {
-		t.Fatalf("process %v health checkers not deleted", pid)
+	if _, found := assigner.replicas[unprotoGid(pid)]; found {
+		t.Fatalf("group %v health checkers not deleted", pid)
 	}
 }
 
 // reportHealthStatus reports the provided health status for the provided
 // replica. Normally, an assigner checks an envelope to determine its
 // health status. reportHealthStatus allows us to fake these checks.
-func reportHealthStatus(ctx context.Context, a *Assigner, pid *ProcessId, addr string, status protos.HealthStatus) error {
+func reportHealthStatus(ctx context.Context, a *Assigner, pid *GroupId, addr string, status protos.HealthStatus) error {
 	updateHealth := func() (bool, error) {
 		// Pull this code into a function so that we can defer Unlock.
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		replicas, ok := a.replicas[unprotoPid(pid)]
+		replicas, ok := a.replicas[unprotoGid(pid)]
 		if !ok {
-			return false, fmt.Errorf("process %v not found", pid)
+			return false, fmt.Errorf("group %v not found", pid)
 		}
 		replica, ok := replicas[addr]
 		if !ok {

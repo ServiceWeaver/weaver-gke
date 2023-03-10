@@ -20,11 +20,10 @@ package clients;
 import "google/protobuf/duration.proto";
 
 // HealthCheck is a request to the babysitter to check the health status for a
-// given process.
+// given colocation group replica.
 message HealthCheck {
-  string process = 1;
-  string addr = 2;
+  string addr = 1;
 
    // Duration after which the check is declared as failed.
-  google.protobuf.Duration timeout = 3;
+  google.protobuf.Duration timeout = 2;
 }

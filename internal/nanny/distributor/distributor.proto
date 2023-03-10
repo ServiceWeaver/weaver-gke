@@ -44,8 +44,8 @@ message AppVersionState {
   // was submitted for rollout.
   int64 order = 3;
 
-  // All known processes for this application version.
-  nanny.ProcessState processes = 4;
+  // All known groups for this application version.
+  nanny.GroupState groups = 4;
 
   // All known listeners for this application version.
   repeated runtime.Listener listeners = 7;

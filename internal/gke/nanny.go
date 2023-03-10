@@ -23,7 +23,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ServiceWeaver/weaver-gke/internal"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
@@ -37,6 +36,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/uuid"
 )
 
 // NannyOptions configure a GKE nanny.
@@ -194,14 +194,21 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 			func(ctx context.Context, podName string) (bool, error) {
 				return podExists(ctx, cluster, podName)
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener) (*protos.ExportListenerReply, error) {
-				port, err := recordListener(ctx, s, logger, cluster, cfg, group, lis)
+			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup, lis string) (int, error) {
+				port, err := getListenerPort(ctx, s, logger, cluster, cfg, group, lis)
 				if err != nil {
+					return -1, err
+				}
+				return port, nil
+			},
+			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener) (*protos.ExportListenerReply, error) {
+				if err := ensureListenerService(ctx, cluster, logger, cfg, group, lis); err != nil {
 					return nil, err
 				}
-				// TODO(spetrovic): Include the global load balancer's address
-				// as the ProxyAddress field.
-				return &protos.ExportListenerReply{Port: int32(port)}, nil
+
+				// TODO(spetrovic): use the global load-balancer's address here.
+				const proxyAddr = ""
+				return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
 			},
 			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
 				return deploy(ctx, cluster, logger, cfg, group)
@@ -242,10 +249,10 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 	}
 }
 
-// recordListener records the network listener exported by an application
-// version's colocation group, returning the port number that the listener should
-// listen on.
-func recordListener(ctx context.Context, s store.Store, logger *logging.FuncLogger, cluster *ClusterInfo, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener) (int, error) {
+// getListenerPort returns the port the network listener should listen on
+// inside the colocation group, and creates a service to forward traffic to that
+// port.
+func getListenerPort(ctx context.Context, s store.Store, logger *logging.FuncLogger, cluster *ClusterInfo, cfg *config.GKEConfig, group *protos.ColocationGroup, listener string) (int, error) {
 	dep := cfg.Deployment
 	id, err := uuid.Parse(dep.Id)
 	if err != nil {
@@ -259,13 +266,9 @@ func recordListener(ctx context.Context, s store.Store, logger *logging.FuncLogg
 		// Track the key in the store under histKey.
 		return -1, fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)
 	}
-	targetPort, err := pickPort(ctx, s, key, lis.Name)
+	targetPort, err := pickPort(ctx, s, key, listener)
 	if err != nil {
-		return -1, fmt.Errorf("error picking port for listener %q: %w", lis.Name, err)
-	}
-
-	if err = ensureListenerService(ctx, cluster, logger, cfg, group, lis, targetPort); err != nil {
-		return -1, err
+		return -1, fmt.Errorf("error picking port for listener %q: %w", listener, err)
 	}
 	return targetPort, nil
 }

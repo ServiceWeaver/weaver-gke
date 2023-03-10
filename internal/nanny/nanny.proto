@@ -50,19 +50,26 @@ message ApplicationCleanupRequest {
   repeated string versions = 2;
 }
 
+// GetListenerAddressRequest is a request to the manager to get an address
+// a listener in a given colocation group should listen on.
+message GetListenerAddressRequest {
+  runtime.ColocationGroup group = 1;
+  string listener = 2;
+  config.GKEConfig config = 3;
+}
+
 // ExportListenerRequest is a request to the manager to export a listener.
 message ExportListenerRequest {
-  string app_name = 1;
-  runtime.ListenerToExport listener = 2;
+  runtime.ColocationGroup group = 1;
+  runtime.Listener listener = 2;
   config.GKEConfig config = 3;
 }
 
 // ColocationGroupStartEequest is a request to the manager to start
 // a colocation group for a given application version.
 message ColocationGroupStartRequest {
-  string app_name = 1;
-  runtime.ColocationGroup group = 2;
-  config.GKEConfig config = 3;
+  runtime.ColocationGroup group = 1;
+  config.GKEConfig config = 2;
 }
 
 // ApplicationDeploymentRequest is a request to the manager to deploy a set of
@@ -121,52 +128,51 @@ message VersionStateAtDistributor {
   // reapply).
   bool rollout_completed = 3;
 
-  // Whether the main process is deployed.
+  // Whether the main group is deployed.
   bool is_deployed = 4;
 
-  // All known processes for this application version.
-  ProcessState processes = 5;
+  // All known groups for this application version.
+  GroupState groups = 5;
 }
 
-// ProcessStateRequest is a request to receive the state of processes for
-// the given application version or a collection of applications and their
-// versions.
-message ProcessStateRequest {
+// GroupStateRequest is a request to receive the state of groups for the given
+// application version or a collection of applications and their versions.
+message GroupStateRequest {
   // Application name and version.
   //
   // If the application name is non-empty, the request is for retrieving
-  // process state only for the given application; otherwise, the request is
-  // for retrieving process state for all active applications.
+  // group state only for the given application; otherwise, the request is
+  // for retrieving group state for all active applications.
   // If the application version is non-empty, the request is for retrieving
-  // process state only for a particular version of an application; otherwise,
-  // the request is for retrieving process state for all versions of an
+  // group state only for a particular version of an application; otherwise,
+  // the request is for retrieving group state for all versions of an
   // application (or a collection of applications).
   // It is illegal to specify the version and not the application name.
   string app_name = 1;
   string version_id = 2;
 }
 
-// ProcessState stores the process state for an application version or a
+// GroupState stores the colocation group state for an application version or a
 // collection of applications and their versions.
-message ProcessState {
-  // Process stores information about an application version process.
-  message Process {
+message GroupState {
+  // Group stores information about an application version group.
+  message Group {
     string name = 1;
 
-    // Replica stores information about a process replica.
+    // Replica stores information about a colocation group replica.
     message Replica {
       string weavelet_addr = 1;               // Weavelet address.
       string babysitter_addr = 2;             // Babysitter address.
       runtime.HealthStatus health_status = 3; // Health status.
     }
-    repeated Replica replicas = 2; // All known process replicas.
-    repeated string components = 3; // Active components hosted by the process.
-    repeated runtime.Listener listeners = 4; // Listeners hosted by the process.
+    repeated Replica replicas = 2; // All known group replicas.
+    repeated string components = 3; // Active components hosted by the group.
+    repeated runtime.Listener listeners = 4; // Listeners hosted by the group.
   }
-  repeated Process processes = 3;
+  repeated Group groups = 3;
 
-  // Errors encountered collecting the process state.
-  // Note that the process data may be partially populated even if there were
+  // Errors encountered collecting the group state.
+  // Note that the group data may be partially populated even if there were
   // collection errors.
   repeated string errors = 4;
 }

@@ -18,12 +18,12 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/testing/protocmp"
-	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 func TestRecordGetListeners(t *testing.T) {

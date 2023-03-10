@@ -15,11 +15,12 @@
 package gke
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/base64"
 	"fmt"
 	"math"
+	"net"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -32,6 +33,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"golang.org/x/exp/maps"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
+	gproto "google.golang.org/protobuf/proto"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/core/v1"
@@ -516,9 +518,17 @@ var serviceExportTmpl = template.Must(template.New("auto").Parse(`{
 
 // ensureListenerService ensures that a service that exposes the given network
 // listener is running in the given cluster.
-func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener, targetPort int) error {
+func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener) error {
+	_, portStr, err := net.SplitHostPort(lis.Addr)
+	if err != nil {
+		return fmt.Errorf("invalid listener address %v: %w", lis.Addr, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid port %q in listener address %v: %w", portStr, lis.Addr, err)
+	}
 	dep := cfg.Deployment
-	lisEnc, err := jsonEncode(lis)
+	lisEnc, err := protoValueEncode(lis)
 	if err != nil {
 		return fmt.Errorf("internal error: error encoding listener %+v: %w", lis, err)
 	}
@@ -545,7 +555,7 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *lo
 			Ports: []v1.ServicePort{
 				{
 					Port:       80,
-					TargetPort: intstr.FromInt(targetPort),
+					TargetPort: intstr.FromInt(port),
 					Protocol:   "TCP",
 				},
 			},
@@ -614,8 +624,8 @@ func getListeners(ctx context.Context, clientset *kubernetes.Clientset, app, ver
 		if !ok {
 			continue
 		}
-		var listener *protos.Listener
-		if err := jsonDecode(enc, &listener); err != nil {
+		listener := &protos.Listener{}
+		if err := protoValueDecode(enc, listener); err != nil {
 			return nil, fmt.Errorf(
 				"internal error: error decoding listener for service %q: %w",
 				svc.Name, err)
@@ -1014,16 +1024,20 @@ func ensureTemporarySpareCapacity(ctx context.Context, cluster *ClusterInfo, log
 	})
 }
 
-func jsonEncode(v interface{}) (string, error) {
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(v); err != nil {
+func protoValueEncode(msg gproto.Message) (string, error) {
+	data, err := gproto.Marshal(msg)
+	if err != nil {
 		return "", err
 	}
-	return buf.String(), nil
+	return base64.StdEncoding.EncodeToString(data), nil
 }
 
-func jsonDecode(enc string, valPtr interface{}) error {
-	return json.NewDecoder(bytes.NewReader([]byte(enc))).Decode(valPtr)
+func protoValueDecode(in string, msg gproto.Message) error {
+	data, err := base64.StdEncoding.DecodeString(in)
+	if err != nil {
+		return nil
+	}
+	return gproto.Unmarshal(data, msg)
 }
 
 func ptrOf[T any](val T) *T { return &val }

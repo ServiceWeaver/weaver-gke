@@ -40,11 +40,6 @@ const (
 // version, along with the HTTP client that should be used to reach it.
 // May mutate the passed-in run.
 func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error) {
-	// Finalize the deployment.
-	dep := cfg.Deployment
-	dep.UseLocalhost = true
-	dep.ProcessPicksPorts = true
-
 	// Ensure all Service Weaver service processes (i.e., controller,
 	// distributor/manager) are running.
 	distributorPorts, err := ensureWeaverServices(ctx, cfg)
