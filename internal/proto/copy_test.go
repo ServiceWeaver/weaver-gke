@@ -18,11 +18,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"golang.org/x/exp/slices"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 func TestCopy(t *testing.T) {
@@ -41,16 +41,16 @@ func TestCopy(t *testing.T) {
 				Id: "dep",
 			},
 			src: &protos.Deployment{
-				Id:                "dep",
-				ProcessPicksPorts: true,
-				NetworkStorageDir: "dir",
+				Id:            "dep",
+				App:           &protos.AppConfig{Name: "app"},
+				SingleProcess: true,
 			},
 			expect: &protos.Deployment{
-				Id:                "dep",
-				ProcessPicksPorts: true,
-				NetworkStorageDir: "dir",
+				Id:            "dep",
+				App:           &protos.AppConfig{Name: "app"},
+				SingleProcess: true,
 			},
-			expectModified: []string{"network_storage_dir", "process_picks_ports"},
+			expectModified: []string{"app", "single_process"},
 		},
 		{
 			desc: "message unmodified",
@@ -68,10 +68,10 @@ func TestCopy(t *testing.T) {
 				Id: "dep",
 			},
 			src: &protos.Deployment{
-				Id:                "dep",
-				NetworkStorageDir: "dir",
+				Id:            "dep",
+				SingleProcess: true,
 			},
-			skip: []string{"network_storage_dir"},
+			skip: []string{"single_process"},
 			expect: &protos.Deployment{
 				Id: "dep",
 			},

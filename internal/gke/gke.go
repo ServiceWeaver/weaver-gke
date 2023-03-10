@@ -516,13 +516,13 @@ var serviceExportTmpl = template.Must(template.New("auto").Parse(`{
 
 // ensureListenerService ensures that a service that exposes the given network
 // listener is running in the given cluster.
-func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener, targetPort int) error {
+func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup, lis string, targetPort int) error {
 	dep := cfg.Deployment
 	lisEnc, err := jsonEncode(lis)
 	if err != nil {
 		return fmt.Errorf("internal error: error encoding listener %+v: %w", lis, err)
 	}
-	svcName := name{cluster.Region, dep.App.Name, lis.Name, dep.Id[:8]}.DNSLabel()
+	svcName := name{cluster.Region, dep.App.Name, lis, dep.Id[:8]}.DNSLabel()
 	targetName := name{dep.App.Name, group.Name, dep.Id[:8]}.DNSSubdomain()
 	if err := patchService(ctx, cluster, patchOptions{logger: logger}, &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{

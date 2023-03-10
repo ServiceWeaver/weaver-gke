@@ -21,7 +21,7 @@ package local
 //   - Distributor - controls traffic distribution across multiple application
 //     versions in the same deployment location (e.g., cloud
 //     region); accessed via the "distributor/" URL path prefix.
-//   - Manager     - controls various runtime tasks for Service Weaver processes;
+//   - Manager     - controls various runtime tasks for Service Weaver groups;
 //     accessed via the "manager/" URL path prefix.
 //   - Proxy       - proxies requests to the applications' network listeners.
 //
@@ -123,6 +123,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 
 	mux := http.NewServeMux()
 	managerAddr := fmt.Sprintf("http://%s", lis.Addr())
+	proxyAddr := fmt.Sprintf("http://localhost:%d", proxyPort)
 	babysitterConstructor := func(addr string) clients.BabysitterClient {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
@@ -146,7 +147,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 			10*time.Second, // applyAssignmentInterval
 			5*time.Second,  // manageAppInterval,
 			func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
-				return applyTraffic(ctx, fmt.Sprintf("http://localhost:%d", proxyPort), assignment, opts.Region)
+				return applyTraffic(ctx, proxyAddr, assignment, opts.Region)
 			},
 		); err != nil {
 			return fmt.Errorf("cannot start controller: %w", err)
@@ -194,8 +195,14 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 				// so we don't need any external signal to check whether a weavelet still exists.
 				return true, nil
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, _ *protos.ColocationGroup, l *protos.Listener) (*protos.ExportListenerReply, error) {
-				return &protos.ExportListenerReply{ProxyAddress: "localhost:8000"}, RecordListener(ctx, mstore, cfg, l)
+			func(context.Context, *config.GKEConfig, *protos.ColocationGroup, string) (int, error) {
+				return 0, nil
+			},
+			func(ctx context.Context, cfg *config.GKEConfig, _ *protos.ColocationGroup, lis *protos.Listener) (*protos.ExportListenerReply, error) {
+				if err := RecordListener(ctx, mstore, cfg, lis); err != nil {
+					return &protos.ExportListenerReply{}, err
+				}
+				return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
 			},
 			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
 				return starter.Start(ctx, cfg, group)

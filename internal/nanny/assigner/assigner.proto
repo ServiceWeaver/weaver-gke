@@ -23,26 +23,21 @@ import "runtime/protos/runtime.proto";
 // the assigner.
 message AppVersionState {
   map<string, ColocationGroupState> groups = 1;  // per group information
-  map<string, ProcessState> processes = 2;       // per process information
 }
 
 message ColocationGroupState {
-  // It contains the set of processes that a colocation group in a given
-  // deployment should be running.
-  repeated string processes = 1;
-}
+  string name = 1;
 
-message ProcessState {
-  // It contains the set of components that a process in a given deployment
+  // Set of components that a colocation group in a given deployment
   // should be running, along with their routing status (whether a component is
   // routed).
-  map<string, bool> components = 1;
+  map<string, bool> components = 2;
 
-  // It contains the list of replica addresses for the process.
-  repeated string replicas = 2;
+  // List of replica addresses for the colocation group.
+  repeated string replicas = 3;
 
-  // Network listeners exported by the process, if any.
-  repeated runtime.Listener listeners = 3;
+  // Network listeners exported by the colocation group, if any.
+  repeated runtime.Listener listeners = 4;
 
   // TODO(rgrandl): should we also track the routing info here?
 }
@@ -54,27 +49,33 @@ message AssignerState {
 
 // AppState stores the state for a single Service Weaver application.
 message AppState {
-  // pids stores the pid of every active process of every version of this app.
-  repeated ProcessId pids = 1;
+  // The list of app's active colocation groups .
+  repeated GroupId group_ids = 1;
 }
 
-// ProcessInfo contains information for each managed process.
-message ProcessInfo {
+// GroupId uniquely identifies a colocation group.
+message GroupId {
+  string App = 1;      // Service Weaver application (e.g., todo)
+  string Id = 2;       // deployment id (e.g., bb6b3172)
+  string Group = 3;    // colocation group name (e.g., Cache)
+}
+
+// GroupInfo contains information for each managed colocation group.
+message GroupInfo {
   // Every time (1) the set of replica changes, or (2) the set of healthy
-  // replicas changes, or (3) any assignment changes, a ProcessInfo's version
+  // replicas changes, or (3) any assignment changes, a GroupInfo's version
   // should be incremented. An assignment's load may change without incrementing
   // the version.
   //
-  // This version is used to avoid races between writing a ProcessInfo and
+  // This version is used to avoid races between writing a GroupInfo and
   // writing the corresponding RoutingInfo.
   uint64 version = 3;
 
   map<string, Assignment> components = 1; // routed components and their assignments
   map<string, Replica> replicas = 2;      // replicas, keyed by weavelet address
 
-  // Network listeners exported by the process, if any.
+  // Network listeners exported by the colocation group, if any.
   repeated runtime.Listener listeners = 4;
-
 }
 
 // Replica contains information for a single replica (aka weavelet).
@@ -86,21 +87,14 @@ message Replica {
   string babysitter_address = 1;
 
   // Is the replica healthy? Note that every assigner individually decides the
-  // health status of every replica. When an assigner writes a ProcessInfo, it
+  // health status of every replica. When an assigner writes a GroupInfo, it
   // also records the set of replicas it thought were healthy.
   runtime.HealthStatus health_status = 2;
 }
 
-// ProcessId uniquely identifies a process.
-message ProcessId {
-  string App = 1;      // Service Weaver application (e.g., todo)
-  string Id = 2;       // deployment id (e.g., bb6b3172)
-  string Process = 3;  // process name (e.g., Cache)
-}
-
 // VersionedRoutingInfo stores a versioned RoutingInfo. The version should
-// be a version of a written ProcessInfo, and the info should be derived from
-// that ProcessInfo. Versions should only every increase over time.
+// be a version of a written GroupInfo, and the info should be derived from
+// GroupInfo. Versions should only every increase over time.
 message VersionedRoutingInfo {
   uint64 version = 1;
   runtime.RoutingInfo info = 2;

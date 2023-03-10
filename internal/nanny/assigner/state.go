@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"path"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
-	"github.com/ServiceWeaver/weaver-gke/internal/store"
 )
 
 // assignerStateKey is the store key that stores an assigner's state.
@@ -73,42 +73,42 @@ func (a *Assigner) applyAppState(ctx context.Context, app string, apply func(*Ap
 	return applyProto(ctx, a.store, appStateKey(app), apply)
 }
 
-// pidKey returns the key into which we persist the provided process' state.
-func pidKey(pid *ProcessId) string {
+// gidKey returns the key into which we persist the provided group's state.
+func gidKey(gid *GroupId) string {
 	// TODO(mwhittaker): Remove the requirement that all deployment ids are
 	// uuids. We may want to, for example, use more human readable deployment
 	// ids. This also makes it easier to write tests.
-	id, err := uuid.Parse(pid.Id)
+	id, err := uuid.Parse(gid.Id)
 	if err != nil {
-		panic(fmt.Sprintf("invalid deployment id %q: %v", pid.Id, err))
+		panic(fmt.Sprintf("invalid deployment id %q: %v", gid.Id, err))
 	}
-	return store.ProcessKey(pid.App, id, pid.Process, "process_info")
+	return store.ProcessKey(gid.App, id, gid.Group, "group_info")
 }
 
-// loadProcessInfo loads a process' info from the store.
-func (a *Assigner) loadProcessInfo(ctx context.Context, pid *ProcessId) (*ProcessInfo, *store.Version, error) {
-	var process ProcessInfo
-	version, err := store.GetProto(ctx, a.store, pidKey(pid), &process, nil)
+// loadGroupInfo loads a group's info from the store.
+func (a *Assigner) loadGroupInfo(ctx context.Context, gid *GroupId) (*GroupInfo, *store.Version, error) {
+	group := &GroupInfo{}
+	version, err := store.GetProto(ctx, a.store, gidKey(gid), group, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	if process.Components == nil {
-		process.Components = map[string]*Assignment{}
+	if group.Components == nil {
+		group.Components = map[string]*Assignment{}
 	}
-	if process.Replicas == nil {
-		process.Replicas = map[string]*Replica{}
+	if group.Replicas == nil {
+		group.Replicas = map[string]*Replica{}
 	}
-	return &process, version, err
+	return group, version, err
 }
 
-// applyProcessInfo applies a read-modify-write operation to the provided
-// process' state. The current state is read from the store and passed to the
+// applyGroupInfo applies a read-modify-write operation to the provided
+// group's state. The current state is read from the store and passed to the
 // provided apply function. This function modifies the state and returns true,
 // or it leaves the state unchanged and returns false. If apply returns true,
 // the state is then written back to the store. The read-modify-write operation
 // is retried if there are conflicting writes.
-func (a *Assigner) applyProcessInfo(ctx context.Context, pid *ProcessId, apply func(*ProcessInfo) bool) (*ProcessInfo, *store.Version, error) {
-	return applyProto(ctx, a.store, pidKey(pid), apply)
+func (a *Assigner) applyGroupInfo(ctx context.Context, gid *GroupId, apply func(*GroupInfo) bool) (*GroupInfo, *store.Version, error) {
+	return applyProto(ctx, a.store, gidKey(gid), apply)
 }
 
 // protoPointer[T] is an interface which asserts that *T is a proto.Message.

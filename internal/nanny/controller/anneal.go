@@ -199,7 +199,7 @@ func (c *controller) applyLocationUpdate(ctx context.Context, location string, s
 			continue
 		}
 		distributor := v.Distributors[location]
-		distributor.Processes = dv.Processes
+		distributor.Groups = dv.Groups
 
 		if v.WaveIdx != distributor.WaveIdx ||
 			distributor.Status == AppVersionDistributorStatus_ROLLED_OUT ||

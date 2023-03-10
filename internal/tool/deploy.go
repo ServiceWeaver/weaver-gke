@@ -112,7 +112,7 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		PublicListener []struct{ Name, Hostname string } `toml:"public_listener"`
 	}
 	parsed := &gkeConfigSchema{}
-	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app, parsed); err != nil {
+	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app.Sections, parsed); err != nil {
 		return nil, err
 	}
 

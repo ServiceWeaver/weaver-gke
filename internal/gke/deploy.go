@@ -197,8 +197,6 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 
 	// Finalize the deployment.
 	cfg.Container = appImageURL
-	dep.UseLocalhost = false
-	dep.ProcessPicksPorts = false
 
 	// Print helpful information about the listeners.
 	const help = `Project setup complete.

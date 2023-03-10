@@ -26,8 +26,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/sdk/trace"
 	weaver "github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
@@ -40,6 +38,8 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Run creates a brand new gke-local execution environment that places every
@@ -91,7 +91,7 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
 	replicaExists := func(context.Context, string) (bool, error) { return true, nil }
-	manager.Start(ctx, mux, store, &logger.FuncLogger, addr, babysitterConstructor, replicaExists, recordListener, starter.Start, nil, nil)
+	manager.Start(ctx, mux, store, &logger.FuncLogger, addr, babysitterConstructor, replicaExists, getListenerPort, exportListener, starter.Start, nil, nil)
 	server.Start()
 	defer func() {
 		// Silence the logger to ignore all the junk that gets printed when we
@@ -107,33 +107,31 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 	if err != nil {
 		t.Fatalf("error fetching binary path: %v", err)
 	}
-	weavelet := &protos.Weavelet{
-		Id: uuid.New().String(),
-		Dep: &protos.Deployment{
-			Id: depid,
-			App: &protos.AppConfig{
-				Name:   strings.ReplaceAll(t.Name(), "/", "_"),
-				Binary: exe,
-				// TODO: Forward os.Args[1:] as well?
-				Args: []string{"-test.run", regexp.QuoteMeta(t.Name())},
-			},
-			UseLocalhost:      true,
-			ProcessPicksPorts: true,
-			NetworkStorageDir: t.TempDir(),
-		},
-		Group: &protos.ColocationGroup{
-			Name: "main",
-		},
-		GroupReplicaId: uuid.New().String(),
-		Process:        "main",
+	appConfig := &protos.AppConfig{
+		Name:   strings.ReplaceAll(t.Name(), "/", "_"),
+		Binary: exe,
+		// TODO: Forward os.Args[1:] as well?
+		Args: []string{"-test.run", regexp.QuoteMeta(t.Name())},
+	}
+	dep := &protos.Deployment{
+		Id:  depid,
+		App: appConfig,
+	}
+	weavelet := &protos.WeaveletInfo{
+		App:          appConfig.Name,
+		DeploymentId: dep.Id,
+		Group:        &protos.ColocationGroup{Name: "main"},
+		GroupId:      uuid.New().String(),
+		Id:           uuid.New().String(),
 	}
 	cfg := &config.GKEConfig{
 		ManagerAddr: addr,
-		Deployment:  weavelet.Dep,
+		Deployment:  dep,
 	}
 	handler := &babysitter.Handler{
 		Ctx:      ctx,
 		Config:   cfg,
+		Group:    weavelet.Group,
 		Manager:  &manager.HttpClient{Addr: addr},
 		LogSaver: logger.Log,
 		TraceSaver: func([]trace.ReadOnlySpan) error {
@@ -141,7 +139,7 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 		},
 		ReportWeaveletAddr: func(addr string) error { return nil },
 	}
-	env, err := envelope.NewEnvelope(weavelet, handler, envelope.Options{})
+	env, err := envelope.NewEnvelope(weavelet, appConfig, handler, envelope.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,6 +151,10 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 	}
 }
 
-func recordListener(_ context.Context, _ *config.GKEConfig, _ *protos.ColocationGroup, _ *protos.Listener) (*protos.ExportListenerReply, error) {
+func getListenerPort(context.Context, *config.GKEConfig, *protos.ColocationGroup, string) (int, error) {
+	return 9999, nil
+}
+
+func exportListener(context.Context, *config.GKEConfig, *protos.ColocationGroup, *protos.Listener) (*protos.ExportListenerReply, error) {
 	return &protos.ExportListenerReply{}, nil
 }
