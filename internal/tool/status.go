@@ -112,20 +112,20 @@ func componentsStatus(w io.Writer, status *controller.Status) {
 			return app.Versions[i].SubmissionId < app.Versions[j].SubmissionId
 		})
 		for _, dep := range app.Versions {
-			sort.SliceStable(dep.Processes, func(i, j int) bool {
-				return dep.Processes[i].Name < dep.Processes[j].Name
+			sort.SliceStable(dep.Groups, func(i, j int) bool {
+				return dep.Groups[i].Name < dep.Groups[j].Name
 			})
-			sort.SliceStable(dep.Processes, func(i, j int) bool {
-				return dep.Processes[i].Location < dep.Processes[j].Location
+			sort.SliceStable(dep.Groups, func(i, j int) bool {
+				return dep.Groups[i].Location < dep.Groups[j].Location
 			})
-			for _, proc := range dep.Processes {
-				sort.Slice(proc.Components, func(i, j int) bool {
-					return proc.Components[i] < proc.Components[j]
+			for _, group := range dep.Groups {
+				sort.Slice(group.Components, func(i, j int) bool {
+					return group.Components[i] < group.Components[j]
 				})
-				health := fmt.Sprintf("%d/%d", proc.HealthyReplicas, proc.TotalReplicas)
-				for _, component := range proc.Components {
+				health := fmt.Sprintf("%d/%d", group.HealthyReplicas, group.TotalReplicas)
+				for _, component := range group.Components {
 					prefix, _ := formatId(dep.Id)
-					t.Row(dep.App, prefix, proc.Location, logging.ShortenComponent(component), health)
+					t.Row(dep.App, prefix, group.Location, logging.ShortenComponent(component), health)
 				}
 			}
 		}

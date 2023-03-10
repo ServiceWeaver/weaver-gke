@@ -436,7 +436,7 @@ func (d *Distributor) GetApplicationState(ctx context.Context, req *nanny.Applic
 				RolloutCompleted:           nanny.Done(v.Schedule),
 				LastTrafficFractionApplied: nanny.Fraction(v.Schedule),
 				IsDeployed:                 v.Status != AppVersionState_STARTING,
-				Processes:                  v.Processes,
+				Groups:                     v.Groups,
 			})
 	}
 
@@ -493,28 +493,28 @@ func (d *Distributor) getTrafficAssignment(ctx context.Context, public bool) (*n
 // RunProfiling profiles a sample of the application version's replicas and
 // computes a representative profile for the application version.
 func (d *Distributor) RunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
-	// Get the process information for the given application version.
-	procs, err := d.manager.GetProcessState(ctx, &nanny.ProcessStateRequest{
+	// Get the group information for the given application version.
+	states, err := d.manager.GetGroupState(ctx, &nanny.GroupStateRequest{
 		AppName:   req.AppName,
 		VersionId: req.VersionId,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("cannot get process replica state for version %q of application %q: %w", req.AppName, req.VersionId, err)
+		return nil, fmt.Errorf("cannot get group replica states for version %q of application %q: %w", req.AppName, req.VersionId, err)
 	}
 
-	// Get the groups of processes we want to profile.
-	groups := make([][]func() (*protos.Profile, error), len(procs.Processes))
-	for _, proc := range procs.Processes {
+	// Get the groups we want to profile.
+	groups := make([][]func() (*protos.Profile, error), len(states.Groups))
+	for _, g := range states.Groups {
 		// Compute a randomly ordered list of healthy replicas.
-		group := make([]func() (*protos.Profile, error), 0, len(proc.Replicas))
-		for _, idx := range rand.Perm(len(proc.Replicas)) {
-			if proc.Replicas[idx].HealthStatus != protos.HealthStatus_HEALTHY {
+		group := make([]func() (*protos.Profile, error), 0, len(g.Replicas))
+		for _, idx := range rand.Perm(len(g.Replicas)) {
+			if g.Replicas[idx].HealthStatus != protos.HealthStatus_HEALTHY {
 				continue
 			}
-			replica := proc.Replicas[idx].BabysitterAddr
+			replica := g.Replicas[idx].BabysitterAddr
 			group = append(group, func() (*protos.Profile, error) {
 				preq := protomsg.Clone(req)
-				preq.Process = proc.Name
+				preq.Group = g.Name
 				babysitter := d.babysitterConstructor(replica)
 				return babysitter.RunProfiling(ctx, preq)
 			})

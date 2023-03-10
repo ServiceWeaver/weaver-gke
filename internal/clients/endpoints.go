@@ -45,12 +45,12 @@ type ManagerClient interface {
 	Deploy(context.Context, *nanny.ApplicationDeploymentRequest) error
 	Stop(context.Context, *nanny.ApplicationStopRequest) error
 	Delete(context.Context, *nanny.ApplicationDeleteRequest) error
-	GetProcessState(context.Context, *nanny.ProcessStateRequest) (*nanny.ProcessState, error)
-	GetProcessesToStart(context.Context, *protos.GetProcessesToStartRequest) (*protos.GetProcessesToStartReply, error)
+	GetGroupState(context.Context, *nanny.GroupStateRequest) (*nanny.GroupState, error)
 	StartComponent(context.Context, *protos.ComponentToStart) error
 	StartColocationGroup(context.Context, *nanny.ColocationGroupStartRequest) error
 	RegisterReplica(context.Context, *nanny.ReplicaToRegister) error
 	ReportLoad(context.Context, *protos.WeaveletLoadReport) error
+	GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error)
 	ExportListener(context.Context, *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error)
 	GetRoutingInfo(context.Context, *protos.GetRoutingInfo) (*protos.RoutingInfo, error)
 	GetComponentsToStart(context.Context, *protos.GetComponentsToStart) (*protos.ComponentsToStart, error)

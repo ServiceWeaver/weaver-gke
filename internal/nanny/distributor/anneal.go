@@ -138,8 +138,8 @@ func (d *Distributor) ManageAppStates(ctx context.Context) error {
 		if err := d.getListenerState(ctx, app); err != nil {
 			errs = append(errs, fmt.Errorf("error getting listener state for app %v: %w", app, err))
 		}
-		if err := d.getProcessState(ctx, app); err != nil {
-			errs = append(errs, fmt.Errorf("error getting process state for app %v: %w", app, err))
+		if err := d.getGroupState(ctx, app); err != nil {
+			errs = append(errs, fmt.Errorf("error getting group state for app %v: %w", app, err))
 		}
 	}
 	return errs.ErrorOrNil()
@@ -345,9 +345,9 @@ func (d *Distributor) getListenerState(ctx context.Context, app string) error {
 	return errs.ErrorOrNil()
 }
 
-// getProcessState retrieve the latest process state for the application
+// getGroupState retrieve the latest group state for the application
 // from the manager.
-func (d *Distributor) getProcessState(ctx context.Context, app string) error {
+func (d *Distributor) getGroupState(ctx context.Context, app string) error {
 	state, version, err := d.loadAppState(ctx, app)
 	if err != nil {
 		return err
@@ -355,8 +355,8 @@ func (d *Distributor) getProcessState(ctx context.Context, app string) error {
 
 	var errs errlist.ErrList
 	for _, version := range state.Versions {
-		// Get process state for the application version.
-		processes, err := d.manager.GetProcessState(ctx, &nanny.ProcessStateRequest{
+		// Get group state for the application version.
+		groups, err := d.manager.GetGroupState(ctx, &nanny.GroupStateRequest{
 			AppName:   app,
 			VersionId: version.Config.Deployment.Id,
 		})
@@ -364,7 +364,7 @@ func (d *Distributor) getProcessState(ctx context.Context, app string) error {
 			errs = append(errs, err)
 			continue
 		}
-		version.Processes = processes
+		version.Groups = groups
 	}
 
 	if _, err := d.saveAppState(ctx, app, state, version); err != nil {

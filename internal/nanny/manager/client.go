@@ -64,28 +64,14 @@ func (h *HttpClient) Delete(ctx context.Context, req *nanny.ApplicationDeleteReq
 	})
 }
 
-// GetProcessState implements the clients.ManagerClient interface.
-func (h *HttpClient) GetProcessState(ctx context.Context, req *nanny.ProcessStateRequest) (*nanny.ProcessState, error) {
-	reply := &nanny.ProcessState{}
+// GetGroupState implements the clients.ManagerClient interface.
+func (h *HttpClient) GetGroupState(ctx context.Context, req *nanny.GroupStateRequest) (*nanny.GroupState, error) {
+	reply := &nanny.GroupState{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
-		URLPath: getProcessStateURL,
+		URLPath: getGroupStateURL,
 		Request: req,
-		Reply:   reply,
-	})
-	return reply, err
-}
-
-// GetProcessesToStart implements the clients.ManagerClient interface.
-func (h *HttpClient) GetProcessesToStart(ctx context.Context, request *protos.GetProcessesToStartRequest) (
-	*protos.GetProcessesToStartReply, error) {
-	reply := &protos.GetProcessesToStartReply{}
-	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  http.DefaultClient,
-		Addr:    h.Addr,
-		URLPath: getProcessesToStartURL,
-		Request: request,
 		Reply:   reply,
 	})
 	return reply, err
@@ -129,6 +115,20 @@ func (h *HttpClient) ReportLoad(ctx context.Context, req *protos.WeaveletLoadRep
 		URLPath: reportLoadURL,
 		Request: req,
 	})
+}
+
+func (h *HttpClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
+	reply := &protos.GetAddressReply{}
+	if err := protomsg.Call(ctx, protomsg.CallArgs{
+		Client:  http.DefaultClient,
+		Addr:    h.Addr,
+		URLPath: getListenerAddressURL,
+		Request: req,
+		Reply:   reply,
+	}); err != nil {
+		return nil, err
+	}
+	return reply, nil
 }
 
 // ExportListener implements the clients.ManagerClient interface.

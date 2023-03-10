@@ -20,7 +20,6 @@ import (
 	"os"
 
 	traceexporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
-	"go.opentelemetry.io/otel/sdk/trace"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
@@ -30,6 +29,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // RunBabysitter creates and runs a GKE babysitter.

@@ -23,16 +23,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/pprof/profile"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/testing/protocmp"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/pprof/profile"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 const testRegion = "us-west1"
@@ -594,7 +594,7 @@ func TestAnneal(t *testing.T) {
 		protocmp.Transform(),
 		protocmp.IgnoreFields(&DistributorState{}, "public_traffic_assignment"),
 		protocmp.IgnoreFields(&DistributorState{}, "private_traffic_assignment"),
-		protocmp.IgnoreFields(&AppVersionState{}, "config", "schedule", "stopped_time", "processes"),
+		protocmp.IgnoreFields(&AppVersionState{}, "config", "schedule", "stopped_time", "groups"),
 	}
 	if diff := cmp.Diff(wantState, state, opts...); diff != "" {
 		t.Fatalf("bad state (-want +got):\n%s", diff)
@@ -612,13 +612,13 @@ func TestAnneal(t *testing.T) {
 }
 
 func TestGetDistributorState(t *testing.T) {
-	procs := processStates{
-		"process1": {
+	groups := groupStates{
+		"group1": {
 			replicas:   []string{"replica1:healthy"},
 			components: []string{"component1", "component2"},
 			listeners:  []string{"l1"},
 		},
-		"process2": {
+		"group2": {
 			replicas:   []string{"replica1:healthy"},
 			components: []string{"component3"},
 			listeners:  []string{"l2", "l3"},
@@ -686,14 +686,14 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 						{
 							VersionId:                  toUUID(2),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -739,28 +739,28 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 						{
 							VersionId:                  toUUID(3),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 						{
 							VersionId:                  toUUID(4),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 						{
 							VersionId:                  toUUID(1),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -820,14 +820,14 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 						{
 							VersionId:                  toUUID(2),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -882,7 +882,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -893,7 +893,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -961,7 +961,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -972,7 +972,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -1028,7 +1028,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -1039,7 +1039,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -1098,7 +1098,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -1109,7 +1109,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Processes:                  procs.toProto(),
+							Groups:                     groups.toProto(),
 						},
 					},
 				},
@@ -1135,7 +1135,7 @@ func TestGetDistributorState(t *testing.T) {
 				mux,
 				store.NewFakeStore(),
 				&logging.NewTestLogger(t).FuncLogger,
-				&mockManagerClient{nil, nil, nil, procs},
+				&mockManagerClient{nil, nil, nil, groups},
 				testRegion,
 				nil, // babysitterConstructor
 				0,   // manageAppsInterval
@@ -1208,7 +1208,7 @@ func TestGetDistributorState(t *testing.T) {
 			// Verify that the rollout status is as expected.
 			opts = []cmp.Option{
 				protocmp.Transform(),
-				protocmp.SortRepeatedFields(&nanny.ProcessState{}, "processes"),
+				protocmp.SortRepeatedFields(&nanny.GroupState{}, "groups"),
 			}
 			if diff := cmp.Diff(c.expectedState, gotAppsState, opts...); diff != "" {
 				t.Fatalf("bad state (-want, +got):\n%s", diff)
@@ -1262,40 +1262,40 @@ func TestRunProfiling(t *testing.T) {
 
 	type testCase struct {
 		name       string
-		procStates processStates               // proc_name -> process state
+		procStates groupStates                 // proc_name -> group state
 		profiles   map[string]*profile.Profile // proc_name:replica -> profile
 		expect     *profile.Profile
 		expectErr  string
 	}
 	for _, c := range []testCase{
 		{
-			// Test plan: Single process with a single healthy replica. The
+			// Test plan: Single group with a single healthy replica. The
 			// returned profile should be the profile of that single replica.
-			name: "one_process",
-			procStates: processStates{
-				"process1": {
+			name: "one_group",
+			procStates: groupStates{
+				"group1": {
 					replicas: []string{"replica1:healthy", "replica2:unhealthy"},
 				},
 			},
 			profiles: map[string]*profile.Profile{
-				"process1:replica1": prof(time.Second, 100),
+				"group1:replica1": prof(time.Second, 100),
 			},
 			expect: prof(time.Second, 100),
 		},
 		{
-			// Test plan: Two processes with a different number of healthy
+			// Test plan: Two groups with a different number of healthy
 			// replicas. The returned profile should be the scaled combination
-			// of the two process' profiles.
-			name: "two_processes",
-			procStates: processStates{
-				"process1": {
+			// of the two groups' profiles.
+			name: "two_groups",
+			procStates: groupStates{
+				"group1": {
 					replicas: []string{
 						"replica1:healthy",
 						"replica2:unhealthy",
 						"replica3:healthy",
 					},
 				},
-				"process2": {
+				"group2": {
 					replicas: []string{
 						"replica1:healthy",
 						"replica2:healthy",
@@ -1305,50 +1305,50 @@ func TestRunProfiling(t *testing.T) {
 				},
 			},
 			profiles: map[string]*profile.Profile{
-				"process1:replica1": prof(time.Second, 100),
-				"process1:replica3": prof(time.Second, 100),
-				"process2:replica1": prof(time.Second, 1000),
-				"process2:replica2": prof(time.Second, 1000),
-				"process2:replica3": prof(time.Second, 1000),
+				"group1:replica1": prof(time.Second, 100),
+				"group1:replica3": prof(time.Second, 100),
+				"group2:replica1": prof(time.Second, 1000),
+				"group2:replica2": prof(time.Second, 1000),
+				"group2:replica3": prof(time.Second, 1000),
 			},
 			expect: prof(2*time.Second, 3200),
 		},
 		{
-			// Test plan: Two processes where one has a healthy replica and the
+			// Test plan: Two groups where one has a healthy replica and the
 			// other doesn't. The returned profile should be the profile of
-			// the healthy process.
-			name: "two_processes_one_unhealthy",
-			procStates: processStates{
-				"process1": {replicas: []string{"replica1:healthy"}},
-				"process2": {replicas: []string{"replica1:unhealthy"}},
+			// the healthy group.
+			name: "two_groups_one_unhealthy",
+			procStates: groupStates{
+				"group1": {replicas: []string{"replica1:healthy"}},
+				"group2": {replicas: []string{"replica1:unhealthy"}},
 			},
 			profiles: map[string]*profile.Profile{
-				"process1:replica1": prof(time.Second, 100),
+				"group1:replica1": prof(time.Second, 100),
 			},
 			expect: prof(time.Second, 100),
 		},
 		{
-			// Test plan: Two processes, both healthy. Profile collection fails
-			// at one of the two processes. The returned profile should be the
-			// profile of the other process, but with an error.
-			name: "two_processes_one_failed",
-			procStates: processStates{
-				"process1": {replicas: []string{"replica1:healthy"}},
-				"process2": {replicas: []string{"replica1:healthy"}},
+			// Test plan: Two groups, both healthy. Profile collection fails
+			// at one of the two groups. The returned profile should be the
+			// profile of the other group, but with an error.
+			name: "two_groups_one_failed",
+			procStates: groupStates{
+				"group1": {replicas: []string{"replica1:healthy"}},
+				"group2": {replicas: []string{"replica1:healthy"}},
 			},
 			profiles: map[string]*profile.Profile{
-				"process1:replica1": prof(time.Second, 100),
+				"group1:replica1": prof(time.Second, 100),
 			},
 			expect:    prof(time.Second, 100),
 			expectErr: "no profile found",
 		},
 		{
-			// Test plan: Two processes, both unhealthy. The returned profile
+			// Test plan: Two groups, both unhealthy. The returned profile
 			// data should be empty, with no errors.
-			name: "two_processes_both_unhealthy",
-			procStates: processStates{
-				"process1": {replicas: []string{"replica1:unhealthy"}},
-				"process2": {replicas: []string{"replica1:unhealthy"}},
+			name: "two_groups_both_unhealthy",
+			procStates: groupStates{
+				"group1": {replicas: []string{"replica1:unhealthy"}},
+				"group2": {replicas: []string{"replica1:unhealthy"}},
 			},
 			expect: nil,
 		},
@@ -1472,16 +1472,16 @@ func registerNewAppVersion(d *Distributor, v version) error {
 	return d.Distribute(context.Background(), req)
 }
 
-type processStates map[string]struct {
+type groupStates map[string]struct {
 	replicas   []string
 	components []string
 	listeners  []string
 }
 
-func (s processStates) toProto() *nanny.ProcessState {
-	var ret nanny.ProcessState
+func (s groupStates) toProto() *nanny.GroupState {
+	var ret nanny.GroupState
 	for proc, state := range s {
-		p := &nanny.ProcessState_Process{Name: proc, Components: state.components}
+		p := &nanny.GroupState_Group{Name: proc, Components: state.components}
 		for _, replica := range state.replicas {
 			parts := strings.Split(replica, ":")
 			if len(parts) != 2 {
@@ -1492,7 +1492,7 @@ func (s processStates) toProto() *nanny.ProcessState {
 				healthStatus = protos.HealthStatus_HEALTHY
 			}
 			addr := fmt.Sprintf("%s:%s", proc, parts[0])
-			p.Replicas = append(p.Replicas, &nanny.ProcessState_Process_Replica{
+			p.Replicas = append(p.Replicas, &nanny.GroupState_Group_Replica{
 				WeaveletAddr:   addr,
 				BabysitterAddr: addr,
 				HealthStatus:   healthStatus,
@@ -1501,7 +1501,7 @@ func (s processStates) toProto() *nanny.ProcessState {
 		for _, lis := range state.listeners {
 			p.Listeners = append(p.Listeners, &protos.Listener{Name: lis})
 		}
-		ret.Processes = append(ret.Processes, p)
+		ret.Groups = append(ret.Groups, p)
 	}
 	return &ret
 }
@@ -1509,10 +1509,10 @@ func (s processStates) toProto() *nanny.ProcessState {
 // mockManagerClient is a mock manager.Client that returns the provided
 // errors/values for the corresponding methods.
 type mockManagerClient struct {
-	deploy error         // returned by Deploy
-	stop   error         // returned by Stop
-	delete error         // returned by Delete
-	procs  processStates // returned by GetProcessState
+	deploy error       // returned by Deploy
+	stop   error       // returned by Stop
+	delete error       // returned by Delete
+	groups groupStates // returned by GetGroupState
 }
 
 var _ clients.ManagerClient = &mockManagerClient{}
@@ -1532,14 +1532,9 @@ func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequ
 	return m.delete
 }
 
-// GetProcessState implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetProcessState(_ context.Context, req *nanny.ProcessStateRequest) (*nanny.ProcessState, error) {
-	return m.procs.toProto(), nil
-}
-
-// GetProcessesToStart implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetProcessesToStart(context.Context, *protos.GetProcessesToStartRequest) (*protos.GetProcessesToStartReply, error) {
-	panic("implement me")
+// GetGroupState implements the clients.ManagerClient interface.
+func (m *mockManagerClient) GetGroupState(_ context.Context, req *nanny.GroupStateRequest) (*nanny.GroupState, error) {
+	return m.groups.toProto(), nil
 }
 
 // StartComponent implements the clients.ManagerClient interface.
@@ -1559,6 +1554,11 @@ func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.ReplicaToReg
 
 // ReportLoad implements the clients.ManagerClient interface.
 func (m *mockManagerClient) ReportLoad(context.Context, *protos.WeaveletLoadReport) error {
+	panic("implement me")
+}
+
+// GetListenerAddress implements the clients.ManagerClient interface.
+func (m *mockManagerClient) GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
 	panic("implement me")
 }
 
