@@ -23,8 +23,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/sdk/trace"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
@@ -32,7 +30,8 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
+	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 const (
@@ -49,6 +48,7 @@ type Babysitter struct {
 	opts           envelope.Options
 	cfg            *config.GKEConfig
 	group          *protos.ColocationGroup
+	envelope       *envelope.Envelope
 	podName        string
 	lis            net.Listener // listener to serve /healthz and /run_profiling
 	manager        clients.ManagerClient
@@ -58,17 +58,6 @@ type Babysitter struct {
 	metricExporter func(metrics []*metrics.MetricSnapshot) error
 
 	mu sync.RWMutex
-	// Envelopes managed by the babysitter, keyed by the Service Weaver process they
-	// correspond to.
-	envelopes map[string]*envelopeState
-}
-
-var _ clients.BabysitterClient = &Babysitter{}
-
-// envelopeState contains information about an envelope managed by the
-// babysitter.
-type envelopeState struct {
-	envelope *envelope.Envelope
 
 	// Internal IP address on which the weavelet can be reached by other
 	// weavelets.
@@ -80,12 +69,15 @@ type envelopeState struct {
 	defunctWeaveletAddrs map[string]struct{}
 }
 
+var _ clients.BabysitterClient = &Babysitter{}
+
 // NewBabysitter returns a new babysitter.
 func NewBabysitter(
 	ctx context.Context,
 	cfg *config.GKEConfig,
 	group *protos.ColocationGroup,
 	podName string,
+	useLocalhost bool,
 	manager clients.ManagerClient,
 	logSaver func(*protos.LogEntry),
 	traceSaver func(spans []trace.ReadOnlySpan) error,
@@ -104,34 +96,92 @@ func NewBabysitter(
 	if err != nil {
 		return nil, err
 	}
-
-	return &Babysitter{
-		ctx:     ctx,
-		opts:    opts,
-		cfg:     cfg,
-		group:   group,
-		podName: podName,
-		lis:     lis,
-		manager: manager,
-		logger: &logging.FuncLogger{
-			Opts: logging.Options{
-				App:        cfg.Deployment.App.Name,
-				Deployment: cfg.Deployment.Id,
-				Component:  "Babysitter",
-				Weavelet:   podName,
-				Attrs:      []string{"serviceweaver/system", ""},
-			},
-			Write: logSaver,
+	logger := &logging.FuncLogger{
+		Opts: logging.Options{
+			App:        cfg.Deployment.App.Name,
+			Deployment: cfg.Deployment.Id,
+			Component:  "Babysitter",
+			Weavelet:   podName,
+			Attrs:      []string{"serviceweaver/system", ""},
 		},
-		logSaver:       logSaver,
-		traceSaver:     traceSaver,
-		metricExporter: metricExporter,
-		envelopes:      map[string]*envelopeState{},
-	}, nil
+		Write: logSaver,
+	}
+
+	// Create the babysitter.
+	b := &Babysitter{
+		ctx:                  ctx,
+		opts:                 opts,
+		cfg:                  cfg,
+		group:                group,
+		podName:              podName,
+		lis:                  lis,
+		manager:              manager,
+		logger:               logger,
+		logSaver:             logSaver,
+		traceSaver:           traceSaver,
+		metricExporter:       metricExporter,
+		defunctWeaveletAddrs: map[string]struct{}{},
+	}
+
+	// Create the envelope.
+	//
+	// We use the PodName as a unique group replica id for the following
+	// reasons:
+	//   * It is derived from a unique 63-bit value, so collisions are
+	//     unlikely.
+	//   * It may be useful to be associated with a Pod for debugging etc.
+	//   * It allows the manager to quickly check if the group replica is still
+	//     active by asking the Kubernetes API if the Pod with a given name
+	//     exists.
+	wlet := &protos.WeaveletInfo{
+		App:                cfg.Deployment.App.Name,
+		DeploymentId:       cfg.Deployment.Id,
+		Group:              group,
+		GroupId:            podName,
+		Id:                 uuid.New().String(),
+		SameProcess:        cfg.Deployment.App.SameProcess,
+		Sections:           cfg.Deployment.App.Sections,
+		UseLocalhost:       useLocalhost,
+		WeaveletPicksPorts: false,
+	}
+	handler := &Handler{
+		Ctx:            ctx,
+		Logger:         logger,
+		Config:         cfg,
+		Group:          group,
+		Manager:        manager,
+		PodName:        podName,
+		BabysitterAddr: lis.Addr().String(),
+		LogSaver:       logSaver,
+		TraceSaver:     traceSaver,
+		ReportWeaveletAddr: func(addr string) error {
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			// Remember the old weavelet address.
+			b.defunctWeaveletAddrs[b.weaveletAddr] = struct{}{}
+			b.weaveletAddr = addr
+			// Cleanup in case the weavelet started with an old IP address.
+			//
+			// TODO(rgrandl): use weavelet ids instead of addresses to uniquely
+			// identify the weavelets.
+			delete(b.defunctWeaveletAddrs, addr)
+			b.logger.Info("Process (re)started with new address",
+				"group", logging.ShortenComponent(group.Name),
+				"address", addr)
+			return nil
+		},
+	}
+	e, err := envelope.NewEnvelope(wlet, cfg.Deployment.App, handler, opts)
+	if err != nil {
+		return nil, err
+	}
+	b.envelope = e
+
+	return b, nil
 }
 
-// Run runs the Envelope management loop. This call will block until the
-// context passed to NewBabysitter is canceled.
+// Run runs the babysitter. This call will block until the context passed to
+// NewBabysitter is canceled.
 func (b *Babysitter) Run() error {
 	if b.lis != nil {
 		go func() {
@@ -144,132 +194,14 @@ func (b *Babysitter) Run() error {
 	// Start a goroutine to periodically export metrics.
 	go b.exportMetrics()
 
-	var version string
-	for r := retry.Begin(); r.Continue(b.ctx); {
-		procsToStart, newVersion, err := b.getProcessesToStart(b.ctx, version)
-		if err != nil {
-			continue
-		}
-		version = newVersion
-		for _, proc := range procsToStart {
-			if err := b.startProcess(proc); err != nil {
-				b.logger.Error("Error starting process", err, "process", proc)
-			}
-		}
-		r.Reset()
-	}
-	return b.ctx.Err()
+	// Run the envelope.
+	return b.envelope.Run(b.ctx)
+
 }
 
-// Stop terminates all envelopes managed by the babysitter.
+// Stop terminates the envelope managed by the babysitter.
 func (b *Babysitter) Stop() error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	for _, p := range b.envelopes {
-		if p.envelope == nil {
-			continue
-		}
-		if err := p.envelope.Stop(); err != nil {
-			return err
-		}
-	}
-	b.envelopes = map[string]*envelopeState{}
-	return nil
-}
-
-func (b *Babysitter) getProcessesToStart(ctx context.Context, version string) ([]string, string, error) {
-	request := &protos.GetProcessesToStartRequest{
-		App:             b.cfg.Deployment.App.Name,
-		DeploymentId:    b.cfg.Deployment.Id,
-		ColocationGroup: b.group.Name,
-		Version:         version,
-	}
-	reply, err := b.manager.GetProcessesToStart(ctx, request)
-	if err != nil {
-		return nil, "", err
-	}
-	if reply.Unchanged {
-		return nil, "", fmt.Errorf("no new processes to start")
-	}
-	return reply.Processes, reply.Version, nil
-}
-
-func (b *Babysitter) startProcess(proc string) error {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, ok := b.envelopes[proc]; ok {
-		// Already started.
-		return nil
-	}
-
-	// Start the weavelet and capture its logs, traces, and metrics.
-	wlet := &protos.Weavelet{
-		Id:             uuid.New().String(),
-		Dep:            b.cfg.Deployment,
-		Group:          b.group,
-		GroupReplicaId: b.podName,
-		Process:        proc,
-	}
-	handler := &Handler{
-		Ctx:            b.ctx,
-		Config:         b.cfg,
-		Manager:        b.manager,
-		PodName:        b.podName,
-		BabysitterAddr: b.lis.Addr().String(),
-		LogSaver:       b.logSaver,
-		TraceSaver:     b.traceSaver,
-		ReportWeaveletAddr: func(addr string) error {
-			b.mu.Lock()
-			defer b.mu.Unlock()
-			e := b.envelopes[proc]
-			if e == nil { // NOTE: should never happen.
-				return fmt.Errorf("unable to register the weavelet addr %s for a process %s that hasn't yet started", addr, proc)
-			}
-			// Remember the old weavelet address.
-			e.defunctWeaveletAddrs[e.weaveletAddr] = struct{}{}
-			e.weaveletAddr = addr
-			// Cleanup in case the weavelet started with an old IP address.
-			//
-			// TODO(rgrandl): use weavelet ids instead of addresses to uniquely
-			// identify the weavelets.
-			delete(e.defunctWeaveletAddrs, addr)
-			b.logger.Info("Process (re)started with new address",
-				"process", logging.ShortenComponent(e.envelope.Weavelet().Process),
-				"address", e.weaveletAddr)
-			return nil
-		},
-	}
-	e, err := envelope.NewEnvelope(wlet, handler, b.opts)
-	if err != nil {
-		return err
-	}
-	go func() {
-		if err := e.Run(b.ctx); err != nil {
-			b.logger.Error("Error running process", err, "process", logging.ShortenComponent(e.Weavelet().Process))
-		}
-	}()
-	b.envelopes[proc] = &envelopeState{envelope: e, defunctWeaveletAddrs: map[string]struct{}{}}
-	return nil
-}
-
-// getEnvelopes return the set of envelopes managed by the babysitter.
-func (b *Babysitter) getEnvelopes() []*envelope.Envelope {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	var envelopes []*envelope.Envelope
-	for _, e := range b.envelopes {
-		if e.envelope != nil {
-			envelopes = append(envelopes, e.envelope)
-		}
-	}
-	return envelopes
-}
-
-func (b *Babysitter) getEnvelopeState(proc string) *envelopeState {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.envelopes[proc]
+	return b.envelope.Stop()
 }
 
 // runHTTP runs the babysitter HTTP server.
@@ -300,16 +232,12 @@ func (b *Babysitter) exportMetrics() {
 		select {
 		case <-ticker.C:
 			snaps := metrics.Snapshot() // babysitter metrics
-
-			// Gather envelope metrics.
-			for _, e := range b.getEnvelopes() {
-				ms, err := e.ReadMetrics()
-				if err != nil {
-					b.logger.Error("cannot get envelope metrics", err)
-					continue
-				}
-				snaps = append(snaps, ms...)
+			em, err := b.envelope.ReadMetrics()
+			if err != nil {
+				b.logger.Error("cannot get envelope metrics", err)
+				continue
 			}
+			snaps = append(snaps, em...)
 
 			// Export.
 			if err := b.metricExporter(snaps); err != nil {
@@ -325,13 +253,11 @@ func (b *Babysitter) exportMetrics() {
 
 // CheckHealth implements the clients.BabysitterClient interface.
 func (b *Babysitter) CheckHealth(_ context.Context, req *clients.HealthCheck) (*protos.HealthReport, error) {
-	e := b.getEnvelopeState(req.Process)
-	if e == nil || e.envelope == nil {
-		return nil, fmt.Errorf("process %s is not ready for health checks", req.Process)
-	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var healthStatus protos.HealthStatus
-	if e.weaveletAddr != req.Addr {
-		if _, found := e.defunctWeaveletAddrs[req.Addr]; found {
+	if b.weaveletAddr != req.Addr {
+		if _, found := b.defunctWeaveletAddrs[req.Addr]; found {
 			// The address belongs to a weavelet that has been terminated.
 			healthStatus = protos.HealthStatus_TERMINATED
 		} else {
@@ -340,7 +266,7 @@ func (b *Babysitter) CheckHealth(_ context.Context, req *clients.HealthCheck) (*
 		}
 	} else {
 		// The address belongs to an active weavelet: get its status.
-		healthStatus = e.envelope.HealthStatus()
+		healthStatus = b.envelope.HealthStatus()
 	}
 	return &protos.HealthReport{Status: healthStatus}, nil
 }
@@ -352,16 +278,12 @@ func (b *Babysitter) RunProfiling(_ context.Context, req *protos.RunProfiling) (
 		"profile", req.ProfileType,
 		"version", req.VersionId,
 		"application", req.AppName,
-		"process", logging.ShortenComponent(req.Process),
+		"group", logging.ShortenComponent(req.Group),
 	)
-	e := b.getEnvelopeState(req.Process)
-	if e == nil || e.envelope == nil {
-		return nil, fmt.Errorf("process %s is not ready to be profiled yet", logging.ShortenComponent(req.Process))
-	}
-	prof, err := e.envelope.RunProfiling(b.ctx, req)
+	prof, err := b.envelope.RunProfiling(b.ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("unable to profile %s for version %s of application %s and process %s: %v",
-			req.ProfileType, req.VersionId, req.AppName, logging.ShortenComponent(req.Process), err)
+			req.ProfileType, req.VersionId, req.AppName, logging.ShortenComponent(req.Group), err)
 	}
 	return prof, nil
 }

@@ -101,8 +101,8 @@ message AppVersionDistributorState {
   int64 wave_idx = 1;
   AppVersionDistributorStatus status = 2;
 
-  // All known processes for this application version at the distributor.
-  nanny.ProcessState processes = 3;
+  // All known groups for this application version at the distributor.
+  nanny.GroupState groups = 3;
 }
 
 // rolloutStrategy contains the strategy for rolling out an application version.
@@ -235,12 +235,12 @@ message AppVersionStatus {
     DELETING = 3;     // the version is being deleted
   }
   Status status = 7;
-  repeated ProcessStatus processes = 8;
+  repeated GroupStatus groups = 8;
   repeated ListenerStatus listeners = 9;
 }
 
-message ProcessStatus {
-  string name = 1;                       // process name
+message GroupStatus {
+  string name = 1;                       // group name
   string location = 2;                   // location (e.g., us-east1)
   int64 healthy_replicas = 3;            // number of healthy replicas
   int64 total_replicas = 4;              // number of total replicas

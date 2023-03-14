@@ -20,7 +20,6 @@ import (
 	"os"
 
 	traceexporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
-	"go.opentelemetry.io/otel/sdk/trace"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
@@ -30,6 +29,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // RunBabysitter creates and runs a GKE babysitter.
@@ -92,16 +92,6 @@ func RunBabysitter(ctx context.Context) error {
 		}
 	}
 
-	// We use the PodName as a unique group replica id for the following
-	// reasons:
-	//   * It is derived from a unique 63-bit value, so collisions are
-	//     unlikely.
-	//   * It may be useful to be associated with a Pod for debugging etc.
-	//   * It allows the manager to quickly check if the group replica is still
-	//     active by asking the Kubernetes API if the Pod with a given name
-	//     exists.
-	groupReplicaID := meta.PodName
-
 	// Babysitter logs are written to the same log store as the application logs.
 	logClient, err := newCloudLoggingClient(ctx, meta)
 	if err != nil {
@@ -133,7 +123,7 @@ func RunBabysitter(ctx context.Context) error {
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	b, err := babysitter.NewBabysitter(ctx, cfg, colocGroup, groupReplicaID, m, logSaver, traceSaver, metricSaver, opts)
+	b, err := babysitter.NewBabysitter(ctx, cfg, colocGroup, meta.PodName, false /*useLocalhost*/, m, logSaver, traceSaver, metricSaver, opts)
 	if err != nil {
 		return err
 	}

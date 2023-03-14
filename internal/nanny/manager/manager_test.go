@@ -16,13 +16,13 @@ package manager
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/ServiceWeaver/weaver-gke/internal"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
@@ -33,6 +33,12 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/testing/protocmp"
+)
+
+const (
+	testListenerPort = 9999
 )
 
 // nextEvent reads the next event from manager, timing out if it takes too long.
@@ -61,9 +67,15 @@ func startServer(t *testing.T) (*httptest.Server, chan string) {
 			return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 		},
 		func(context.Context, string) (bool, error) { return true, nil },
-		nil, // recordListener
+		func(_ context.Context, _ *config.GKEConfig, group *protos.ColocationGroup, listener string) (int, error) {
+			events <- "getListenerPort " + group.Name + " " + listener
+			return testListenerPort, nil
+		},
+		func(context.Context, *config.GKEConfig, *protos.ColocationGroup, *protos.Listener) (*protos.ExportListenerReply, error) {
+			return &protos.ExportListenerReply{ProxyAddress: "listener:8888"}, nil
+		},
 		func(_ context.Context, _ *config.GKEConfig, group *protos.ColocationGroup) error {
-			events <- "start " + group.Name
+			events <- "startColocationGroup " + group.Name
 			return nil
 		},
 		func(context.Context, string, []string) error { return nil },
@@ -79,9 +91,7 @@ func makeConfig() *config.GKEConfig {
 			App: &protos.AppConfig{
 				Name: "todo",
 			},
-			Id:                "11111111-1111-1111-1111-111111111111",
-			UseLocalhost:      true,
-			ProcessPicksPorts: true,
+			Id: "11111111-1111-1111-1111-111111111111",
 		},
 	}
 }
@@ -103,21 +113,17 @@ func TestDeploy(t *testing.T) {
 		t.Fatalf("couldn't deploy %v: %v", cfg, err)
 	}
 
-	// Verify that the process "main" is started.
-	if event := nextEvent(events); event != "start main" {
-		t.Fatalf("main process not started: got %q", event)
+	if event := nextEvent(events); event != "startColocationGroup main" {
+		t.Fatalf("main not started: got %q", event)
 	}
-}
 
-func TestStartProcess(t *testing.T) {
-	ts, events := startServer(t)
+	// Verify that the process eventst)
 	defer ts.Close()
 
 	// Start process and check that it has started.
 	req := &nanny.ColocationGroupStartRequest{
-		AppName: "todo",
-		Config:  makeConfig(),
-		Group:   &protos.ColocationGroup{Name: "bar"},
+		Config: makeConfig(),
+		Group:  &protos.ColocationGroup{Name: "bar"},
 	}
 
 	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
@@ -128,8 +134,40 @@ func TestStartProcess(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if event := nextEvent(events); event != "start bar" {
+	if event := nextEvent(events); event != "startColocationGroup bar" {
 		t.Fatalf("bar not started: got %q", event)
+	}
+}
+
+func TestGetListenerAddress(t *testing.T) {
+	ts, events := startServer(t)
+	defer ts.Close()
+
+	// Start process and check that it has started.
+	req := &nanny.GetListenerAddressRequest{
+		Group:    &protos.ColocationGroup{Name: "bar"},
+		Listener: "foo",
+		Config:   makeConfig(),
+	}
+
+	reply := &protos.GetAddressReply{}
+	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
+		Client:  ts.Client(),
+		Addr:    ts.URL,
+		URLPath: getListenerAddressURL,
+		Request: req,
+		Reply:   reply,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if event := nextEvent(events); event != "getListenerPort bar foo" {
+		t.Fatalf("foo port not requested: got %q", event)
+	}
+	expect := &protos.GetAddressReply{
+		Address: fmt.Sprintf(":%d", testListenerPort),
+	}
+	if diff := cmp.Diff(reply, expect, protocmp.Transform()); diff != "" {
+		t.Fatalf("bad address reply: (-want +got)\n%s", diff)
 	}
 }
 
@@ -146,7 +184,7 @@ func TestGetRoutingInfo(t *testing.T) {
 			Replica: &protos.ReplicaToRegister{
 				App:          d.App.Name,
 				DeploymentId: d.Id,
-				Process:      "foo",
+				Group:        "foo",
 				Address:      addr,
 			},
 		}
@@ -163,11 +201,11 @@ func TestGetRoutingInfo(t *testing.T) {
 	// startComponents registers a set of components to be started.
 	startComponent := func(component string, isRouted bool) {
 		req := &protos.ComponentToStart{
-			App:          d.App.Name,
-			DeploymentId: d.Id,
-			Process:      "foo",
-			Component:    component,
-			IsRouted:     isRouted,
+			App:             d.App.Name,
+			DeploymentId:    d.Id,
+			ColocationGroup: "foo",
+			Component:       component,
+			IsRouted:        isRouted,
 		}
 		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
 			Client:  ts.Client(),
@@ -184,7 +222,7 @@ func TestGetRoutingInfo(t *testing.T) {
 		req := &protos.GetRoutingInfo{
 			App:          d.App.Name,
 			DeploymentId: d.Id,
-			Process:      "foo",
+			Group:        "foo",
 			Version:      v,
 		}
 		var reply protos.RoutingInfo

@@ -27,9 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/pprof/profile"
-	"golang.org/x/exp/maps"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
@@ -38,6 +35,9 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/pprof/profile"
+	"golang.org/x/exp/maps"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // A controller manages the rollout of an application version across a set of
@@ -466,20 +466,20 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 		}
 		return ""
 	}
-	var procs []*ProcessStatus
+	var groups []*GroupStatus
 	listeners := map[string]*ListenerStatus{}
 	for loc, d := range versionState.Distributors {
-		if d.Processes == nil {
+		if d.Groups == nil {
 			continue
 		}
-		for _, proc := range d.Processes.Processes {
+		for _, group := range d.Groups.Groups {
 			var numHealthyReplicas int
-			for _, r := range proc.Replicas {
+			for _, r := range group.Replicas {
 				if r.HealthStatus == protos.HealthStatus_HEALTHY {
 					numHealthyReplicas++
 				}
 			}
-			for _, l := range proc.Listeners {
+			for _, l := range group.Listeners {
 				var hostname string
 				var public bool
 				if hostname = getPublicHostname(l.Name); hostname != "" {
@@ -503,16 +503,16 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 				}
 
 			}
-			procs = append(procs, &ProcessStatus{
-				Name:            proc.Name,
+			groups = append(groups, &GroupStatus{
+				Name:            group.Name,
 				Location:        loc,
 				HealthyReplicas: int64(numHealthyReplicas),
-				TotalReplicas:   int64(len(proc.Replicas)),
-				Components:      proc.Components,
+				TotalReplicas:   int64(len(group.Replicas)),
+				Components:      group.Components,
 			})
 		}
 	}
-	status.Processes = procs
+	status.Groups = groups
 	status.Listeners = maps.Values(listeners)
 	return status
 }
@@ -571,7 +571,7 @@ func (c *controller) runProfiling(ctx context.Context, v *AppVersionState, req *
 	}
 	wait.Wait()
 
-	// Collect all of the non-nil profiles and errors from all processes.
+	// Collect all of the non-nil profiles and errors from all groups.
 	var profs []*profile.Profile
 	var errs []string
 	for _, state := range states {

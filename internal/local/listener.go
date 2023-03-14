@@ -19,14 +19,15 @@ import (
 	"errors"
 	"fmt"
 
-	"google.golang.org/protobuf/proto"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"google.golang.org/protobuf/proto"
 )
 
-// RecordListener records the network listener exported by an application version's process.
+// RecordListener records the network listener exported by an application
+// version.
 func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, lis *protos.Listener) error {
 	// Record the listener by adding a serialized version of the listener
 	// to internal.ListenState, stored under an application-version-scoped key

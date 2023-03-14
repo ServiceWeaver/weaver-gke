@@ -17,22 +17,25 @@ package babysitter
 import (
 	"context"
 
-	"go.opentelemetry.io/otel/sdk/trace"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
+	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Handler is an EnvelopeHandler that issues all requests to the manager.
 type Handler struct {
-	Ctx            context.Context        // context for all operations
-	Config         *config.GKEConfig      // GKE config for the handler
-	Manager        clients.ManagerClient  // connection to the manager
-	PodName        string                 // Pod hosting babysitter/envelope
-	BabysitterAddr string                 // IP address of the babysitter
-	LogSaver       func(*protos.LogEntry) // called on every log entry
+	Ctx            context.Context // context for all operations
+	Logger         *logging.FuncLogger
+	Config         *config.GKEConfig       // GKE config for the handler
+	Group          *protos.ColocationGroup // colocation group for the handler
+	PodName        string                  // Pod hosting babysitter/envelope
+	Manager        clients.ManagerClient   // connection to the manager
+	BabysitterAddr string                  // IP address of the babysitter
+	LogSaver       func(*protos.LogEntry)  // called on every log entry
 
 	TraceSaver func(spans []trace.ReadOnlySpan) error // called on every trace
 
@@ -50,10 +53,10 @@ func (h *Handler) StartComponent(request *protos.ComponentToStart) error {
 }
 
 // StartColocationGroup implements the protos.EnvelopeHandler interface.
-func (h *Handler) StartColocationGroup(request *protos.ColocationGroup) error {
+func (h *Handler) StartColocationGroup(target *protos.ColocationGroup) error {
 	req := &nanny.ColocationGroupStartRequest{
 		Config: h.Config,
-		Group:  request,
+		Group:  target,
 	}
 	return h.Manager.StartColocationGroup(h.Ctx, req)
 }
@@ -75,11 +78,20 @@ func (h *Handler) ReportLoad(request *protos.WeaveletLoadReport) error {
 	return h.Manager.ReportLoad(h.Ctx, request)
 }
 
+// GetAddress implements the protos.EnvelopeHandler interface.
+func (h *Handler) GetAddress(req *protos.GetAddressRequest) (*protos.GetAddressReply, error) {
+	return h.Manager.GetListenerAddress(h.Ctx, &nanny.GetListenerAddressRequest{
+		Group:    h.Group,
+		Listener: req.Name,
+		Config:   h.Config,
+	})
+}
+
 // ExportListener implements the protos.EnvelopeHandler interface.
-func (h *Handler) ExportListener(request *protos.ListenerToExport) (*protos.ExportListenerReply, error) {
+func (h *Handler) ExportListener(request *protos.ExportListenerRequest) (*protos.ExportListenerReply, error) {
 	return h.Manager.ExportListener(h.Ctx, &nanny.ExportListenerRequest{
-		AppName:  h.Config.Deployment.App.Name,
-		Listener: request,
+		Group:    h.Group,
+		Listener: request.Listener,
 		Config:   h.Config,
 	})
 }

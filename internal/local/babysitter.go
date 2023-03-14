@@ -36,7 +36,7 @@ import (
 // createBabysitter creates a babysitter in a gke-local deployment.
 func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	group *protos.ColocationGroup, logDir string) (*babysitter.Babysitter, error) {
-	groupReplicaID := uuid.New().String()
+	podName := uuid.New().String()
 	ls, err := logging.NewFileStore(logDir)
 	if err != nil {
 		return nil, fmt.Errorf("creating log store: %w", err)
@@ -74,5 +74,5 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	return babysitter.NewBabysitter(ctx, cfg, group, groupReplicaID, m, logSaver, traceSaver, metricExporter, opts)
+	return babysitter.NewBabysitter(ctx, cfg, group, podName, true /*useLocalhost*/, m, logSaver, traceSaver, metricExporter, opts)
 }

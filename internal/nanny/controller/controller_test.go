@@ -26,13 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/pprof/profile"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/testing/protocmp"
-	"google.golang.org/protobuf/types/known/durationpb"
-	"google.golang.org/protobuf/types/known/timestamppb"
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
@@ -40,6 +33,13 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/pprof/profile"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // toUUID returns a valid version UUID string for a given digit.
@@ -936,7 +936,7 @@ func TestRunProfiling(t *testing.T) {
 		{
 			// Test plan: Two distributor locations and profile collection
 			// fails at one of the locations. The returned profile should be the
-			// profile of the other process, but with an error.
+			// profile of the other group, but with an error.
 			name: "two_locations_one_error",
 			profiles: map[string]*profile.Profile{
 				"loc1": prof(time.Second, 100),
@@ -1403,14 +1403,9 @@ func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequ
 	return m.delete
 }
 
-// GetProcessState implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetProcessState(context.Context, *nanny.ProcessStateRequest) (*nanny.ProcessState, error) {
+// GetGroupState implements the clients.ManagerClient interface.
+func (m *mockManagerClient) GetGroupState(context.Context, *nanny.GroupStateRequest) (*nanny.GroupState, error) {
 	return nil, fmt.Errorf("unimplemented")
-}
-
-// GetProcessesToStart implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetProcessesToStart(context.Context, *protos.GetProcessesToStartRequest) (*protos.GetProcessesToStartReply, error) {
-	panic("implement me")
 }
 
 // StartComponent implements the clients.ManagerClient interface.
@@ -1430,6 +1425,10 @@ func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.ReplicaToReg
 
 // ReportLoad implements the clients.ManagerClient interface.
 func (m *mockManagerClient) ReportLoad(context.Context, *protos.WeaveletLoadReport) error {
+	panic("implement me")
+}
+
+func (m *mockManagerClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
 	panic("implement me")
 }
 
