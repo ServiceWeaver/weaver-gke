@@ -27,11 +27,24 @@ import (
 	"github.com/google/uuid"
 )
 
+var dockerfileTmpl = template.Must(template.New("Dockerfile").Parse(`
+FROM ubuntu:rolling
+WORKDIR /weaver/
+RUN apt-get update
+RUN apt-get install -y ca-certificates
+RUN apt-get install -y golang-go{{range .GoInstall}}
+RUN GOPATH=/weaver/ go install {{.}}{{end}}
+RUN mv /weaver/bin/* /weaver/
+COPY . .
+ENTRYPOINT ["/bin/bash", "-c"]
+`))
+
 // buildSpec holds information about a container image build.
 type buildSpec struct {
-	Tags   []string    // Tags attached to the built image.
-	Files  []string    // Files that should be copied to the container.
-	Config CloudConfig // Cloud project configuration.
+	Tags      []string    // Tags attached to the built image.
+	Files     []string    // Files that should be copied to the container.
+	GoInstall []string    // Binary targets that should be 'go install'-ed
+	Config    CloudConfig // Cloud project configuration.
 }
 
 // buildImage builds a container image with the given specification,
@@ -65,13 +78,15 @@ func buildImage(ctx context.Context, spec buildSpec) error {
 	}
 
 	// Create workDir/Dockerfile.
-	const dockerfileStr = `FROM ubuntu:rolling
-RUN apt-get update
-RUN apt-get install -y ca-certificates
-WORKDIR /weaver/
-COPY . .
-ENTRYPOINT ["/bin/bash", "-c"]`
-	if err := os.WriteFile(filepath.Join(workDir, "Dockerfile"), []byte(dockerfileStr), 0o755); err != nil {
+	dockerFile, err := os.Create(filepath.Join(workDir, "Dockerfile"))
+	if err != nil {
+		return err
+	}
+	if err := dockerfileTmpl.Execute(dockerFile, spec); err != nil {
+		dockerFile.Close()
+		return err
+	}
+	if err := dockerFile.Close(); err != nil {
 		return err
 	}
 
@@ -80,7 +95,8 @@ ENTRYPOINT ["/bin/bash", "-c"]`
 	if err != nil {
 		return err
 	}
-	const tmpl = `steps:
+	const tmpl = `
+steps:
 - name: gcr.io/cloud-builders/docker
   args:
   - build {{range $tag := .Tags}}
@@ -88,8 +104,7 @@ ENTRYPOINT ["/bin/bash", "-c"]`
   - '{{$tag}}' {{end}}
   - '.'
 images: {{range $tag := .Tags}}
-  - '{{$tag}}'
-{{end}}
+  - '{{$tag}}' {{end}}
 `
 	if err := template.Must(template.New("cloudbuild").Parse(tmpl)).Execute(cloudbuildFile, spec); err != nil {
 		cloudbuildFile.Close()
@@ -101,7 +116,8 @@ images: {{range $tag := .Tags}}
 
 	// Start the build.
 	_, err = runGcloud(spec.Config, "", cmdOptions{},
-		"builds", "submit", "--config", cloudbuildFile.Name(), workDir,
+		"builds", "submit", "--config", cloudbuildFile.Name(), "--machine-type",
+		"E2_HIGHCPU_8", workDir,
 	)
 	return err
 }

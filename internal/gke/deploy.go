@@ -24,6 +24,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
 	sync "sync"
 	"text/template"
@@ -103,16 +104,10 @@ type iamBindings map[string]map[string]struct{}
 // REQUIRES: Called by the weaver-gke command.
 func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error) {
 	dep := cfg.Deployment
-	localBinary := dep.App.Binary
+	localBinary := dep.App.Binary // Save before finalizeConfig rewrites it
 
 	// Finalize the config.
 	if err := finalizeConfig(config, cfg); err != nil {
-		return nil, nil, err
-	}
-
-	// Get the full pathname for the weaver-gke binary.
-	toolBinPath, err := os.Executable()
-	if err != nil {
 		return nil, nil, err
 	}
 
@@ -169,13 +164,29 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		buildLocation, config.Project, dockerRepoName)
 
 	fmt.Fprintln(os.Stderr, "Starting the application container build", appImageURL)
+
+	// Start the build in a separate goroutine.
 	buildDone := make(chan struct{})
+	files := []string{localBinary}
+	var goInstall []string
+	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
+		// Use the running weaver-gke tool binary.
+		toolBinPath, err := os.Executable()
+		if err != nil {
+			return nil, nil, err
+		}
+		files = append(files, toolBinPath)
+	} else {
+		// Cross-compile the weaver-gke tool binary inside the container.
+		goInstall = append(goInstall, "github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@latest")
+	}
 	go func() {
 		defer close(buildDone)
 		if err := buildImage(childCtx, buildSpec{
-			Tags:   []string{toolImageURL, appImageURL},
-			Files:  []string{toolBinPath, localBinary},
-			Config: config,
+			Tags:      []string{toolImageURL, appImageURL},
+			Files:     files,
+			GoInstall: goInstall,
+			Config:    config,
 		}); err != nil {
 			stop(err)
 		}
