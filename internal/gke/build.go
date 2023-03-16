@@ -34,7 +34,7 @@ RUN apt-get update
 RUN apt-get install -y ca-certificates
 RUN apt-get install -y golang-go{{range .GoInstall}}
 RUN GOPATH=/weaver/ go install {{.}}{{end}}
-RUN mv /weaver/bin/* /weaver/
+RUN if [ "$(ls -A /weaver/bin)" ]; then cp /weaver/bin/* /weaver/; fi
 COPY . .
 ENTRYPOINT ["/bin/bash", "-c"]
 `))

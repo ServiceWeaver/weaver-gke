@@ -87,7 +87,7 @@ func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region str
 		os.TempDir(), fmt.Sprintf("serviceweaver_%s_%s", cluster, uuid.New().String()))
 	if _, err := runGcloud(config, "", cmdOptions{
 		EnvOverrides: []string{
-			"USE_GKE_GCLOUD_AUTH_PLUGIN=True",
+			"USE_GKE_GCLOUD_AUTH_PLUGIN=False",
 			fmt.Sprintf("KUBECONFIG=%s", kubeFileName),
 		}},
 		"container", "clusters", "get-credentials", cluster, "--region", region,
