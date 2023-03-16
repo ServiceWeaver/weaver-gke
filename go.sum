@@ -64,8 +64,8 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.11.
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0.35.0 h1:6KWug9hBDdc7s9a0BxnxtTXPwFcLpVx7IUKO1SLIaDE=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.35.0 h1:vjtrvX7B3S+uqTIOvOUfqsMCa3eEtEOOQWm7ERI1pxg=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.35.0/go.mod h1:H785fvlgotVZqht+1rHhXSs8EJ8uPVmpBYkTYO3ccpc=
-github.com/ServiceWeaver/weaver v0.1.3 h1:BmSYW3C99SHXXFDJESMvdV3FoHFB2sfS6wBMgo86WIc=
-github.com/ServiceWeaver/weaver v0.1.3/go.mod h1:bx14i0Qwgp7oJlptclz6SR9nwRYTU7fVPgN3AbEr6DI=
+github.com/ServiceWeaver/weaver v0.1.5 h1:2NebimLiIPi3dJ5GV4L0VMP7zVG3tJ5M5NDeblPyyKw=
+github.com/ServiceWeaver/weaver v0.1.5/go.mod h1:bx14i0Qwgp7oJlptclz6SR9nwRYTU7fVPgN3AbEr6DI=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
