@@ -28,7 +28,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/perfetto"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/google/uuid"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -68,11 +67,6 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 		return nil
 	}
 
-	opts := envelope.Options{
-		Restart: envelope.OnFailure,
-		Retry:   retry.DefaultOptions,
-	}
-
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	return babysitter.NewBabysitter(ctx, cfg, group, podName, true /*useLocalhost*/, m, logSaver, traceSaver, metricExporter, opts)
+	return babysitter.NewBabysitter(ctx, cfg, group, podName, true /*useLocalhost*/, m, logSaver, traceSaver, metricExporter, envelope.Options{})
 }

@@ -28,7 +28,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -113,7 +112,6 @@ func RunBabysitter(ctx context.Context) error {
 	}
 	defer traceExporter.Shutdown(ctx)
 
-	opts := envelope.Options{Restart: envelope.OnFailure, Retry: retry.DefaultOptions}
 	logSaver := logClient.Log
 	traceSaver := func(spans []trace.ReadOnlySpan) error {
 		return traceExporter.ExportSpans(ctx, spans)
@@ -123,7 +121,7 @@ func RunBabysitter(ctx context.Context) error {
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	b, err := babysitter.NewBabysitter(ctx, cfg, colocGroup, meta.PodName, false /*useLocalhost*/, m, logSaver, traceSaver, metricSaver, opts)
+	b, err := babysitter.NewBabysitter(ctx, cfg, colocGroup, meta.PodName, false /*useLocalhost*/, m, logSaver, traceSaver, metricSaver, envelope.Options{})
 	if err != nil {
 		return err
 	}
