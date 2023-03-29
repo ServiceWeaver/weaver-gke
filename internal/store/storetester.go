@@ -360,7 +360,7 @@ func (s StoreTester) TestConcurrentIncrements(t *testing.T) {
 
 	// Spawn the n goroutines. Every goroutine writes exactly one value into
 	// errs. If a goroutine encounters an error, it writes the error to errs
-	// and terminates. Otherwise, if a goroutine terminates successfuly without
+	// and terminates. Otherwise, if a goroutine terminates successfully without
 	// encountering an error, it writes nil to errs.
 	n := 10
 	errs := make(chan error, n)
@@ -429,7 +429,7 @@ func (s StoreTester) TestConcurrentCreates(t *testing.T) {
 	// Spawn the n goroutines. Every goroutine writes exactly one value into
 	// errs and one value into values. If a goroutine encounters an error, it
 	// writes the error to errs and -1 to values and terminates. Otherwise, if
-	// a goroutine terminates successfuly without encountering an error, it
+	// a goroutine terminates successfully without encountering an error, it
 	// writes nil to errs and the chosen value to values.
 	n := 10
 	errs := make(chan error, n)

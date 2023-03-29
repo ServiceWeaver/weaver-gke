@@ -232,7 +232,7 @@ func (f *fakeConfigMapper) Get(_ context.Context, name string, opts metav1.GetOp
 	// As documented in [1], opts.ResourceVersion can be
 	//
 	//   (1) "", in which case we get the latest version;
-	//   (2) "0", in which case we get any verison; or
+	//   (2) "0", in which case we get any version; or
 	//   (3) version v; in which case we get a version at least as new as v.
 	//
 	// Our fake only implements option (1).
@@ -362,7 +362,7 @@ func (f *fakeConfigMapper) List(_ context.Context, opts metav1.ListOptions) (*v1
 }
 
 // These functions are needed in order for FakeConfigMapper to implement the
-// ConfigMapInterface interace, but we don't implement them.
+// ConfigMapInterface interface, but we don't implement them.
 func (*fakeConfigMapper) DeleteCollection(context.Context, metav1.DeleteOptions, metav1.ListOptions) error {
 	return fmt.Errorf("not implemented")
 }

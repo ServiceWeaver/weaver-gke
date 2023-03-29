@@ -51,7 +51,7 @@ var (
 	//    block = L.block + (X - L.id) / 10
 	//
 	// NOTE(spetrovic): We should monitor the Google Cloud's regional IDs and
-	// adjust this strategy if neccessary in the future.
+	// adjust this strategy if necessary in the future.
 	knownRegionsList = []regionInfo{
 		{name: "us-central1", id: 1000, block: 0},
 		{name: "us-central2", id: 1050, block: 1},
