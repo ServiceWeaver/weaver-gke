@@ -57,7 +57,7 @@ func TestApplyIncrement(t *testing.T) {
 		return err
 	}
 
-	// Launch the incrementers and wait for them to finish.
+	// Launch the incrementing goroutines and wait for them to finish.
 	errs := make(chan error, n)
 	for i := 1; i < n+1; i++ {
 		i := i

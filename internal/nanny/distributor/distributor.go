@@ -375,7 +375,7 @@ func (d *Distributor) markVersionsToStop(ctx context.Context, app string, versio
 		// it doesn't know about. We cannot fail in this situation, as the
 		// controller will keep trying to issue the delete.
 		//
-		// However, we also cannot return successfuly and do nothing, as this
+		// However, we also cannot return successfully and do nothing, as this
 		// allows for the possibility of a race between the starting and
 		// stopping of a version. We have to record the version as deleted,
 		// even if we haven't heard about it before.

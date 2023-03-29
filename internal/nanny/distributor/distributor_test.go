@@ -59,7 +59,7 @@ func TestDistributeAndCleanup(t *testing.T) {
 
 	type deploy struct {
 		v     version // version to deploy
-		start bool    // successfuly start the version?
+		start bool    // successfully start the version?
 	}
 
 	type cleanup struct {

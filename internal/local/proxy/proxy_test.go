@@ -144,7 +144,7 @@ func TestBadClumping(t *testing.T) {
 		t.Fatalf("proxy.route(%q, %v): %v", "a", rules, err)
 	}
 	if err := proxy.route("b", rules); err == nil {
-		t.Fatalf("proxy.route(%q, %v): unexpected sucess", "b", rules)
+		t.Fatalf("proxy.route(%q, %v): unexpected success", "b", rules)
 	}
 }
 
