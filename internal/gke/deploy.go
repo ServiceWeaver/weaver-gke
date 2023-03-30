@@ -31,6 +31,8 @@ import (
 
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"cloud.google.com/go/iam/apiv1/iampb"
+	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
@@ -41,6 +43,7 @@ import (
 	"google.golang.org/api/iam/v1"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
 	artifactregistrypb "google.golang.org/genproto/googleapis/devtools/artifactregistry/v1beta2"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscaling "k8s.io/api/autoscaling/v1"
 	apiv1 "k8s.io/api/core/v1"
@@ -87,6 +90,17 @@ const (
 	managerKubeServiceAccount     = "manager"
 	applicationKubeServiceAccount = "application"
 
+	// Various settings for the Service Weaver root Certificate Authority.
+	rootCAName         = "serviceweaver-root"
+	rootCAPoolName     = "serviceweaver-root"
+	rootCAOrganization = "serviceweaver"
+	rootCALocation     = ConfigClusterRegion
+
+	// Various settings for the Service Weaver subordinate Certificate Authority.
+	subCAName         = "serviceweaver-sub"
+	subCAPoolName     = "serviceweaver-sub"
+	subCAOrganization = "serviceweaver"
+
 	// Serving port for the nanny.
 	nannyServingPort = 80
 
@@ -123,6 +137,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		"iam.googleapis.com",
 		"multiclusterservicediscovery.googleapis.com",
 		"multiclusteringress.googleapis.com",
+		"privateca.googleapis.com",
 		"trafficdirector.googleapis.com",
 	); err != nil {
 		return nil, nil, err
@@ -148,6 +163,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		once.Do(func() {
 			firstErr = err
 			cancel()
+			fmt.Fprintln(os.Stderr, "Stopping with error:", firstErr)
 		})
 	}
 
@@ -345,6 +361,11 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, "", err
 	}
 
+	// Setup the root Certificate Authority.
+	if err := ensureRootCA(ctx, config); err != nil {
+		return nil, "", err
+	}
+
 	// Ensure the Service Weaver configuration cluster is setup.
 	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, ConfigClusterName, ConfigClusterRegion, bindings)
 	if err != nil {
@@ -361,6 +382,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		if err := ensureInternalDNS(ctx, cluster, gatewayIP); err != nil {
 			return nil, "", err
 		}
+
 	}
 	return configCluster, globalGatewayIP, nil
 }
@@ -555,6 +577,214 @@ func getServiceAccountIAMBindings(ctx context.Context, config CloudConfig, email
 		}
 	}
 	return bindings, nil
+}
+
+// ensureRootCA ensures that a root Certificate Authority has been created.
+func ensureRootCA(ctx context.Context, config CloudConfig) error {
+	// Ensure the root CA pool has been created.
+	if err := ensureCAPool(config, rootCAPoolName, rootCALocation, "enterprise"); err != nil {
+		return err
+	}
+
+	// Setup the IAM bindings for the root CA pool.
+	role := "roles/privateca.auditor"
+	member := fmt.Sprintf(
+		"serviceAccount:service-%s@container-engine-robot.iam.gserviceaccount.com",
+		config.ProjectNumber)
+	if err := ensureCAPoolIAMBinding(ctx, config, rootCAPoolName, rootCALocation, role, member); err != nil {
+		return err
+	}
+
+	// Ensure the root CA has been created.
+	if _, err := runGcloud(config, "", cmdOptions{}, "privateca", "roots",
+		"describe", rootCAName, "--pool", rootCAPoolName,
+		"--location", rootCALocation); err == nil {
+		// Already exists.
+		return nil
+	}
+	subject := fmt.Sprintf("CN=%s, O=%s", rootCAName, rootCAOrganization)
+	_, err := runGcloud(config, "Creating root CA for the project",
+		cmdOptions{}, "privateca", "roots", "create", rootCAName,
+		"--pool", rootCAPoolName, "--location", rootCALocation,
+		"--subject", subject, "--key-algorithm", "ec-p256-sha256",
+		"--max-chain-length", "1", "--auto-enable")
+	return err
+}
+
+// ensureSubordinateCA ensures that a subordinate Certificate Authority
+// has been created in the given region.
+func ensureSubordinateCA(ctx context.Context, config CloudConfig, region string) error {
+	// Ensure the subordinate CA pool has been created in the region.
+	if err := ensureCAPool(config, subCAPoolName, region, "devops"); err != nil {
+		return err
+	}
+
+	// Setup the IAM bindings for the root CA pool.
+	role := "roles/privateca.certificateManager"
+	member := fmt.Sprintf(
+		"serviceAccount:service-%s@container-engine-robot.iam.gserviceaccount.com",
+		config.ProjectNumber)
+	if err := ensureCAPoolIAMBinding(ctx, config, subCAPoolName, region, role, member); err != nil {
+		return err
+	}
+
+	// Ensure the subordinate CA has been created in the region.
+	if _, err := runGcloud(config, "", cmdOptions{}, "privateca",
+		"subordinates", "describe", subCAName, "--pool", subCAPoolName,
+		"--location", region); err == nil {
+		// Already exists.
+		return nil
+	}
+	subject := fmt.Sprintf("CN=%s, O=%s", subCAName, subCAOrganization)
+	_, err := runGcloud(config, "Creating subordinate CA for the project",
+		cmdOptions{}, "privateca", "subordinates", "create", subCAName,
+		"--pool", subCAPoolName, "--location", region,
+		"--issuer-pool", rootCAPoolName, "--issuer-location", rootCALocation,
+		"--subject", subject, "--key-algorithm", "ec-p256-sha256",
+		// NOTE: this profile enables the subordinate CA to issue both client
+		// and server TLS certificates for mTLS.
+		"--use-preset-profile", "subordinate_mtls_pathlen_0", "--auto-enable")
+	return err
+}
+
+// ensureCAPool ensures that a Certificate Authority pool with the given
+// specification has been created.
+func ensureCAPool(config CloudConfig, name, location, tier string) error {
+	if _, err := runGcloud(config, "", cmdOptions{}, "privateca", "pools",
+		"describe", name, "--location", location); err == nil {
+		// Pool already exists.
+		return nil
+	}
+
+	// Create the pool.
+	_, err := runGcloud(config, "Creating root CA pool for the project",
+		cmdOptions{}, "privateca", "pools", "create", name,
+		"--location", location, "--tier", tier)
+	return err
+}
+
+// ensureCAPoolIAMBinding ensures that the binding member -> role exists
+// in the IAM bindings in the given Certificate Authority pool.
+func ensureCAPoolIAMBinding(ctx context.Context, config CloudConfig, pool, location, role, member string) error {
+	bindings, err := getCAPoolIAMBindings(ctx, config, pool, location)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := bindings[member][role]; ok {
+		// Role already bound to the member.
+		return nil
+	}
+
+	// Add the binding.
+	_, err = runGcloud(
+		config,
+		fmt.Sprintf("Binding role %q to member %q in CA pool %q in %q", role, member, pool, location),
+		cmdOptions{},
+		"privateca", "pools", "add-iam-policy-binding", pool,
+		"--location", location, "--role", role, "--member", member)
+	return err
+}
+
+// getCAPoolIAMBindings returns the GCP IAM bindings for the Certificate
+// Authority pool with the given name.
+func getCAPoolIAMBindings(ctx context.Context, config CloudConfig, pool, location string) (iamBindings, error) {
+	client, err := privateca.NewCertificateAuthorityClient(ctx, config.ClientOptions()...)
+	if err != nil {
+		return nil, err
+	}
+	policy, err := client.GetIamPolicy(ctx, &iampb.GetIamPolicyRequest{
+		Resource: path.Join("projects", config.Project, "locations", location, "caPools", pool),
+	})
+	if err != nil {
+		return nil, err
+	}
+	bindings := iamBindings{}
+	for _, b := range policy.Bindings {
+		for _, member := range b.Members {
+			roles, ok := bindings[member]
+			if !ok {
+				bindings[member] = map[string]struct{}{b.Role: {}}
+				continue
+			}
+			roles[b.Role] = struct{}{}
+		}
+	}
+	return bindings, nil
+}
+
+var workloadCertificateConfigTmpl = template.Must(template.New("wcert").Parse(`{
+"kind":"WorkloadCertificateConfig",
+"apiVersion":"security.cloud.google.com/v1",
+"metadata":{
+  "name":"default"
+},
+"spec":{
+	"certificateAuthorityConfig":{
+		"certificateAuthorityServiceConfig":{
+			"endpointURI":"//privateca.googleapis.com/projects/{{.Project}}/locations/{{.Location}}/caPools/{{.Pool}}"
+		}
+	},
+	"keyAlgorithm":{
+		"rsa":{
+			"modulusSize":4096
+		}
+	},
+	"validityDurationSeconds":86400,
+	"rotationWindowPercentage":50
+}}`))
+
+// ensureWorkloadCertificateConfig ensures that the workload certificate config
+// has been applied to the given cluster.
+func ensureWorkloadCertificateConfig(ctx context.Context, cluster *ClusterInfo) error {
+	// Create the workload certificate config.
+	var b strings.Builder
+	if err := workloadCertificateConfigTmpl.Execute(&b, struct {
+		Pool     string
+		Project  string
+		Location string
+	}{
+		Pool:     subCAPoolName,
+		Project:  cluster.CloudConfig.Project,
+		Location: cluster.Region,
+	}); err != nil {
+		return err
+	}
+	return patchWorkloadCertificateConfig(ctx, cluster, patchOptions{}, b.String())
+}
+
+var trustConfigTmpl = template.Must(template.New("trust").Parse(`{
+"kind":"TrustConfig",
+"apiVersion":"security.cloud.google.com/v1",
+"metadata":{
+	"name":"default"
+},
+"spec":{
+	"trustStores":[{
+		"trustDomain":"{{.Project}}.svc.id.goog",
+		"trustAnchors":[{
+			"certificateAuthorityServiceURI":"//privateca.googleapis.com/projects/{{.Project}}/locations/{{.Location}}/caPools/{{.Pool}}"
+		}]
+	}]
+}}`))
+
+// ensureTrustConfig ensures that the trust config has been applied to the given
+// cluster.
+func ensureTrustConfig(ctx context.Context, cluster *ClusterInfo) error {
+	// Create the trust config.
+	var b strings.Builder
+	if err := trustConfigTmpl.Execute(&b, struct {
+		Pool     string
+		Project  string
+		Location string
+	}{
+		Pool:     rootCAPoolName,
+		Project:  cluster.CloudConfig.Project,
+		Location: rootCALocation,
+	}); err != nil {
+		return err
+	}
+	return patchTrustConfig(ctx, cluster, patchOptions{}, b.String())
 }
 
 // createSSLRole creates a custom GCP role that stores permissions necessary
@@ -834,6 +1064,9 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 				Channel: containerpb.GatewayAPIConfig_CHANNEL_STANDARD,
 			},
 		},
+		MeshCertificates: &containerpb.MeshCertificates{
+			EnableCertificates: wrapperspb.Bool(true),
+		},
 		// Enable workload identity on the cluster [1], which is required for
 		// GKE Hub registration.
 		//
@@ -846,6 +1079,21 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 	}
 	cluster, err := GetClusterInfo(ctx, config, name, region)
 	if err != nil {
+		return nil, err
+	}
+
+	// Setup the subordinate Certificate Authority in the cluster region.
+	if err := ensureSubordinateCA(ctx, config, region); err != nil {
+		return nil, err
+	}
+
+	// Setup the workload certificate config in the cluster.
+	if err := ensureWorkloadCertificateConfig(ctx, cluster); err != nil {
+		return nil, err
+	}
+
+	// Setup the trust config in the cluster.
+	if err := ensureTrustConfig(ctx, cluster); err != nil {
 		return nil, err
 	}
 

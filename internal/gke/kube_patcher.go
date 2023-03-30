@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ServiceWeaver/weaver/runtime/logging"
+	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/google/uuid"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -33,8 +35,6 @@ import (
 	vautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
 	backendconfigv1 "k8s.io/ingress-gce/pkg/apis/backendconfig/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 )
 
 const (
@@ -381,7 +381,7 @@ func patchBackendConfig(ctx context.Context, cluster *ClusterInfo, opts patchOpt
 func patchServiceExport(ctx context.Context, cluster *ClusterInfo, opts patchOptions, seJSON string) error {
 	var se unstructured.Unstructured
 	if err := se.UnmarshalJSON([]byte(seJSON)); err != nil {
-		return err
+		return fmt.Errorf("internal error: cannot parse service export: %v", err)
 	}
 	se.SetAPIVersion("net.gke.io/v1")
 	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
@@ -434,7 +434,8 @@ func patchVerticalPodAutoscaler(ctx context.Context, cluster *ClusterInfo, opts 
 func patchMultidimPodAutoscaler(ctx context.Context, cluster *ClusterInfo, opts patchOptions, autoJSON string) error {
 	var auto unstructured.Unstructured
 	if err := auto.UnmarshalJSON([]byte(autoJSON)); err != nil {
-		return err
+		return fmt.Errorf("internal error: cannot parse multidimensional pod autoscaler: %v", err)
+
 	}
 	auto.SetAPIVersion("autoscaling.gke.io/v1beta1")
 	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
@@ -480,6 +481,67 @@ func patchPriorityClass(ctx context.Context, cluster *ClusterInfo, opts patchOpt
 			return err
 		},
 	}.Run(ctx, p)
+}
+
+// patchWorkloadCertificateConfig updates the workload certificate config
+// resource with the new configuration.
+func patchWorkloadCertificateConfig(ctx context.Context, cluster *ClusterInfo, opts patchOptions, configJSON string) error {
+	var config unstructured.Unstructured
+	if err := config.UnmarshalJSON([]byte(configJSON)); err != nil {
+		return fmt.Errorf("internal error: cannot parse workload certificate config: %v", err)
+	}
+	config.SetAPIVersion("security.cloud.google.com/v1")
+	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
+		Group:    "security.cloud.google.com",
+		Version:  "v1",
+		Resource: "workloadcertificateconfigs",
+	}).Namespace(config.GetNamespace())
+	return kubePatcher{
+		cluster: cluster,
+		desc:    "workload certificate config",
+		opts:    opts,
+		get: func(ctx context.Context) (metav1.Object, error) {
+			return cli.Get(ctx, config.GetName(), metav1.GetOptions{})
+		},
+		create: func(ctx context.Context) error {
+			_, err := cli.Create(ctx, &config, metav1.CreateOptions{})
+			return err
+		},
+		update: func(ctx context.Context) error {
+			_, err := cli.Update(ctx, &config, metav1.UpdateOptions{})
+			return err
+		},
+	}.Run(ctx, &config)
+}
+
+// patchTrustConfig updates the trust config resource with the new configuration.
+func patchTrustConfig(ctx context.Context, cluster *ClusterInfo, opts patchOptions, configJSON string) error {
+	var config unstructured.Unstructured
+	if err := config.UnmarshalJSON([]byte(configJSON)); err != nil {
+		return fmt.Errorf("internal error: cannot parse trust config: %v", err)
+	}
+	config.SetAPIVersion("security.cloud.google.com/v1")
+	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
+		Group:    "security.cloud.google.com",
+		Version:  "v1",
+		Resource: "trustconfigs",
+	}).Namespace(config.GetNamespace())
+	return kubePatcher{
+		cluster: cluster,
+		desc:    "trust config",
+		opts:    opts,
+		get: func(ctx context.Context) (metav1.Object, error) {
+			return cli.Get(ctx, config.GetName(), metav1.GetOptions{})
+		},
+		create: func(ctx context.Context) error {
+			_, err := cli.Create(ctx, &config, metav1.CreateOptions{})
+			return err
+		},
+		update: func(ctx context.Context) error {
+			_, err := cli.Update(ctx, &config, metav1.UpdateOptions{})
+			return err
+		},
+	}.Run(ctx, &config)
 }
 
 func getNamespace(obj metav1.ObjectMeta) string {
