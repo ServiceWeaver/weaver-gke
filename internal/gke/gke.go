@@ -359,6 +359,9 @@ func ensureColocGroupDeployment(ctx context.Context, cluster *ClusterInfo, logge
 					Labels: map[string]string{
 						"app": name,
 					},
+					Annotations: map[string]string{
+						"security.cloud.google.com/use-workload-certificates": "",
+					},
 				},
 				Spec: v1.PodSpec{
 					PriorityClassName:  applicationPriorityClassName,
@@ -505,7 +508,7 @@ func colocGroupContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig
 	}, nil
 }
 
-var serviceExportTmpl = template.Must(template.New("auto").Parse(`{
+var serviceExportTmpl = template.Must(template.New("se").Parse(`{
 "metadata":{
 	"name":"{{.Name}}",
 	"namespace":"{{.Namespace}}",

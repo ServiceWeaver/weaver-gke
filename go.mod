@@ -7,8 +7,10 @@ require (
 	cloud.google.com/go/compute v1.18.0
 	cloud.google.com/go/compute/metadata v0.2.3
 	cloud.google.com/go/container v1.13.0
+	cloud.google.com/go/iam v0.8.0
 	cloud.google.com/go/logging v1.6.1
 	cloud.google.com/go/monitoring v1.12.0
+	cloud.google.com/go/security v1.10.0
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.11.0
 	github.com/ServiceWeaver/weaver v0.1.5
 	github.com/golang/protobuf v1.5.2
@@ -42,7 +44,6 @@ require (
 
 require (
 	cloud.google.com/go v0.107.0 // indirect
-	cloud.google.com/go/iam v0.8.0 // indirect
 	cloud.google.com/go/longrunning v0.3.0 // indirect
 	cloud.google.com/go/trace v1.8.0 // indirect
 	github.com/BurntSushi/toml v1.2.0 // indirect
