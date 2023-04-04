@@ -21,7 +21,6 @@ import "internal/config/config.proto";
 import "internal/nanny/nanny.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
-import "runtime/protos/runtime.proto";
 
 // RolloutRequest is a request to the controller to roll out a new application
 // version across a number of deploying locations.
@@ -101,8 +100,9 @@ message AppVersionDistributorState {
   int64 wave_idx = 1;
   AppVersionDistributorStatus status = 2;
 
-  // All known groups for this application version at the distributor.
-  nanny.GroupState groups = 3;
+  // All running Kubernetes ReplicaSets for this application version at the
+  // distributor.
+  nanny.ReplicaSetState replica_sets = 3;
 }
 
 // rolloutStrategy contains the strategy for rolling out an application version.
@@ -218,16 +218,15 @@ message AppStatus {
   ProjectedTraffic projected_traffic = 3;
 }
 
-// AppVersionStatus contains basic information about a given Service Weaver application
-// version.
+// AppVersionStatus contains basic information about a given Service Weaver
+// application version.
 message AppVersionStatus {
   string app = 1;           // the app name (e.g., collatz)
   string id = 2;            // the deployment id (e.g., a83903259a93)
   int64 submission_id = 3;  // the unique sequence number (e.g., 0, 1, 2)
   google.protobuf.Timestamp submission_time = 4;
   config.GKEConfig gke_config = 5; // GKE config for this deployment.
-  runtime.AppConfig config = 6;  // Config for this deployment.
-
+  
   enum Status {
     UNKNOWN = 0;
     ROLLING_OUT = 1;  // the version is rolling out
@@ -235,12 +234,12 @@ message AppVersionStatus {
     DELETING = 3;     // the version is being deleted
   }
   Status status = 7;
-  repeated GroupStatus groups = 8;
+  repeated ReplicaSetStatus replica_sets = 8;
   repeated ListenerStatus listeners = 9;
 }
 
-message GroupStatus {
-  string name = 1;                       // group name
+message ReplicaSetStatus {
+  string name = 1;                       // ReplicaSet name
   string location = 2;                   // location (e.g., us-east1)
   int64 healthy_replicas = 3;            // number of healthy replicas
   int64 total_replicas = 4;              // number of total replicas

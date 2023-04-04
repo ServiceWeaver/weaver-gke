@@ -17,6 +17,8 @@ package proto
 import (
 	"testing"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/proto"
@@ -24,13 +26,19 @@ import (
 )
 
 var (
-	msg_1 = &protos.ReplicaToRegister{
-		App:            "foo",
-		GroupReplicaId: "1234",
-		DeploymentId:   "5678",
-		Group:          "bar",
-		Address:        "qux",
-		Pid:            42,
+	msg_1 = &nanny.RegisterReplicaRequest{
+		ReplicaSet:        "replicaset",
+		PodName:           "pod",
+		BabysitterAddress: "host:9999",
+		WeaveletAddress:   "host:9998",
+		Config: &config.GKEConfig{
+			Deployment: &protos.Deployment{
+				App: &protos.AppConfig{
+					Name: "app",
+				},
+				Id: "id",
+			},
+		},
 	}
 	msg_2 = &protos.MetricUpdate{
 		Defs: []*protos.MetricDef{

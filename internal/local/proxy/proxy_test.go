@@ -23,9 +23,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/testing/protocmp"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
 )
 
 func backend(addr string, weight float32) *Backend {
@@ -55,7 +55,7 @@ func TestProxyPick(t *testing.T) {
 		{0.6, "3"}, {0.7, "3"}, {0.8, "3"}, {0.9, "3"}, {1.0, "3"},
 	} {
 		t.Run(fmt.Sprintf("%f", test.val), func(t *testing.T) {
-			proxy := NewProxy(&logging.NewTestLogger(t).FuncLogger)
+			proxy := NewProxy(logging.NewTestLogger(t))
 			proxy.rand = func() float32 { return test.val }
 			if got, want := proxy.pick(group).Address, test.want; got != want {
 				t.Fatalf("proxy.pick(%v): got %q, want %q", group, got, want)
@@ -65,7 +65,7 @@ func TestProxyPick(t *testing.T) {
 }
 
 func TestProxyGroup(t *testing.T) {
-	proxy := NewProxy(&logging.NewTestLogger(t).FuncLogger)
+	proxy := NewProxy(logging.NewTestLogger(t))
 	backends := []*Backend{backend("a", 1.0), backend("b", 2.0), backend("c", 3.0)}
 	got, err := proxy.group("clump", backends)
 	if err != nil {
@@ -92,7 +92,7 @@ func TestProxyGroupErrors(t *testing.T) {
 		{"negative", []*Backend{backend("a", -1.0)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			proxy := NewProxy(&logging.NewTestLogger(t).FuncLogger)
+			proxy := NewProxy(logging.NewTestLogger(t))
 			_, err := proxy.group("", test.backends)
 			if err == nil {
 				t.Fatalf("proxy.group(%v): unexpected success", test.backends)
@@ -109,7 +109,7 @@ func TestGoodClumping(t *testing.T) {
 	c0 := backend("c0", 5.0)
 	c1 := backend("c1", 6.0)
 
-	proxy := NewProxy(&logging.NewTestLogger(t).FuncLogger)
+	proxy := NewProxy(logging.NewTestLogger(t))
 	for _, test := range []struct {
 		clump string
 		rules map[string][]*Backend
@@ -138,7 +138,7 @@ func TestGoodClumping(t *testing.T) {
 }
 
 func TestBadClumping(t *testing.T) {
-	proxy := NewProxy(&logging.NewTestLogger(t).FuncLogger)
+	proxy := NewProxy(logging.NewTestLogger(t))
 	rules := map[string][]*Backend{"host": {backend("addr", 1.0)}}
 	if err := proxy.route("a", rules); err != nil {
 		t.Fatalf("proxy.route(%q, %v): %v", "a", rules, err)
@@ -188,7 +188,7 @@ func TestProxyServe(t *testing.T) {
 	c0, c1, c2 := server(t, "c0"), server(t, "c1"), server(t, "c2")
 
 	addr := func(s *httptest.Server) string { return s.Listener.Addr().String() }
-	proxy := NewProxy(&logging.NewTestLogger(t).FuncLogger)
+	proxy := NewProxy(logging.NewTestLogger(t))
 
 	lis, err := net.Listen("tcp", "localhost:0")
 	if err != nil {

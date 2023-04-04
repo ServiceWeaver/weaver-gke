@@ -21,9 +21,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	weaver "github.com/ServiceWeaver/weaver"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
-	weaver "github.com/ServiceWeaver/weaver"
 )
 
 func TestOneComponent(t *testing.T) {

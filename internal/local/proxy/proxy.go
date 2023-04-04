@@ -28,8 +28,8 @@ import (
 	"net/http/httputil"
 	"sync"
 
-	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
+	"golang.org/x/exp/slog"
 )
 
 const (
@@ -75,7 +75,7 @@ type backendGroup struct {
 //	err := proxy.Serve(context.Background(), lis)
 type proxy struct {
 	addr    string                  // dialable server address
-	logger  *logging.FuncLogger     // logger
+	logger  *slog.Logger            // logger
 	rand    func() float32          // dependency injected rand.Float32
 	reverse httputil.ReverseProxy   // underlying proxy
 	mu      sync.RWMutex            // guards groups
@@ -83,7 +83,7 @@ type proxy struct {
 }
 
 // NewProxy returns a new proxy.
-func NewProxy(logger *logging.FuncLogger) *proxy {
+func NewProxy(logger *slog.Logger) *proxy {
 	p := &proxy{
 		logger: logger,
 		rand:   rand.Float32,

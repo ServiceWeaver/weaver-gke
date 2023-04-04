@@ -21,23 +21,23 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	"github.com/google/uuid"
-	"google.golang.org/protobuf/testing/protocmp"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/proxy"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/uuid"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 type appVersion struct {
 	config    *config.GKEConfig
-	listeners []*protos.Listener
+	listeners []*nanny.Listener
 }
 
-func newAppVersion(appName string, versionId uuid.UUID, lis []*protos.Listener) *appVersion {
+func newAppVersion(appName string, versionId uuid.UUID, lis []*nanny.Listener) *appVersion {
 	return &appVersion{
 		config: &config.GKEConfig{
 			Deployment: &protos.Deployment{
@@ -83,7 +83,7 @@ func TestApplyTraffic(t *testing.T) {
 		newAppVersion(
 			"todo",
 			v1,
-			[]*protos.Listener{
+			[]*nanny.Listener{
 				{Name: "h1", Addr: "1.1.1.1:1"},
 				{Name: "h1", Addr: "2.2.2.2:2"},
 				{Name: "h1", Addr: "3.3.3.3:3"},
@@ -91,13 +91,13 @@ func TestApplyTraffic(t *testing.T) {
 		newAppVersion(
 			"todo",
 			v2,
-			[]*protos.Listener{
+			[]*nanny.Listener{
 				{Name: "h2", Addr: "4.4.4.4:4"},
 			}),
 	}
 
 	alloc := func(version uuid.UUID, weight float32,
-		lis *protos.Listener) *nanny.TrafficAllocation {
+		lis *nanny.Listener) *nanny.TrafficAllocation {
 		return &nanny.TrafficAllocation{
 			VersionId:       version.String(),
 			TrafficFraction: weight,

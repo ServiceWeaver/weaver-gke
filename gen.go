@@ -15,7 +15,6 @@
 package gen
 
 //go:generate ./dev/protoc.sh internal/gke/container.proto
-//go:generate ./dev/protoc.sh internal/clients/babysitter.proto
 //go:generate ./dev/protoc.sh internal/config/config.proto
 //go:generate ./dev/protoc.sh internal/nanny/nanny.proto
 //go:generate ./dev/protoc.sh internal/nanny/controller/controller.proto

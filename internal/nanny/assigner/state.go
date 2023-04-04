@@ -73,42 +73,42 @@ func (a *Assigner) applyAppState(ctx context.Context, app string, apply func(*Ap
 	return applyProto(ctx, a.store, appStateKey(app), apply)
 }
 
-// gidKey returns the key into which we persist the provided group's state.
-func gidKey(gid *GroupId) string {
+// replicaSetInfoKey returns the key into which we persist the ReplicaSetInfo.
+func replicaSetInfoKey(rid *ReplicaSetId) string {
 	// TODO(mwhittaker): Remove the requirement that all deployment ids are
 	// uuids. We may want to, for example, use more human readable deployment
 	// ids. This also makes it easier to write tests.
-	id, err := uuid.Parse(gid.Id)
+	id, err := uuid.Parse(rid.Id)
 	if err != nil {
-		panic(fmt.Sprintf("invalid deployment id %q: %v", gid.Id, err))
+		panic(fmt.Sprintf("invalid deployment id %q: %v", rid.Id, err))
 	}
-	return store.ProcessKey(gid.App, id, gid.Group, "group_info")
+	return store.ReplicaSetKey(rid.App, id, rid.Name, "replica_set_info")
 }
 
-// loadGroupInfo loads a group's info from the store.
-func (a *Assigner) loadGroupInfo(ctx context.Context, gid *GroupId) (*GroupInfo, *store.Version, error) {
-	group := &GroupInfo{}
-	version, err := store.GetProto(ctx, a.store, gidKey(gid), group, nil)
+// loadReplicaSetInfo loads a Kubernetes ReplicaSet's info from the store.
+func (a *Assigner) loadReplicaSetInfo(ctx context.Context, rid *ReplicaSetId) (*ReplicaSetInfo, *store.Version, error) {
+	rs := &ReplicaSetInfo{}
+	version, err := store.GetProto(ctx, a.store, replicaSetInfoKey(rid), rs, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	if group.Components == nil {
-		group.Components = map[string]*Assignment{}
+	if rs.Components == nil {
+		rs.Components = map[string]*Assignment{}
 	}
-	if group.Replicas == nil {
-		group.Replicas = map[string]*Replica{}
+	if rs.Pods == nil {
+		rs.Pods = map[string]*Pod{}
 	}
-	return group, version, err
+	return rs, version, err
 }
 
-// applyGroupInfo applies a read-modify-write operation to the provided
-// group's state. The current state is read from the store and passed to the
-// provided apply function. This function modifies the state and returns true,
-// or it leaves the state unchanged and returns false. If apply returns true,
-// the state is then written back to the store. The read-modify-write operation
-// is retried if there are conflicting writes.
-func (a *Assigner) applyGroupInfo(ctx context.Context, gid *GroupId, apply func(*GroupInfo) bool) (*GroupInfo, *store.Version, error) {
-	return applyProto(ctx, a.store, gidKey(gid), apply)
+// applyReplicaSetInfo applies a read-modify-write operation to the provided
+// Kubernetes ReplicaSet's state. The current state is read from the store and
+// passed to the provided apply function. This function modifies the state and
+// returns true, or it leaves the state unchanged and returns false. If apply
+// returns true, the state is then written back to the store.
+// The read-modify-write operation is retried if there are conflicting writes.
+func (a *Assigner) applyReplicaSetInfo(ctx context.Context, rid *ReplicaSetId, apply func(*ReplicaSetInfo) bool) (*ReplicaSetInfo, *store.Version, error) {
+	return applyProto(ctx, a.store, replicaSetInfoKey(rid), apply)
 }
 
 // protoPointer[T] is an interface which asserts that *T is a proto.Message.

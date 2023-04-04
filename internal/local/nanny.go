@@ -21,8 +21,8 @@ package local
 //   - Distributor - controls traffic distribution across multiple application
 //     versions in the same deployment location (e.g., cloud
 //     region); accessed via the "distributor/" URL path prefix.
-//   - Manager     - controls various runtime tasks for Service Weaver groups;
-//     accessed via the "manager/" URL path prefix.
+//   - Manager     - controls various runtime tasks for Service Weaver
+//     ReplicaSets; accessed via the "manager/" URL path prefix.
 //   - Proxy       - proxies requests to the applications' network listeners.
 //
 // A given Nanny server may host any subset of the above servers, depending
@@ -53,6 +53,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slog"
 )
 
 // URL on the controller where the metrics are exported in the Prometheus format.
@@ -91,8 +92,8 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 	}
 	defer ls.Close()
 
-	makeLogger := func(component string) *logging.FuncLogger {
-		return &logging.FuncLogger{
+	makeLogger := func(component string) *slog.Logger {
+		return slog.New(&logging.LogHandler{
 			Opts: logging.Options{
 				App:        "nanny",
 				Deployment: id.String(),
@@ -101,7 +102,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 				Attrs:      []string{"serviceweaver/system", ""},
 			},
 			Write: ls.Add,
-		}
+		})
 	}
 
 	addr := fmt.Sprintf("localhost:%d", opts.Port)
@@ -173,7 +174,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 			func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
 				return applyTraffic(ctx, fmt.Sprintf("http://localhost:%d", proxyPort), assignment, opts.Region)
 			},
-			func(ctx context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
+			func(ctx context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
 				return getListeners(ctx, dstore, cfg)
 			},
 			func(ctx context.Context, metric string, labels ...string) ([]distributor.MetricCount, error) {
@@ -195,17 +196,17 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 				// so we don't need any external signal to check whether a weavelet still exists.
 				return true, nil
 			},
-			func(context.Context, *config.GKEConfig, *protos.ColocationGroup, string) (int, error) {
+			func(context.Context, *config.GKEConfig, string, string) (int, error) {
 				return 0, nil
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, _ *protos.ColocationGroup, lis *protos.Listener) (*protos.ExportListenerReply, error) {
+			func(ctx context.Context, cfg *config.GKEConfig, _ string, lis *nanny.Listener) (*protos.ExportListenerReply, error) {
 				if err := RecordListener(ctx, mstore, cfg, lis); err != nil {
 					return &protos.ExportListenerReply{}, err
 				}
 				return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
-				return starter.Start(ctx, cfg, group)
+			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
+				return starter.Start(ctx, cfg, replicaSet)
 			},
 			func(_ context.Context, _ string, appVersions []string) error {
 				return starter.Stop(ctx, appVersions)
@@ -241,7 +242,7 @@ func RunProxy(ctx context.Context, port int) error {
 		return fmt.Errorf("cannot create log storage: %w", err)
 	}
 	defer ls.Close()
-	logger := logging.FuncLogger{
+	logger := slog.New(&logging.LogHandler{
 		Opts: logging.Options{
 			App:        "nanny",
 			Deployment: id.String(),
@@ -250,7 +251,7 @@ func RunProxy(ctx context.Context, port int) error {
 			Attrs:      []string{"serviceweaver/system", ""},
 		},
 		Write: ls.Add,
-	}
+	})
 
 	addr := fmt.Sprintf(":%d", port)
 	lis, err := net.Listen("tcp", addr)
@@ -259,7 +260,7 @@ func RunProxy(ctx context.Context, port int) error {
 		return err
 	}
 
-	proxy := proxy.NewProxy(&logger)
+	proxy := proxy.NewProxy(logger)
 	logger.Debug("Proxy listenening", "address", lis.Addr())
 	return proxy.Serve(ctx, lis, fmt.Sprintf("localhost:%d", port))
 }

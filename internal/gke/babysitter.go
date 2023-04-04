@@ -24,27 +24,19 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
-	"github.com/ServiceWeaver/weaver/runtime"
-	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // RunBabysitter creates and runs a GKE babysitter.
 //
-// A GKE nanny does not start a container for each individual Service Weaver process.
-// Instead, it starts a container for each colocation group that runs the
-// babysitter binary. The babysitter binary in turn starts processes in the
-// local container.
-//
-// The babysitter binary creates pipes to the Service Weaver binary subprocesses, and the
-// subprocesses are configured to write their log entries and metrics as encoded
-// strings to the pipes.
+// The GKE babysitter starts and manages a weavelet. If the weavelet crashes,
+// the babysitter will crash as well, causing the kubernetes manager to re-run
+// the container.
 //
 // The following environment variables must be set before this method is called:
 //   - configEnvKey
-//   - colocationGroupEnvKey
+//   - replicaSetEnvKey
 //   - containerMetadataEnvKey
 //   - nodeNameEnvKey
 //   - podNameEnvKey
@@ -54,13 +46,17 @@ import (
 func RunBabysitter(ctx context.Context) error {
 	for _, v := range []string{
 		configEnvKey,
-		colocationGroupEnvKey,
+		replicaSetEnvKey,
 		containerMetadataEnvKey,
 		nodeNameEnvKey,
 		podNameEnvKey,
 	} {
-		if _, ok := os.LookupEnv(v); !ok {
+		val, ok := os.LookupEnv(v)
+		if !ok {
 			return fmt.Errorf("environment variable %q not set", v)
+		}
+		if val == "" {
+			return fmt.Errorf("empty value for environment variable %q", v)
 		}
 	}
 
@@ -69,10 +65,7 @@ func RunBabysitter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	colocGroup, err := colocationGroupFromEnv()
-	if err != nil {
-		return err
-	}
+	replicaSet := os.Getenv(replicaSetEnvKey)
 
 	// Parse the ContainerMetadata.
 	meta := &ContainerMetadata{}
@@ -121,7 +114,7 @@ func RunBabysitter(ctx context.Context) error {
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	b, err := babysitter.NewBabysitter(ctx, cfg, colocGroup, meta.PodName, false /*useLocalhost*/, m, logSaver, traceSaver, metricSaver, envelope.Options{})
+	b, err := babysitter.NewBabysitter(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, m, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}
@@ -129,8 +122,9 @@ func RunBabysitter(ctx context.Context) error {
 	return b.Run()
 }
 
-// gkeConfigFromEnv reads config.GKEConfig from the Service Weaver internal environment
-// variable. It returns an error if the environment variable isn't set.
+// gkeConfigFromEnv reads config.GKEConfig from the Service Weaver internal
+// environment variable. It returns an error if the environment variable isn't
+// set.
 func gkeConfigFromEnv() (*config.GKEConfig, error) {
 	str := os.Getenv(configEnvKey)
 	if str == "" {
@@ -140,35 +134,5 @@ func gkeConfigFromEnv() (*config.GKEConfig, error) {
 	if err := proto.FromEnv(str, cfg); err != nil {
 		return nil, err
 	}
-	if err := runtime.CheckDeployment(cfg.Deployment); err != nil {
-		return nil, err
-	}
 	return cfg, nil
-}
-
-// colocationGroupFromEnv reads ColocationGroup from the Service Weaver internal
-// environment variable. It returns an error if the environment variable isn't
-// set.
-func colocationGroupFromEnv() (*protos.ColocationGroup, error) {
-	str := os.Getenv(colocationGroupEnvKey)
-	if str == "" {
-		return nil, fmt.Errorf("%q environment variable not set", colocationGroupEnvKey)
-	}
-	g := &protos.ColocationGroup{}
-	err := proto.FromEnv(str, g)
-	if err := checkColocationGroup(g); err != nil {
-		return nil, err
-	}
-	return g, err
-}
-
-// checkColocationGroup checks that a colocation group is well-formed.
-func checkColocationGroup(g *protos.ColocationGroup) error {
-	if g == nil {
-		return fmt.Errorf("nil colocation group")
-	}
-	if g.Name == "" {
-		return fmt.Errorf("empty colocation group name")
-	}
-	return nil
 }

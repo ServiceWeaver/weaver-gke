@@ -23,7 +23,6 @@ import (
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -138,8 +137,8 @@ func (d *Distributor) ManageAppStates(ctx context.Context) error {
 		if err := d.getListenerState(ctx, app); err != nil {
 			errs = append(errs, fmt.Errorf("error getting listener state for app %v: %w", app, err))
 		}
-		if err := d.getGroupState(ctx, app); err != nil {
-			errs = append(errs, fmt.Errorf("error getting group state for app %v: %w", app, err))
+		if err := d.getReplicaSetState(ctx, app); err != nil {
+			errs = append(errs, fmt.Errorf("error getting ReplicaSet state for app %v: %w", app, err))
 		}
 	}
 	return errs.ErrorOrNil()
@@ -345,9 +344,9 @@ func (d *Distributor) getListenerState(ctx context.Context, app string) error {
 	return errs.ErrorOrNil()
 }
 
-// getGroupState retrieve the latest group state for the application
+// getReplicaSetState retrieve the latest ReplicaSet state for the application
 // from the manager.
-func (d *Distributor) getGroupState(ctx context.Context, app string) error {
+func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error {
 	state, version, err := d.loadAppState(ctx, app)
 	if err != nil {
 		return err
@@ -355,8 +354,8 @@ func (d *Distributor) getGroupState(ctx context.Context, app string) error {
 
 	var errs errlist.ErrList
 	for _, version := range state.Versions {
-		// Get group state for the application version.
-		groups, err := d.manager.GetGroupState(ctx, &nanny.GroupStateRequest{
+		// Get ReplicaSet state for the application version.
+		replicaSets, err := d.manager.GetReplicaSetState(ctx, &nanny.GetReplicaSetStateRequest{
 			AppName:   app,
 			VersionId: version.Config.Deployment.Id,
 		})
@@ -364,7 +363,7 @@ func (d *Distributor) getGroupState(ctx context.Context, app string) error {
 			errs = append(errs, err)
 			continue
 		}
-		version.Groups = groups
+		version.ReplicaSets = replicaSets
 	}
 
 	if _, err := d.saveAppState(ctx, app, state, version); err != nil {
@@ -375,14 +374,14 @@ func (d *Distributor) getGroupState(ctx context.Context, app string) error {
 
 // hostname returns the hostname for the given listener, and the boolean value
 // indicating whether the given listener is public.
-func (d *Distributor) hostname(lis *protos.Listener, cfg *config.GKEConfig) (string, bool) {
+func (d *Distributor) hostname(lis string, cfg *config.GKEConfig) (string, bool) {
 	for _, pub := range cfg.PublicListener {
-		if lis.Name == pub.Name {
+		if lis == pub.Name {
 			return pub.Hostname, true
 		}
 	}
 	// Private.
-	return fmt.Sprintf("%s.%s.%s", lis.Name, d.region, InternalDNSDomain), false
+	return fmt.Sprintf("%s.%s.%s", lis, d.region, InternalDNSDomain), false
 }
 
 // ComputeTrafficAssignments computes traffic assignments across all active
@@ -449,14 +448,14 @@ func (d *Distributor) ComputeTrafficAssignments(ctx context.Context, now time.Ti
 				Location:        d.region,
 				AppName:         v.app,
 				VersionId:       v.state.Config.Deployment.Id,
-				Listeners:       map[string][]*protos.Listener{},
+				Listeners:       map[string][]*nanny.Listener{},
 				TrafficFraction: nanny.Fraction(v.state.Schedule),
 			}
 		}
 		publicTarget := newTarget()
 		privateTarget := newTarget()
 		for _, lis := range v.state.Listeners {
-			host, public := d.hostname(lis, v.state.Config)
+			host, public := d.hostname(lis.Name, v.state.Config)
 			if public {
 				publicTarget.Listeners[host] = append(publicTarget.Listeners[host], lis)
 			} else {
@@ -561,7 +560,7 @@ func (d *Distributor) detectAppliedTraffic(ctx context.Context, cadence time.Dur
 			expected := nanny.Fraction(v.Schedule)
 			matches := true
 			for _, lis := range v.Listeners {
-				host, _ := d.hostname(lis, v.Config)
+				host, _ := d.hostname(lis.Name, v.Config)
 				actual := actualTraffic[appVersionHost{app, v.Config.Deployment.Id, host}]
 				if actual >= (expected - maxDivergence) {
 					// Matches the expected traffic.

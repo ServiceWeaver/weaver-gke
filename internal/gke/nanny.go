@@ -37,6 +37,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slog"
 )
 
 // NannyOptions configure a GKE nanny.
@@ -91,7 +92,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 	}
 	defer logClient.Close()
 
-	makeLogger := func(service string) *logging.FuncLogger {
+	makeLogger := func(service string) *slog.Logger {
 		return logClient.Logger(logging.Options{
 			App:       "nanny",
 			Component: service,
@@ -111,7 +112,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 	return run(ctx, opts, cluster, lis, store, id, makeLogger)
 }
 
-func exportNannyMetrics(ctx context.Context, exporter *metricExporter, logger *logging.FuncLogger) {
+func exportNannyMetrics(ctx context.Context, exporter *metricExporter, logger *slog.Logger) {
 	const metricExportInterval = 15 * time.Second
 	ticker := time.NewTicker(metricExportInterval)
 	for {
@@ -129,7 +130,7 @@ func exportNannyMetrics(ctx context.Context, exporter *metricExporter, logger *l
 	}
 }
 
-func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.Listener, s store.Store, id uuid.UUID, makeLogger func(service string) *logging.FuncLogger) error {
+func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.Listener, s store.Store, id uuid.UUID, makeLogger func(service string) *slog.Logger) error {
 	babysitterConstructor := func(addr string) clients.BabysitterClient {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
@@ -171,7 +172,7 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 			func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
 				return updateRegionalInternalTrafficRoutes(ctx, cluster, logger, assignment)
 			},
-			func(ctx context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
+			func(ctx context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
 				dep := cfg.Deployment
 				return getListeners(ctx, cluster.Clientset, dep.App.Name, dep.Id)
 			},
@@ -194,15 +195,15 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 			func(ctx context.Context, podName string) (bool, error) {
 				return podExists(ctx, cluster, podName)
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup, lis string) (int, error) {
-				port, err := getListenerPort(ctx, s, logger, cluster, cfg, group, lis)
+			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis string) (int, error) {
+				port, err := getListenerPort(ctx, s, logger, cluster, cfg, replicaSet, lis)
 				if err != nil {
 					return -1, err
 				}
 				return port, nil
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener) (*protos.ExportListenerReply, error) {
-				if err := ensureListenerService(ctx, cluster, logger, cfg, group, lis); err != nil {
+			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis *nanny.Listener) (*protos.ExportListenerReply, error) {
+				if err := ensureListenerService(ctx, cluster, logger, cfg, replicaSet, lis); err != nil {
 					return nil, err
 				}
 
@@ -210,8 +211,8 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 				const proxyAddr = ""
 				return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
 			},
-			func(ctx context.Context, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
-				return deploy(ctx, cluster, logger, cfg, group)
+			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
+				return deploy(ctx, cluster, logger, cfg, replicaSet)
 			},
 			func(_ context.Context, app string, versions []string) error {
 				for _, version := range versions {
@@ -250,9 +251,10 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 }
 
 // getListenerPort returns the port the network listener should listen on
-// inside the colocation group, and creates a service to forward traffic to that
+// inside the Kubernetes ReplicaSet, and creates a service to forward traffic to
+// that
 // port.
-func getListenerPort(ctx context.Context, s store.Store, logger *logging.FuncLogger, cluster *ClusterInfo, cfg *config.GKEConfig, group *protos.ColocationGroup, listener string) (int, error) {
+func getListenerPort(ctx context.Context, s store.Store, logger *slog.Logger, cluster *ClusterInfo, cfg *config.GKEConfig, replicaSet string, listener string) (int, error) {
 	dep := cfg.Deployment
 	id, err := uuid.Parse(dep.Id)
 	if err != nil {
@@ -277,11 +279,11 @@ func getListenerPort(ctx context.Context, s store.Store, logger *logging.FuncLog
 // one has already been picked. More formally, pickPort provides the
 // following guarantees:
 //
-// - it returns the same port for the same listener, even if called concurrently
+// - It returns the same port for the same listener, even if called concurrently
 // from different processes (potentially on different machines). Coordination is
 // performed using the store.
 //
-// - it returns different port numbers for different listeners.
+// - It returns different port numbers for different listeners.
 func pickPort(ctx context.Context, s store.Store, key string, listener string) (int, error) {
 	const defaultPortStartNumber = 10000
 	index, err := store.Sequence(ctx, s, key, listener)

@@ -18,12 +18,15 @@ package managertest
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	weaver "github.com/ServiceWeaver/weaver"
@@ -32,33 +35,33 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/local"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime"
-	"github.com/ServiceWeaver/weaver/runtime/envelope"
+	"github.com/ServiceWeaver/weaver/runtime/colors"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
-	"go.opentelemetry.io/otel/sdk/trace"
 )
 
 // Run creates a brand new gke-local execution environment that places every
 // component in its own colocation group and executes the provided function on
 // the root component of the new application.
 func Run(t testing.TB, f func(weaver.Instance)) {
-	// There are three distinct types of execution in a manager test: (1) the
-	// unit test, (2) the main Service Weaver process, and (3) every other Service Weaver
-	// process.
+	// There are three distinct types of processes in a manager test: (1) the
+	// unit test process, (2) the main Service Weaver process, and (3) every
+	// other Service Weaver process.
 	//
-	// When you run "go test", Init (1) runs a manager in process. Then, it
-	// launches itself (i.e. the test binary) in a subprocess as the main Service Weaver
-	// process (2). The main Service Weaver process executes the provided function f. f
-	// either fails (e.g., by calling t.Fatal) or passes. The root unit test
-	// (1) monitors the main Service Weaver process (2). If the main Service Weaver process
-	// fails, then the unit test fails; otherwise, it passes. All other Service Weaver
-	// processes (3) are launched via the manager and do not execute f. They
-	// block on a call to Init.
-
+	// When you run "go test", Init (1) runs a manager in-process. Then, it
+	// launches itself (i.e. the test binary) in a subprocess as the main
+	// Service Weaver process (2). The main Service Weaver process executes
+	// the provided function f. f either fails (e.g., by calling t.Fatal) or
+	// passes. The root unit test (1) monitors the main Service Weaver process
+	// (2). If the main Service Weaver process fails, then the unit test fails;
+	// otherwise, it passes. All other Service Weaver processes (3) are
+	// launched via the manager and do not execute f. They block on a call to
+	// Init.
 	t.Helper()
 	bootstrap, err := runtime.GetBootstrap(context.Background())
 	if err != nil {
@@ -72,9 +75,14 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 				fmt.Fprintf(os.Stderr, "Service Weaver sub-process exiting\n")
 			}
 		}()
-		// If this is the main Service Weaver process, weaver.Init will return and f will
-		// execute. If this is a different Service Weaver process, weaver.Init blocks.
+		// If this is the main Service Weaver process, weaver.Init will return
+		// and f will execute. If this is a different Service Weaver process,
+		// weaver.Init blocks.
 		f(weaver.Init(context.Background()))
+
+		// TODO(spetrovic): This is the main process. In theory, this process
+		// shouldn't be terminating, as we now require that Service Weaver
+		// main()s not terminate. Change this test accordingly.
 		return
 	}
 
@@ -86,17 +94,31 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 	depid := uuid.New().String()
 	starter := local.NewStarter(store)
 	logger := logging.NewTestLogger(t)
+	pp := logging.NewPrettyPrinter(colors.Enabled())
+	var logMu sync.Mutex
+	var stopLogging bool
+	logSaver := func(e *protos.LogEntry) {
+		logMu.Lock()
+		defer logMu.Unlock()
+		if stopLogging {
+			return
+		}
+		t.Log(pp.Format(e))
+	}
+
 	addr := internal.ToHTTPAddress(server.Listener.Addr().String())
 	babysitterConstructor := func(addr string) clients.BabysitterClient {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
 	replicaExists := func(context.Context, string) (bool, error) { return true, nil }
-	manager.Start(ctx, mux, store, &logger.FuncLogger, addr, babysitterConstructor, replicaExists, getListenerPort, exportListener, starter.Start, nil, nil)
+	manager.Start(ctx, mux, store, logger, addr, babysitterConstructor, replicaExists, getListenerPort, exportListener, starter.Start, nil, nil)
 	server.Start()
 	defer func() {
 		// Silence the logger to ignore all the junk that gets printed when we
 		// cancel the context and shut down the manager.
-		logger.Silence()
+		logMu.Lock()
+		stopLogging = true
+		logMu.Unlock()
 		cancel()
 		starter.Stop(ctx, []string{depid})
 		server.Close()
@@ -117,44 +139,24 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 		Id:  depid,
 		App: appConfig,
 	}
-	weavelet := &protos.WeaveletInfo{
-		App:          appConfig.Name,
-		DeploymentId: dep.Id,
-		Group:        &protos.ColocationGroup{Name: "main"},
-		GroupId:      uuid.New().String(),
-		Id:           uuid.New().String(),
-	}
 	cfg := &config.GKEConfig{
 		ManagerAddr: addr,
 		Deployment:  dep,
 	}
-	handler := &babysitter.Handler{
-		Ctx:      ctx,
-		Config:   cfg,
-		Group:    weavelet.Group,
-		Manager:  &manager.HttpClient{Addr: addr},
-		LogSaver: logger.Log,
-		TraceSaver: func([]trace.ReadOnlySpan) error {
-			return nil
-		},
-		ReportWeaveletAddr: func(addr string) error { return nil },
-	}
-	env, err := envelope.NewEnvelope(weavelet, appConfig, handler, envelope.Options{})
+	b, err := babysitter.NewBabysitter(ctx, cfg, "main", "pod", true, &manager.HttpClient{Addr: addr}, logSaver, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer env.Stop()
-	if err := env.Run(ctx); err != nil {
-		// If the main subprocess fails---by calling t.Fatal for example---then
-		// env.Run will return an error.
+
+	if err := b.Run(); err != nil && !errors.Is(err, io.EOF) {
 		t.Fatal(err)
 	}
 }
 
-func getListenerPort(context.Context, *config.GKEConfig, *protos.ColocationGroup, string) (int, error) {
+func getListenerPort(context.Context, *config.GKEConfig, string, string) (int, error) {
 	return 9999, nil
 }
 
-func exportListener(context.Context, *config.GKEConfig, *protos.ColocationGroup, *protos.Listener) (*protos.ExportListenerReply, error) {
+func exportListener(context.Context, *config.GKEConfig, string, *nanny.Listener) (*protos.ExportListenerReply, error) {
 	return &protos.ExportListenerReply{}, nil
 }

@@ -481,7 +481,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -514,7 +514,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -525,14 +525,14 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 							{
 								Location:        "loc2",
 								AppName:         "app",
 								VersionId:       toUUID(2),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 						},
 					},
@@ -543,7 +543,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l3"},
+								Listener:        &nanny.Listener{Name: "l3"},
 							},
 						},
 					},
@@ -573,7 +573,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -584,7 +584,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -612,14 +612,14 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 							{
 								Location:        "loc2",
 								AppName:         "app2",
 								VersionId:       toUUID(2),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -657,14 +657,14 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(3),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 							{
 								Location:        "loc2",
 								AppName:         "app2",
 								VersionId:       toUUID(4),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -675,14 +675,14 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 							{
 								Location:        "loc2",
 								AppName:         "app1",
 								VersionId:       toUUID(2),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 						},
 					},
@@ -693,14 +693,14 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(3),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l3"},
+								Listener:        &nanny.Listener{Name: "l3"},
 							},
 							{
 								Location:        "loc2",
 								AppName:         "app2",
 								VersionId:       toUUID(4),
 								TrafficFraction: 0.5,
-								Listener:        &protos.Listener{Name: "l3"},
+								Listener:        &nanny.Listener{Name: "l3"},
 							},
 						},
 					},
@@ -729,7 +729,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -759,7 +759,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1.0,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -779,7 +779,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 			// assuming that all versions are fully rolled out.
 			type appVersionListener struct {
 				app, version string
-				lis          *protos.Listener
+				lis          *nanny.Listener
 			}
 			locAssignments := map[string]map[string]appVersionListener{}
 			for _, v := range c.versions {
@@ -999,30 +999,24 @@ func TestRunProfiling(t *testing.T) {
 				}
 			}
 
-			var errs []string
-			p, err := controller.runProfiling(ctx, v, &protos.RunProfiling{
+			p, err := controller.runProfiling(ctx, v, &nanny.GetProfileRequest{
 				AppName:   appName,
 				VersionId: versionId,
 			})
-			if err != nil {
-				errs = append(errs, err.Error())
+			// TODO(spetrovic): ProfileGroups needs to change to return a nil
+			// error (instead of an error with empty string). In the meantime,
+			// handle the case of an empty error string as no errors.
+			if err != nil && err.Error() == "" {
+				err = nil
 			}
-			if p != nil && len(p.Errors) > 0 {
-				errs = append(errs, p.Errors...)
-			}
-			if c.expectErr != "" {
-				found := false
-				for _, errStr := range errs {
-					if strings.Contains(errStr, c.expectErr) {
-						found = true
-						break
-					}
+			if err != nil && c.expectErr == "" {
+				t.Fatal(err)
+			} else if err == nil && c.expectErr != "" {
+				t.Fatal("expecting error, got no errors")
+			} else if err != nil {
+				if !strings.Contains(err.Error(), c.expectErr) {
+					t.Errorf("expecting error string %q, got error: %v", c.expectErr, err)
 				}
-				if !found {
-					t.Errorf("expecting error string %q, got errors: %v", c.expectErr, errs)
-				}
-			} else if len(errs) > 0 {
-				t.Errorf("expecting no error, got: %v", p.Errors)
 			}
 
 			var got string
@@ -1163,7 +1157,7 @@ func TestControllerDistributorInteraction(t *testing.T) {
 			ctx := context.Background()
 			distributors := map[string]*distributor.Distributor{}
 			for _, loc := range []string{"loc1", "loc2", "loc3"} {
-				getListeners := func(context.Context, *config.GKEConfig) ([]*protos.Listener, error) { return nil, nil }
+				getListeners := func(context.Context, *config.GKEConfig) ([]*nanny.Listener, error) { return nil, nil }
 				distributor, err := startDistributor(ctx, t, loc, getListeners)
 				if err != nil {
 					t.Fatalf("unable to start a distributor in %q: %v", loc, err)
@@ -1255,7 +1249,7 @@ func startController(ctx context.Context, t *testing.T, distributor func(addr st
 	return Start(ctx,
 		http.NewServeMux(),
 		store.NewFakeStore(),
-		&logging.NewTestLogger(t).FuncLogger,
+		logging.NewTestLogger(t),
 		5*time.Second, // actuationDelay
 		distributor,
 		0,   // fetchAssignmentsInterval
@@ -1264,11 +1258,11 @@ func startController(ctx context.Context, t *testing.T, distributor func(addr st
 		nil) // applyTraffic
 }
 
-func startDistributor(ctx context.Context, t *testing.T, loc string, getListeners func(context.Context, *config.GKEConfig) ([]*protos.Listener, error)) (*distributor.Distributor, error) {
+func startDistributor(ctx context.Context, t *testing.T, loc string, getListeners func(context.Context, *config.GKEConfig) ([]*nanny.Listener, error)) (*distributor.Distributor, error) {
 	return distributor.Start(ctx,
 		http.NewServeMux(),
 		store.NewFakeStore(),
-		&logging.NewTestLogger(t).FuncLogger,
+		logging.NewTestLogger(t),
 		&mockManagerClient{nil, nil, nil},
 		loc,
 		nil, // babysitterConstructor
@@ -1284,11 +1278,11 @@ func startDistributor(ctx context.Context, t *testing.T, loc string, getListener
 
 // version represents an app version
 type version struct {
-	locations            []string                    // locations where this version is deployed
-	appName              string                      // application name
-	id                   string                      // version name
-	rollout              string                      // rollout duration hint
-	listeners            map[string]*protos.Listener // hostname -> listener
+	locations            []string                   // locations where this version is deployed
+	appName              string                     // application name
+	id                   string                     // version name
+	rollout              string                     // rollout duration hint
+	listeners            map[string]*nanny.Listener // hostname -> listener
 	publicListenerConfig []*config.GKEConfig_PublicListener
 }
 
@@ -1299,7 +1293,7 @@ func newVersion(locations []string, appName, id string, rollout string, listener
 		appName:   appName,
 		id:        id,
 		rollout:   rollout,
-		listeners: map[string]*protos.Listener{},
+		listeners: map[string]*nanny.Listener{},
 	}
 	for _, l := range listener {
 		if strings.Contains(l, ".") { // public listener
@@ -1308,7 +1302,7 @@ func newVersion(locations []string, appName, id string, rollout string, listener
 				Name:     name,
 				Hostname: l,
 			})
-			v.listeners[l] = &protos.Listener{Name: name}
+			v.listeners[l] = &nanny.Listener{Name: name}
 		}
 	}
 	return v
@@ -1403,32 +1397,27 @@ func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequ
 	return m.delete
 }
 
-// GetGroupState implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetGroupState(context.Context, *nanny.GroupStateRequest) (*nanny.GroupState, error) {
+// GetReplicaSetState implements the clients.ManagerClient interface.
+func (m *mockManagerClient) GetReplicaSetState(context.Context, *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
 	return nil, fmt.Errorf("unimplemented")
 }
 
-// StartComponent implements the clients.ManagerClient interface.
-func (m *mockManagerClient) StartComponent(context.Context, *protos.ComponentToStart) error {
-	panic("implement me")
-}
-
-// StartColocationGroup implements the clients.ManagerClient interface.
-func (m *mockManagerClient) StartColocationGroup(context.Context, *nanny.ColocationGroupStartRequest) error {
+// ActivateComponent implements the clients.ManagerClient interface.
+func (m *mockManagerClient) ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error {
 	panic("implement me")
 }
 
 // RegisterReplica implements the clients.ManagerClient interface.
-func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.ReplicaToRegister) error {
+func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error {
 	panic("implement me")
 }
 
 // ReportLoad implements the clients.ManagerClient interface.
-func (m *mockManagerClient) ReportLoad(context.Context, *protos.WeaveletLoadReport) error {
+func (m *mockManagerClient) ReportLoad(context.Context, *nanny.LoadReport) error {
 	panic("implement me")
 }
 
-func (m *mockManagerClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
+func (m *mockManagerClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
 	panic("implement me")
 }
 
@@ -1438,13 +1427,13 @@ func (m *mockManagerClient) ExportListener(context.Context, *nanny.ExportListene
 }
 
 // GetRoutingInfo implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetRoutingInfo(context.Context, *protos.GetRoutingInfo) (*protos.RoutingInfo, error) {
+func (m *mockManagerClient) GetRoutingInfo(context.Context, *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
 // GetComponentsToStart implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetComponentsToStart(context.Context, *protos.GetComponentsToStart) (*protos.ComponentsToStart, error) {
+func (m *mockManagerClient) GetComponentsToStart(context.Context, *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error) {
 	panic("implement me")
 }
 
@@ -1482,7 +1471,7 @@ func (d *mockDistributorClient) GetPrivateTrafficAssignment(context.Context) (*n
 }
 
 // RunProfiling implements the clients.DistributorClient interface.
-func (d *mockDistributorClient) RunProfiling(context.Context, *protos.RunProfiling) (*protos.Profile, error) {
+func (d *mockDistributorClient) RunProfiling(context.Context, *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	if d.prof == nil {
 		return nil, fmt.Errorf("cannot generate profile")
 	}
@@ -1490,7 +1479,7 @@ func (d *mockDistributorClient) RunProfiling(context.Context, *protos.RunProfili
 	if err := d.prof.Write(&buf); err != nil {
 		return nil, err
 	}
-	return &protos.Profile{Data: buf.Bytes()}, nil
+	return &protos.GetProfileReply{Data: buf.Bytes()}, nil
 }
 
 // chaosNetwork is a chaotic fake network that randomly duplicates, delays, and
@@ -1653,7 +1642,7 @@ func (c *chaosDistributorClient) GetPrivateTrafficAssignment(ctx context.Context
 }
 
 // RunProfiling implements the distributor.Client interface.
-func (c *chaosDistributorClient) RunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
+func (c *chaosDistributorClient) RunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	return nil, fmt.Errorf("unimplemented")
 }
 

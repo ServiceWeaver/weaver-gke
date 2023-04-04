@@ -23,18 +23,16 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
-	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/perfetto"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // createBabysitter creates a babysitter in a gke-local deployment.
 func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
-	group *protos.ColocationGroup, logDir string) (*babysitter.Babysitter, error) {
+	replicaSet string, logDir string) (*babysitter.Babysitter, error) {
 	podName := uuid.New().String()
 	ls, err := logging.NewFileStore(logDir)
 	if err != nil {
@@ -68,5 +66,5 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	return babysitter.NewBabysitter(ctx, cfg, group, podName, true /*useLocalhost*/, m, logSaver, traceSaver, metricExporter, envelope.Options{})
+	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, m, logSaver, traceSaver, metricExporter)
 }

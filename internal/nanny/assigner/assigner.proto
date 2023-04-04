@@ -22,22 +22,24 @@ import "runtime/protos/runtime.proto";
 // AppVersionState contains state managed for an application version by
 // the assigner.
 message AppVersionState {
-  map<string, ColocationGroupState> groups = 1;  // per group information
+  // The set of activated ReplicaSets, keyed by their name.
+  map<string, ReplicaSetState> replica_sets = 2;
 }
 
-message ColocationGroupState {
+// ReplicaSetState stores information about a Kubernetes ReplicaSet, i.e.,
+// a set of Pods that host the same set of components.
+message ReplicaSetState {
   string name = 1;
 
-  // Set of components that a colocation group in a given deployment
-  // should be running, along with their routing status (whether a component is
-  // routed).
+  // Set of activated components in the ReplicaSet, along with their routing
+  // status (i.e., whether a component is routed).
   map<string, bool> components = 2;
 
-  // List of replica addresses for the colocation group.
-  repeated string replicas = 3;
+  // Addresses of weavelets that run inside the ReplicaSet.
+  repeated string weavelet_addrs = 3;
 
-  // Network listeners exported by the colocation group, if any.
-  repeated runtime.Listener listeners = 4;
+  // Network listeners exported by the ReplicaSet, if any.
+  repeated string listeners = 4;
 
   // TODO(rgrandl): should we also track the routing info here?
 }
@@ -49,19 +51,20 @@ message AssignerState {
 
 // AppState stores the state for a single Service Weaver application.
 message AppState {
-  // The list of app's active colocation groups .
-  repeated GroupId group_ids = 1;
+  // The list of app's running replica sets.
+  repeated ReplicaSetId replica_set_ids = 1;
 }
 
-// GroupId uniquely identifies a colocation group.
-message GroupId {
+// ReplicaSetId uniquely identifies a Kubernetes ReplicaSet.
+message ReplicaSetId {
   string App = 1;      // Service Weaver application (e.g., todo)
   string Id = 2;       // deployment id (e.g., bb6b3172)
-  string Group = 3;    // colocation group name (e.g., Cache)
+  string Name = 3;    // replica set name (e.g., Cache)
 }
 
-// GroupInfo contains information for each managed colocation group.
-message GroupInfo {
+// ReplicaSetInfo contains information for each Kubernetes ReplicaSet that
+// requires routing.
+message ReplicaSetInfo {
   // Every time (1) the set of replica changes, or (2) the set of healthy
   // replicas changes, or (3) any assignment changes, a GroupInfo's version
   // should be incremented. An assignment's load may change without incrementing
@@ -71,33 +74,42 @@ message GroupInfo {
   // writing the corresponding RoutingInfo.
   uint64 version = 3;
 
-  map<string, Assignment> components = 1; // routed components and their assignments
-  map<string, Replica> replicas = 2;      // replicas, keyed by weavelet address
+  // Routed components and their assignments
+  map<string, Assignment> components = 1;
 
-  // Network listeners exported by the colocation group, if any.
-  repeated runtime.Listener listeners = 4;
+  // Pods in the replica set, keyed by weavelet address.
+  map<string, Pod> pods = 2;
+
+  // Network listeners exported by the ReplicaSet, if any.
+  repeated string listeners = 4;
 }
 
-// Replica contains information for a single replica (aka weavelet).
-message Replica {
-  // Name of Pod that hosts the replica.
-  string pod_name = 3;
+// Pod contains information for a Pod that hosts the weavelet.
+message Pod {
+  string name = 1;  // Pod's unique name
 
   // Address of babysitter that manages the replica.
-  string babysitter_address = 1;
+  string babysitter_address = 2;
 
   // Is the replica healthy? Note that every assigner individually decides the
   // health status of every replica. When an assigner writes a GroupInfo, it
   // also records the set of replicas it thought were healthy.
-  runtime.HealthStatus health_status = 2;
+  runtime.HealthStatus health_status = 3;
 }
 
-// VersionedRoutingInfo stores a versioned RoutingInfo. The version should
-// be a version of a written GroupInfo, and the info should be derived from
-// GroupInfo. Versions should only every increase over time.
+// VersionedRoutingInfo stores a versioned RoutingInfo for a Kubernetes
+// ReplicaSet. The version should be a version of a written ReplicaSetInfo,
+// and the info should be derived from ReplicaSetInfo. Versions should only
+// ever increase over time.
+// TODO(mwhittaker): See if there is a need to have this separate struct.
 message VersionedRoutingInfo {
   uint64 version = 1;
-  runtime.RoutingInfo info = 2;
+
+  // Addresses of the healthy weavelets in the ReplicaSet.
+  repeated string weavelet_addrs = 2;
+
+  // Routing assignments (without load), keyed by component name.
+  map<string, runtime.Assignment> assignments = 3;
 }
 
 // SliceKey is an abstraction for keys used in slices.
@@ -116,14 +128,11 @@ message Slice {
 
 // Assignment is a wrapper class that creates and decodes assignment protos.
 message Assignment {
-  string app = 1;
-  string deploymentId = 2;
-  string component = 3;
-  uint64 version = 4;
-  repeated Slice slices = 5;
-  map<string, bool> candidate_resources = 6;
-  AlgoConstraints constraints = 7;
-  Statistics stats = 8;
+  uint64 version = 1;
+  repeated Slice slices = 2;
+  map<string, bool> candidate_resources = 3;
+  AlgoConstraints constraints = 4;
+  Statistics stats = 5;
 }
 
 // loadTracker tracks load information for a given slice across all the assigned

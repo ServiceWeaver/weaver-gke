@@ -34,8 +34,8 @@ var (
 )
 
 // RunProfiling implements the clients.BabysitterClient interface.
-func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
-	reply := &protos.Profile{}
+func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
+	reply := &protos.GetProfileReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
@@ -47,10 +47,10 @@ func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.RunProfiling)
 }
 
 // CheckHealth implements the clients.BabysitterClient interface.
-func (h *HttpClient) CheckHealth(ctx context.Context, req *clients.HealthCheck) (*protos.HealthReport, error) {
-	reply := &protos.HealthReport{}
+func (h *HttpClient) CheckHealth(ctx context.Context, req *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
+	reply := &protos.GetHealthReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  &http.Client{Timeout: req.Timeout.AsDuration()},
+		Client:  http.DefaultClient,
 		Addr:    h.Addr,
 		URLPath: healthURL,
 		Request: req,

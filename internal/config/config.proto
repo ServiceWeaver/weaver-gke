@@ -16,7 +16,7 @@ syntax = "proto3";
 option go_package = "github.com/ServiceWeaver/weaver-gke/internal/config";
 
 package config;
-import "runtime/protos/runtime.proto";
+import "runtime/protos/config.proto";
 
 // GKEConfig holds configuration information for one execution of a
 // Service Weaver application on GKE. Fields are populated from a combination

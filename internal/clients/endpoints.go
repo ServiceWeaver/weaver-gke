@@ -16,42 +16,42 @@ package clients
 
 import (
 	"context"
+	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
+// Interval at which babysitters report load to the manager.
+const LoadReportInterval = 5 * time.Minute
+
 // BabysitterClient is a client to a babysitter.
 type BabysitterClient interface {
-	CheckHealth(ctx context.Context, status *HealthCheck) (*protos.HealthReport, error)
-	RunProfiling(context.Context, *protos.RunProfiling) (*protos.Profile, error)
+	CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error)
+	RunProfiling(context.Context, *protos.GetProfileRequest) (*protos.GetProfileReply, error)
 }
 
 // DistributorClient is a client to a distributor.
 type DistributorClient interface {
-	Distribute(ctx context.Context, req *nanny.ApplicationDistributionRequest) error
-	Cleanup(ctx context.Context, req *nanny.ApplicationCleanupRequest) error
-	GetApplicationState(ctx context.Context, req *nanny.ApplicationStateAtDistributorRequest) (*nanny.ApplicationStateAtDistributor, error)
-	GetPublicTrafficAssignment(ctx context.Context) (*nanny.TrafficAssignment, error)
-	GetPrivateTrafficAssignment(ctx context.Context) (*nanny.TrafficAssignment, error)
-	RunProfiling(context.Context, *protos.RunProfiling) (*protos.Profile, error)
+	Distribute(context.Context, *nanny.ApplicationDistributionRequest) error
+	Cleanup(context.Context, *nanny.ApplicationCleanupRequest) error
+	GetApplicationState(context.Context, *nanny.ApplicationStateAtDistributorRequest) (*nanny.ApplicationStateAtDistributor, error)
+	GetPublicTrafficAssignment(context.Context) (*nanny.TrafficAssignment, error)
+	GetPrivateTrafficAssignment(context.Context) (*nanny.TrafficAssignment, error)
+	RunProfiling(context.Context, *nanny.GetProfileRequest) (*protos.GetProfileReply, error)
 }
 
 // ManagerClient is a client to a manager.
-//
-// TODO(mwhittaker): Refactor the manager so that it also implements the Client
-// interface.
 type ManagerClient interface {
 	Deploy(context.Context, *nanny.ApplicationDeploymentRequest) error
 	Stop(context.Context, *nanny.ApplicationStopRequest) error
 	Delete(context.Context, *nanny.ApplicationDeleteRequest) error
-	GetGroupState(context.Context, *nanny.GroupStateRequest) (*nanny.GroupState, error)
-	StartComponent(context.Context, *protos.ComponentToStart) error
-	StartColocationGroup(context.Context, *nanny.ColocationGroupStartRequest) error
-	RegisterReplica(context.Context, *nanny.ReplicaToRegister) error
-	ReportLoad(context.Context, *protos.WeaveletLoadReport) error
-	GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error)
+	GetReplicaSetState(context.Context, *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error)
+	ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error
+	RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error
+	ReportLoad(context.Context, *nanny.LoadReport) error
+	GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error)
 	ExportListener(context.Context, *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error)
-	GetRoutingInfo(context.Context, *protos.GetRoutingInfo) (*protos.RoutingInfo, error)
-	GetComponentsToStart(context.Context, *protos.GetComponentsToStart) (*protos.ComponentsToStart, error)
+	GetRoutingInfo(context.Context, *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error)
+	GetComponentsToStart(context.Context, *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error)
 }

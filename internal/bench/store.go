@@ -24,17 +24,17 @@ import (
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
+	"golang.org/x/exp/slog"
 )
 
 // StoreConfig configures the benchmark run by BenchStore.
 type StoreConfig struct {
-	NumKeys      int                 // The number of keys to sample from.
-	ValueSize    Size                // The size of values written to keys.
-	ReadFraction float32             // The fraction of operations that are reads.
-	Duration     time.Duration       // The duration of the benchmark.
-	Logger       *logging.FuncLogger // A logger.
-	Parallelism  int                 // The number of parallel store operations.
+	NumKeys      int           // The number of keys to sample from.
+	ValueSize    Size          // The size of values written to keys.
+	ReadFraction float32       // The fraction of operations that are reads.
+	Duration     time.Duration // The duration of the benchmark.
+	Logger       *slog.Logger  // A logger.
+	Parallelism  int           // The number of parallel store operations.
 }
 
 // StoreStats contains statistics about a store benchmark.
