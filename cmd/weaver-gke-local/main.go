@@ -27,6 +27,7 @@ func main() {
 		"kill":      gketool.KillCmd(&killSpec),
 		"profile":   gketool.ProfileCmd(&profileSpec),
 		"dashboard": gketool.DashboardCmd(&dashboardSpec),
+		"version":   tool.VersionCmd("weaver gke-local"),
 
 		// Hidden commands.
 		"store":       gketool.StoreCmd(&storeSpec),
