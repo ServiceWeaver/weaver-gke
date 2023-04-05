@@ -27,6 +27,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
+	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
@@ -121,6 +122,16 @@ func NewBabysitter(
 		return nil, err
 	}
 
+	// Make sure the version of the deployer matches the version of the
+	// compiled binary.
+	//
+	// TODO: Check for compatibility early on, before deploying.
+	// TODO: Propagate this error and crash the app.
+	wlet := e.WeaveletInfo()
+	if err := checkVersion(wlet.Version); err != nil {
+		return nil, err
+	}
+
 	// Create the babysitter.
 	b := &Babysitter{
 		ctx:            ctx,
@@ -137,6 +148,25 @@ func NewBabysitter(
 	}
 
 	return b, nil
+}
+
+// checkVersion checks that the deployer API version the deployer was built
+// with is compatible with the deployer API version the app was built with,
+// erroring out if they are not compatible.
+func checkVersion(appVersion *protos.SemVer) error {
+	if appVersion == nil {
+		return fmt.Errorf("version mismatch: nil app version")
+	}
+	if appVersion.Major != runtime.Major ||
+		appVersion.Minor != runtime.Minor ||
+		appVersion.Patch != runtime.Patch {
+		return fmt.Errorf(
+			"version mismatch: deployer version %d.%d.%d is incompatible with app version %d.%d.%d.",
+			runtime.Major, runtime.Minor, runtime.Patch,
+			appVersion.Major, appVersion.Minor, appVersion.Patch,
+		)
+	}
+	return nil
 }
 
 // Run runs the babysitter. This call will block until the context passed to
