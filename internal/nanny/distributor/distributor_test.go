@@ -81,7 +81,7 @@ func TestDistributeAndCleanup(t *testing.T) {
 						AppName:         v.appName,
 						VersionId:       v.id,
 						TrafficFraction: 1.0,
-						Listener:        &protos.Listener{Name: "pub"},
+						Listener:        &nanny.Listener{Name: "pub"},
 					},
 				},
 			}
@@ -93,11 +93,11 @@ func TestDistributeAndCleanup(t *testing.T) {
 	ctx := context.Background()
 	store := store.NewFakeStore()
 	manager := &mockManagerClient{nil, nil, nil, nil}
-	listeners := []*protos.Listener{{Name: "pub"}}
+	listeners := []*nanny.Listener{{Name: "pub"}}
 	distributor, err := Start(ctx,
 		http.NewServeMux(),
 		store,
-		&logging.NewTestLogger(t).FuncLogger,
+		logging.NewTestLogger(t),
 		manager,
 		testRegion,
 		nil, // babysitterConstructor
@@ -106,7 +106,7 @@ func TestDistributeAndCleanup(t *testing.T) {
 		0,   // applyTrafficInterval
 		0,   // detectAppliedTrafficInterval
 		nil, // applyTraffic
-		func(_ context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
+		func(_ context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
 			return listeners, nil
 		},
 		nil, // getMetricCounts
@@ -437,7 +437,7 @@ func TestCleanupMissing(t *testing.T) {
 	distributor, err := Start(ctx,
 		http.NewServeMux(),
 		store,
-		&logging.NewTestLogger(t).FuncLogger,
+		logging.NewTestLogger(t),
 		&mockManagerClient{fmt.Errorf("unimplemented"), nil, nil, nil},
 		testRegion,
 		nil, // babysitterConstructor
@@ -446,8 +446,8 @@ func TestCleanupMissing(t *testing.T) {
 		0,   // applyTrafficInterval
 		0,   // detectAppliedTrafficInterval
 		nil, // applyTraffic
-		func(_ context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
-			return []*protos.Listener{}, nil
+		func(_ context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
+			return []*nanny.Listener{}, nil
 		},
 		nil, // getMetricCounts
 	)
@@ -507,7 +507,7 @@ func TestAnneal(t *testing.T) {
 	distributor, err := Start(ctx,
 		http.NewServeMux(),
 		store,
-		&logging.NewTestLogger(t).FuncLogger,
+		logging.NewTestLogger(t),
 		manager,
 		testRegion,
 		nil, // babysitterConstructor
@@ -516,8 +516,8 @@ func TestAnneal(t *testing.T) {
 		0,   // applyTrafficInterval
 		0,   // detectAppliedTrafficInterval
 		nil, // applyTraffic
-		func(_ context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
-			return []*protos.Listener{}, nil
+		func(_ context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
+			return []*nanny.Listener{}, nil
 		},
 		nil, // getMetricCounts
 	)
@@ -594,7 +594,7 @@ func TestAnneal(t *testing.T) {
 		protocmp.Transform(),
 		protocmp.IgnoreFields(&DistributorState{}, "public_traffic_assignment"),
 		protocmp.IgnoreFields(&DistributorState{}, "private_traffic_assignment"),
-		protocmp.IgnoreFields(&AppVersionState{}, "config", "schedule", "stopped_time", "groups"),
+		protocmp.IgnoreFields(&AppVersionState{}, "config", "schedule", "stopped_time", "replica_sets"),
 	}
 	if diff := cmp.Diff(wantState, state, opts...); diff != "" {
 		t.Fatalf("bad state (-want +got):\n%s", diff)
@@ -612,13 +612,13 @@ func TestAnneal(t *testing.T) {
 }
 
 func TestGetDistributorState(t *testing.T) {
-	groups := groupStates{
-		"group1": {
+	replicaSets := replicaSetStates{
+		"rs1": {
 			replicas:   []string{"replica1:healthy"},
 			components: []string{"component1", "component2"},
 			listeners:  []string{"l1"},
 		},
-		"group2": {
+		"rs2": {
 			replicas:   []string{"replica1:healthy"},
 			components: []string{"component3"},
 			listeners:  []string{"l2", "l3"},
@@ -657,7 +657,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -672,7 +672,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 						},
 					},
@@ -686,14 +686,14 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 						{
 							VersionId:                  toUUID(2),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -724,7 +724,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -739,28 +739,28 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 						{
 							VersionId:                  toUUID(3),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 						{
 							VersionId:                  toUUID(4),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 						{
 							VersionId:                  toUUID(1),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -791,7 +791,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -806,7 +806,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -820,14 +820,14 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 						{
 							VersionId:                  toUUID(2),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -856,7 +856,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -867,7 +867,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 						},
 					},
@@ -882,7 +882,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -893,7 +893,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -925,7 +925,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -936,7 +936,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l2"},
+								Listener:        &nanny.Listener{Name: "l2"},
 							},
 						},
 					},
@@ -947,7 +947,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l3"},
+								Listener:        &nanny.Listener{Name: "l3"},
 							},
 						},
 					},
@@ -961,7 +961,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -972,7 +972,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -1002,7 +1002,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -1013,7 +1013,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -1028,7 +1028,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -1039,7 +1039,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -1069,7 +1069,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app2",
 								VersionId:       toUUID(2),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -1084,7 +1084,7 @@ func TestGetDistributorState(t *testing.T) {
 								AppName:         "app1",
 								VersionId:       toUUID(1),
 								TrafficFraction: 1,
-								Listener:        &protos.Listener{Name: "l1"},
+								Listener:        &nanny.Listener{Name: "l1"},
 							},
 						},
 					},
@@ -1098,7 +1098,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -1109,7 +1109,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							Groups:                     groups.toProto(),
+							ReplicaSets:                replicaSets.toProto(),
 						},
 					},
 				},
@@ -1134,8 +1134,8 @@ func TestGetDistributorState(t *testing.T) {
 			distributor, err := Start(ctx,
 				mux,
 				store.NewFakeStore(),
-				&logging.NewTestLogger(t).FuncLogger,
-				&mockManagerClient{nil, nil, nil, groups},
+				logging.NewTestLogger(t),
+				&mockManagerClient{nil, nil, nil, replicaSets},
 				testRegion,
 				nil, // babysitterConstructor
 				0,   // manageAppsInterval
@@ -1143,7 +1143,7 @@ func TestGetDistributorState(t *testing.T) {
 				0,   // applyTrafficInterval
 				0,   // detectAppliedTrafficInterval
 				nil, // applyTraffic
-				func(_ context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
+				func(_ context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
 					ver, ok := versions[cfg.Deployment.Id]
 					if !ok {
 						return nil, fmt.Errorf("unknown version id: %v", cfg.Deployment.Id)
@@ -1208,7 +1208,7 @@ func TestGetDistributorState(t *testing.T) {
 			// Verify that the rollout status is as expected.
 			opts = []cmp.Option{
 				protocmp.Transform(),
-				protocmp.SortRepeatedFields(&nanny.GroupState{}, "groups"),
+				protocmp.SortRepeatedFields(&nanny.ReplicaSetState{}, "replica_sets"),
 			}
 			if diff := cmp.Diff(c.expectedState, gotAppsState, opts...); diff != "" {
 				t.Fatalf("bad state (-want, +got):\n%s", diff)
@@ -1262,40 +1262,40 @@ func TestRunProfiling(t *testing.T) {
 
 	type testCase struct {
 		name       string
-		procStates groupStates                 // proc_name -> group state
+		procStates replicaSetStates            // proc_name -> ReplicaSet state
 		profiles   map[string]*profile.Profile // proc_name:replica -> profile
 		expect     *profile.Profile
 		expectErr  string
 	}
 	for _, c := range []testCase{
 		{
-			// Test plan: Single group with a single healthy replica. The
+			// Test plan: Single ReplicaSet with a single healthy replica. The
 			// returned profile should be the profile of that single replica.
-			name: "one_group",
-			procStates: groupStates{
-				"group1": {
+			name: "one_replica_set",
+			procStates: replicaSetStates{
+				"rs1": {
 					replicas: []string{"replica1:healthy", "replica2:unhealthy"},
 				},
 			},
 			profiles: map[string]*profile.Profile{
-				"group1:replica1": prof(time.Second, 100),
+				"rs1:replica1": prof(time.Second, 100),
 			},
 			expect: prof(time.Second, 100),
 		},
 		{
-			// Test plan: Two groups with a different number of healthy
+			// Test plan: Two ReplicaSets with a different number of healthy
 			// replicas. The returned profile should be the scaled combination
-			// of the two groups' profiles.
-			name: "two_groups",
-			procStates: groupStates{
-				"group1": {
+			// of the two ReplicaSets' profiles.
+			name: "two_replica_sets",
+			procStates: replicaSetStates{
+				"rs1": {
 					replicas: []string{
 						"replica1:healthy",
 						"replica2:unhealthy",
 						"replica3:healthy",
 					},
 				},
-				"group2": {
+				"rs2": {
 					replicas: []string{
 						"replica1:healthy",
 						"replica2:healthy",
@@ -1305,50 +1305,50 @@ func TestRunProfiling(t *testing.T) {
 				},
 			},
 			profiles: map[string]*profile.Profile{
-				"group1:replica1": prof(time.Second, 100),
-				"group1:replica3": prof(time.Second, 100),
-				"group2:replica1": prof(time.Second, 1000),
-				"group2:replica2": prof(time.Second, 1000),
-				"group2:replica3": prof(time.Second, 1000),
+				"rs1:replica1": prof(time.Second, 100),
+				"rs1:replica3": prof(time.Second, 100),
+				"rs2:replica1": prof(time.Second, 1000),
+				"rs2:replica2": prof(time.Second, 1000),
+				"rs2:replica3": prof(time.Second, 1000),
 			},
 			expect: prof(2*time.Second, 3200),
 		},
 		{
-			// Test plan: Two groups where one has a healthy replica and the
+			// Test plan: Two ReplicaSets where one has a healthy replica and the
 			// other doesn't. The returned profile should be the profile of
-			// the healthy group.
-			name: "two_groups_one_unhealthy",
-			procStates: groupStates{
-				"group1": {replicas: []string{"replica1:healthy"}},
-				"group2": {replicas: []string{"replica1:unhealthy"}},
+			// the healthy ReplicaSet.
+			name: "two_replica_sets_one_unhealthy",
+			procStates: replicaSetStates{
+				"rs1": {replicas: []string{"replica1:healthy"}},
+				"rs2": {replicas: []string{"replica1:unhealthy"}},
 			},
 			profiles: map[string]*profile.Profile{
-				"group1:replica1": prof(time.Second, 100),
+				"rs1:replica1": prof(time.Second, 100),
 			},
 			expect: prof(time.Second, 100),
 		},
 		{
-			// Test plan: Two groups, both healthy. Profile collection fails
-			// at one of the two groups. The returned profile should be the
-			// profile of the other group, but with an error.
-			name: "two_groups_one_failed",
-			procStates: groupStates{
-				"group1": {replicas: []string{"replica1:healthy"}},
-				"group2": {replicas: []string{"replica1:healthy"}},
+			// Test plan: Two ReplicaSets, both healthy. Profile collection fails
+			// at one of the two ReplicaSets. The returned profile should be the
+			// profile of the other ReplicaSet, but with an error.
+			name: "two_replica_sets_one_failed",
+			procStates: replicaSetStates{
+				"rs1": {replicas: []string{"replica1:healthy"}},
+				"rs2": {replicas: []string{"replica1:healthy"}},
 			},
 			profiles: map[string]*profile.Profile{
-				"group1:replica1": prof(time.Second, 100),
+				"rs1:replica1": prof(time.Second, 100),
 			},
 			expect:    prof(time.Second, 100),
 			expectErr: "no profile found",
 		},
 		{
-			// Test plan: Two groups, both unhealthy. The returned profile
+			// Test plan: Two ReplicaSets, both unhealthy. The returned profile
 			// data should be empty, with no errors.
-			name: "two_groups_both_unhealthy",
-			procStates: groupStates{
-				"group1": {replicas: []string{"replica1:unhealthy"}},
-				"group2": {replicas: []string{"replica1:unhealthy"}},
+			name: "two_replica_sets_both_unhealthy",
+			procStates: replicaSetStates{
+				"rs1": {replicas: []string{"replica1:unhealthy"}},
+				"rs2": {replicas: []string{"replica1:unhealthy"}},
 			},
 			expect: nil,
 		},
@@ -1362,7 +1362,7 @@ func TestRunProfiling(t *testing.T) {
 			d, err := Start(ctx,
 				http.NewServeMux(),
 				store.NewFakeStore(),
-				&logging.NewTestLogger(t).FuncLogger,
+				logging.NewTestLogger(t),
 				manager,
 				testRegion,
 				babysitterConstructor,
@@ -1371,34 +1371,32 @@ func TestRunProfiling(t *testing.T) {
 				0,   // applyTrafficInterval
 				0,   // detectAppliedTrafficInterval
 				nil, // applyTraffic
-				func(_ context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
-					return []*protos.Listener{{Name: "pub"}}, nil
+				func(_ context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
+					return []*nanny.Listener{{Name: "pub"}}, nil
 				},
 				nil, // getMetricCounts
 			)
 			if err != nil {
 				t.Fatal(err)
 			}
-			p, err := d.RunProfiling(ctx, &protos.RunProfiling{
+			p, err := d.RunProfiling(ctx, &nanny.GetProfileRequest{
 				AppName:   "app",
 				VersionId: "1",
 			})
-			if err != nil {
-				t.Fatal(err)
+			// TODO(spetrovic): ProfileGroups needs to change to return a nil
+			// error (instead of an error with empty string). In the meantime,
+			// handle the case of an empty error string as no errors.
+			if err != nil && err.Error() == "" {
+				err = nil
 			}
-			if c.expectErr != "" {
-				found := false
-				for _, errStr := range p.Errors {
-					if strings.Contains(errStr, c.expectErr) {
-						found = true
-						break
-					}
+			if err != nil && c.expectErr == "" {
+				t.Fatal(err)
+			} else if err == nil && c.expectErr != "" {
+				t.Fatal("expecting error, got no errors")
+			} else if err != nil {
+				if !strings.Contains(err.Error(), c.expectErr) {
+					t.Errorf("expecting error string %q, got error: %v", c.expectErr, err)
 				}
-				if !found {
-					t.Errorf("expecting error string %q, got errors: %v", c.expectErr, p.Errors)
-				}
-			} else if len(p.Errors) > 0 {
-				t.Errorf("expecting no errors, got: %v", p.Errors)
 			}
 
 			var got string
@@ -1425,7 +1423,7 @@ type version struct {
 	appName              string
 	id                   string // version name
 	submissionId         int    // submission id
-	listeners            []*protos.Listener
+	listeners            []*nanny.Listener
 	publicListenerConfig []*config.GKEConfig_PublicListener
 }
 
@@ -1445,7 +1443,7 @@ func newVersion(appName, id string, submissionId int, listener ...string) versio
 			})
 			l = name
 		}
-		v.listeners = append(v.listeners, &protos.Listener{Name: l})
+		v.listeners = append(v.listeners, &nanny.Listener{Name: l})
 	}
 	return v
 }
@@ -1472,16 +1470,16 @@ func registerNewAppVersion(d *Distributor, v version) error {
 	return d.Distribute(context.Background(), req)
 }
 
-type groupStates map[string]struct {
+type replicaSetStates map[string]struct {
 	replicas   []string
 	components []string
 	listeners  []string
 }
 
-func (s groupStates) toProto() *nanny.GroupState {
-	var ret nanny.GroupState
+func (s replicaSetStates) toProto() *nanny.ReplicaSetState {
+	var ret nanny.ReplicaSetState
 	for proc, state := range s {
-		p := &nanny.GroupState_Group{Name: proc, Components: state.components}
+		rs := &nanny.ReplicaSetState_ReplicaSet{Name: proc, Components: state.components}
 		for _, replica := range state.replicas {
 			parts := strings.Split(replica, ":")
 			if len(parts) != 2 {
@@ -1492,16 +1490,14 @@ func (s groupStates) toProto() *nanny.GroupState {
 				healthStatus = protos.HealthStatus_HEALTHY
 			}
 			addr := fmt.Sprintf("%s:%s", proc, parts[0])
-			p.Replicas = append(p.Replicas, &nanny.GroupState_Group_Replica{
+			rs.Pods = append(rs.Pods, &nanny.ReplicaSetState_ReplicaSet_Pod{
 				WeaveletAddr:   addr,
 				BabysitterAddr: addr,
 				HealthStatus:   healthStatus,
 			})
 		}
-		for _, lis := range state.listeners {
-			p.Listeners = append(p.Listeners, &protos.Listener{Name: lis})
-		}
-		ret.Groups = append(ret.Groups, p)
+		rs.Listeners = state.listeners
+		ret.ReplicaSets = append(ret.ReplicaSets, rs)
 	}
 	return &ret
 }
@@ -1509,10 +1505,10 @@ func (s groupStates) toProto() *nanny.GroupState {
 // mockManagerClient is a mock manager.Client that returns the provided
 // errors/values for the corresponding methods.
 type mockManagerClient struct {
-	deploy error       // returned by Deploy
-	stop   error       // returned by Stop
-	delete error       // returned by Delete
-	groups groupStates // returned by GetGroupState
+	deploy      error            // returned by Deploy
+	stop        error            // returned by Stop
+	delete      error            // returned by Delete
+	replicaSets replicaSetStates // returned by GetReplicaSetState
 }
 
 var _ clients.ManagerClient = &mockManagerClient{}
@@ -1532,33 +1528,28 @@ func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequ
 	return m.delete
 }
 
-// GetGroupState implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetGroupState(_ context.Context, req *nanny.GroupStateRequest) (*nanny.GroupState, error) {
-	return m.groups.toProto(), nil
+// GetReplicaSetState implements the clients.ManagerClient interface.
+func (m *mockManagerClient) GetReplicaSetState(_ context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
+	return m.replicaSets.toProto(), nil
 }
 
 // StartComponent implements the clients.ManagerClient interface.
-func (m *mockManagerClient) StartComponent(context.Context, *protos.ComponentToStart) error {
-	panic("implement me")
-}
-
-// StartColocationGroup implements the clients.ManagerClient interface.
-func (m *mockManagerClient) StartColocationGroup(context.Context, *nanny.ColocationGroupStartRequest) error {
+func (m *mockManagerClient) ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error {
 	panic("implement me")
 }
 
 // RegisterReplica implements the clients.ManagerClient interface.
-func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.ReplicaToRegister) error {
+func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error {
 	panic("implement me")
 }
 
 // ReportLoad implements the clients.ManagerClient interface.
-func (m *mockManagerClient) ReportLoad(context.Context, *protos.WeaveletLoadReport) error {
+func (m *mockManagerClient) ReportLoad(context.Context, *nanny.LoadReport) error {
 	panic("implement me")
 }
 
 // GetListenerAddress implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
+func (m *mockManagerClient) GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
 	panic("implement me")
 }
 
@@ -1568,12 +1559,12 @@ func (m *mockManagerClient) ExportListener(context.Context, *nanny.ExportListene
 }
 
 // GetRoutingInfo implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetRoutingInfo(context.Context, *protos.GetRoutingInfo) (*protos.RoutingInfo, error) {
+func (m *mockManagerClient) GetRoutingInfo(context.Context, *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
 	panic("implement me")
 }
 
 // GetComponentsToStart implements the clients.ManagerClient interface.
-func (m *mockManagerClient) GetComponentsToStart(context.Context, *protos.GetComponentsToStart) (*protos.ComponentsToStart, error) {
+func (m *mockManagerClient) GetComponentsToStart(context.Context, *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error) {
 	panic("implement me")
 }
 
@@ -1587,19 +1578,19 @@ type mockBabysitterClient struct {
 var _ clients.BabysitterClient = mockBabysitterClient{}
 
 // RunProfiling implements the clients.BabysitterClient interface.
-func (b mockBabysitterClient) RunProfiling(_ context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
+func (b mockBabysitterClient) RunProfiling(_ context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
 	if b.prof == nil {
-		return nil, fmt.Errorf("no profile found for version %q", req.VersionId)
+		return nil, fmt.Errorf("no profile found")
 	}
 
 	var buf bytes.Buffer
 	if err := b.prof.Write(&buf); err != nil {
 		return nil, err
 	}
-	return &protos.Profile{Data: buf.Bytes()}, nil
+	return &protos.GetProfileReply{Data: buf.Bytes()}, nil
 }
 
 // CheckHealth implements the clients.BabysitterClient interface.
-func (b mockBabysitterClient) CheckHealth(context.Context, *clients.HealthCheck) (*protos.HealthReport, error) {
+func (b mockBabysitterClient) CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
 	panic("implement me")
 }

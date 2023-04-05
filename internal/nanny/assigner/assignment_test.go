@@ -18,10 +18,10 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"google.golang.org/protobuf/testing/protocmp"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 func TestAssignmentFromProto(t *testing.T) {
@@ -33,27 +33,18 @@ func TestAssignmentFromProto(t *testing.T) {
 		{
 			name: "empty_assignment",
 			proto: &protos.Assignment{
-				App:          "app",
-				DeploymentId: "v1",
-				Component:    "component",
-				Version:      42,
+				Version: 42,
 			},
 			want: &Assignment{
-				App:          "app",
-				DeploymentId: "v1",
-				Component:    "component",
-				Version:      42,
-				Constraints:  &AlgoConstraints{},
-				Stats:        &Statistics{},
+				Version:     42,
+				Constraints: &AlgoConstraints{},
+				Stats:       &Statistics{},
 			},
 		},
 		{
 			name: "simple_assignment",
 			proto: &protos.Assignment{
-				App:          "app",
-				DeploymentId: "v1",
-				Component:    "component",
-				Version:      42,
+				Version: 42,
 				Slices: []*protos.Assignment_Slice{
 					{
 						Start:    minSliceKey,
@@ -66,10 +57,7 @@ func TestAssignmentFromProto(t *testing.T) {
 				},
 			},
 			want: &Assignment{
-				App:          "app",
-				DeploymentId: "v1",
-				Component:    "component",
-				Version:      42,
+				Version: 42,
 				Slices: []*Slice{
 					{
 						StartInclusive: &SliceKey{Val: minSliceKey},
@@ -325,8 +313,8 @@ func TestAssignmentUpdateLoad(t *testing.T) {
 	}
 
 	// Add a load report for Slice{StartInclusive: MinSliceKey, EndExclusive: 1000}
-	report := &protos.WeaveletLoadReport_ComponentLoad{
-		Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+	report := &protos.LoadReport_ComponentLoad{
+		Load: []*protos.LoadReport_SliceLoad{
 			{
 				Start: minSliceKey,
 				End:   1000,
@@ -342,8 +330,8 @@ func TestAssignmentUpdateLoad(t *testing.T) {
 
 	// Add a load report for Slice{StartInclusive: 1000, EndExclusive: MaxSliceKey}
 	// on resource1.
-	report = &protos.WeaveletLoadReport_ComponentLoad{
-		Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+	report = &protos.LoadReport_ComponentLoad{
+		Load: []*protos.LoadReport_SliceLoad{
 			{
 				Start: 1000,
 				End:   maxSliceKey,
@@ -355,8 +343,8 @@ func TestAssignmentUpdateLoad(t *testing.T) {
 
 	// Add a load report for Slice{StartInclusive: 1000, EndExclusive: MaxSliceKey}
 	// on resource2.
-	report = &protos.WeaveletLoadReport_ComponentLoad{
-		Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+	report = &protos.LoadReport_ComponentLoad{
+		Load: []*protos.LoadReport_SliceLoad{
 			{
 				Start: 1000,
 				End:   maxSliceKey,

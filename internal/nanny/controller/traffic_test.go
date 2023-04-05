@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
+	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
+	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	config "github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
-	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 func TestProjectedTraffic(t *testing.T) {
@@ -82,7 +82,7 @@ func TestProjectedTraffic(t *testing.T) {
 			AppName:         "app",
 			VersionId:       version,
 			TrafficFraction: fraction,
-			Listener:        &protos.Listener{Name: "app"},
+			Listener:        &nanny.Listener{Name: "app"},
 		}
 	}
 

@@ -30,13 +30,12 @@ import (
 
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
+	"github.com/ServiceWeaver/weaver/runtime/profiling"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"golang.org/x/exp/slog"
 )
 
 // A distributor oversees all of the deployments in a single location (e.g., a
@@ -114,7 +113,7 @@ type Distributor struct {
 	// See tg/1461148 for more discussion.
 	ctx                   context.Context
 	store                 store.Store
-	logger                *logging.FuncLogger
+	logger                *slog.Logger
 	manager               clients.ManagerClient
 	region                string
 	babysitterConstructor func(addr string) clients.BabysitterClient
@@ -131,7 +130,7 @@ type Distributor struct {
 	applyTraffic func(context.Context, *nanny.TrafficAssignment) error
 
 	// Retrieves application version's network listeners.
-	getListeners func(context.Context, *config.GKEConfig) ([]*protos.Listener, error)
+	getListeners func(context.Context, *config.GKEConfig) ([]*nanny.Listener, error)
 
 	// Aggregates the counts for the given counter metric, grouping them by the
 	// given set of labels.
@@ -145,7 +144,7 @@ var _ clients.DistributorClient = &Distributor{}
 func Start(ctx context.Context,
 	mux *http.ServeMux,
 	store store.Store,
-	logger *logging.FuncLogger,
+	logger *slog.Logger,
 	manager clients.ManagerClient,
 	region string,
 	babysitterConstructor func(addr string) clients.BabysitterClient,
@@ -154,7 +153,7 @@ func Start(ctx context.Context,
 	applyTrafficInterval time.Duration, // disabled if 0
 	detectAppliedTrafficInterval time.Duration, // disabled if 0
 	applyTraffic func(context.Context, *nanny.TrafficAssignment) error,
-	getListeners func(context.Context, *config.GKEConfig) ([]*protos.Listener, error),
+	getListeners func(context.Context, *config.GKEConfig) ([]*nanny.Listener, error),
 	getMetricCounts func(context.Context, string, ...string) ([]MetricCount, error),
 ) (*Distributor, error) {
 	// Create and return the distributor.
@@ -216,21 +215,21 @@ func (d *Distributor) handleCleanup(ctx context.Context, req *nanny.ApplicationC
 }
 
 // handleProfile is the handler for the ProfileURL endpoint.
-func (d *Distributor) handleRunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
+func (d *Distributor) handleRunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	d.logger.Info("Profiling", "version", req.VersionId, "application", req.AppName)
 	prof, err := d.RunProfiling(ctx, req)
-	if err != nil {
+	if prof == nil {
 		d.logger.Error("Cannot profile", err, "version", req.VersionId, "application", req.AppName)
 		return nil, err
 	}
 	if len(prof.Data) == 0 {
 		d.logger.Info("Empty profile", "version", req.VersionId, "application", req.AppName)
-	} else if len(prof.Errors) > 0 {
-		d.logger.Info("Partial profile", "version", req.VersionId, "application", req.AppName, "err", errlist.FromStrings(prof.Errors))
+	} else if err != nil {
+		d.logger.Error("Partial profile", err, "version", req.VersionId, "application", req.AppName)
 	} else {
 		d.logger.Info("Successfully profiled", "version", req.VersionId, "application", req.AppName)
 	}
-	return prof, nil
+	return prof, err
 }
 
 // Distribute registers the provided versions for distribution and also tries
@@ -436,7 +435,7 @@ func (d *Distributor) GetApplicationState(ctx context.Context, req *nanny.Applic
 				RolloutCompleted:           nanny.Done(v.Schedule),
 				LastTrafficFractionApplied: nanny.Fraction(v.Schedule),
 				IsDeployed:                 v.Status != AppVersionState_STARTING,
-				Groups:                     v.Groups,
+				ReplicaSets:                v.ReplicaSets,
 			})
 	}
 
@@ -492,34 +491,40 @@ func (d *Distributor) getTrafficAssignment(ctx context.Context, public bool) (*n
 
 // RunProfiling profiles a sample of the application version's replicas and
 // computes a representative profile for the application version.
-func (d *Distributor) RunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
-	// Get the group information for the given application version.
-	states, err := d.manager.GetGroupState(ctx, &nanny.GroupStateRequest{
+func (d *Distributor) RunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
+	// Get the ReplicaSet information for the given application version.
+	states, err := d.manager.GetReplicaSetState(ctx, &nanny.GetReplicaSetStateRequest{
 		AppName:   req.AppName,
 		VersionId: req.VersionId,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("cannot get group replica states for version %q of application %q: %w", req.AppName, req.VersionId, err)
+		return nil, fmt.Errorf("cannot get ReplicaSet states for version %q of application %q: %w", req.AppName, req.VersionId, err)
 	}
 
-	// Get the groups we want to profile.
-	groups := make([][]func() (*protos.Profile, error), len(states.Groups))
-	for _, g := range states.Groups {
-		// Compute a randomly ordered list of healthy replicas.
-		group := make([]func() (*protos.Profile, error), 0, len(g.Replicas))
-		for _, idx := range rand.Perm(len(g.Replicas)) {
-			if g.Replicas[idx].HealthStatus != protos.HealthStatus_HEALTHY {
+	groups := make([][]func() ([]byte, error), 0, len(states.ReplicaSets))
+	for _, g := range states.ReplicaSets {
+		// Compute a randomly ordered list of healthy babysitters.
+		group := make([]func() ([]byte, error), 0, len(g.Pods))
+		for _, idx := range rand.Perm(len(g.Pods)) {
+			if g.Pods[idx].HealthStatus != protos.HealthStatus_HEALTHY {
 				continue
 			}
-			replica := g.Replicas[idx].BabysitterAddr
-			group = append(group, func() (*protos.Profile, error) {
-				preq := protomsg.Clone(req)
-				preq.Group = g.Name
-				babysitter := d.babysitterConstructor(replica)
-				return babysitter.RunProfiling(ctx, preq)
+			addr := g.Pods[idx].BabysitterAddr
+			group = append(group, func() ([]byte, error) {
+				preq := &protos.GetProfileRequest{
+					ProfileType:   req.ProfileType,
+					CpuDurationNs: req.CpuDurationNs,
+				}
+				babysitter := d.babysitterConstructor(addr)
+				preply, err := babysitter.RunProfiling(ctx, preq)
+				if err != nil {
+					return nil, err
+				}
+				return preply.Data, nil
 			})
 		}
 		groups = append(groups, group)
 	}
-	return tool.ProfileGroups(groups)
+	data, err := profiling.ProfileGroups(groups)
+	return &protos.GetProfileReply{Data: data}, err
 }

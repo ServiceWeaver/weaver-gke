@@ -29,9 +29,8 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slog"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
 	gproto "google.golang.org/protobuf/proto"
 	appsv1 "k8s.io/api/apps/v1"
@@ -83,7 +82,7 @@ const (
 	deploymentIDKey = "serviceweaver/deployment_id"
 
 	// Key in external Service's annotations map that correspond to the listener
-	// information for that service.
+	// for that service.
 	serviceListenerKey = "serviceweaver/listener"
 
 	// Name for the Service Weaver created external Gateways.
@@ -124,9 +123,10 @@ const (
 	// stored. For internal use by Service Weaver infrastructure.
 	configEnvKey = "SERVICEWEAVER_INTERNAL_CONFIG"
 
-	// colocationGroupEnvKey is the environment variable under which a
-	// ColocationGroup is stored. For internal use by Service Weaver infrastructure.
-	colocationGroupEnvKey = "SERVICEWEAVER_INTERNAL_COLOCATION_GROUP"
+	// replicaSetEnvKey is the environment variable under which a name
+	// of the ReplicaSet is stored. For internal use by Service Weaver
+	// infrastructure.
+	replicaSetEnvKey = "SERVICEWEAVER_INTERNAL_REPLICA_SET"
 
 	// containerMetadataEnvKey is the environment variable under which a
 	// partial ContainerMetadata is stored. The node_name and pod_name fields
@@ -194,13 +194,13 @@ func podExists(ctx context.Context, cluster *ClusterInfo, name string) (bool, er
 	return true, err
 }
 
-// deploy deploys the Service Weaver colocation group in the given cluster.
-func deploy(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
-	if err := ensureColocGroupDeployment(ctx, cluster, logger, cfg, group); err != nil {
+// deploy deploys the Kubernetes ReplicaSet in the given cluster.
+func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, group string) error {
+	if err := ensureReplicaSet(ctx, cluster, logger, cfg, group); err != nil {
 		return err
 	}
 
-	if group.Name == "main" {
+	if group == "main" {
 		// Allocate a temporary spare CPU capacity so that the application
 		// version starts faster.
 		//
@@ -219,14 +219,14 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogge
 		}
 	}
 
-	// Setup an autoscaler for the colocation group.
-	return ensureColocGroupAutoscaler(ctx, cluster, logger, cfg, group)
+	// Setup an autoscaler for the ReplicaSet.
+	return ensureReplicaSetAutoscaler(ctx, cluster, logger, cfg, group)
 }
 
 // stop stops any resources (e.g., Deployments, Jobs) that belong to the
 // provided application version, by setting the resource values to their
 // minimum allowed value (e.g., zero replicas for a Deployment/Job).
-func stop(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, app, version string) error {
+func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, version string) error {
 	// NOTE(mwhittaker): There is a race between starting and stopping jobs for
 	// an application version. It is possible that we stop all running jobs and
 	// then we launch a new job. This is not ideal but it doesn't break
@@ -256,7 +256,7 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger,
 		return fmt.Errorf("get listeners for %q: %w", version, err)
 	}
 	for _, lis := range listeners {
-		if err := deleteListenerService(ctx, cluster, app, version, lis); err != nil && !errors.IsNotFound(err) {
+		if err := deleteListenerService(ctx, cluster, app, version, lis.Name); err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("delete %v for %q: %w", lis, version, err)
 		}
 	}
@@ -331,10 +331,10 @@ func Store(cluster *ClusterInfo) store.Store {
 	return newKubeStore(cluster.Clientset.CoreV1().ConfigMaps(namespaceName))
 }
 
-func ensureColocGroupDeployment(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
+func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
 	dep := cfg.Deployment
-	name := name{dep.App.Name, group.Name, dep.Id[:8]}.DNSLabel()
-	container, err := colocGroupContainer(name, cluster, cfg, group)
+	name := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
+	container, err := appContainer(name, cluster, cfg, replicaSet)
 	if err != nil {
 		return err
 	}
@@ -412,11 +412,11 @@ var autoJSONTmpl = template.Must(template.New("auto").Parse(`{
 	}
 }}`))
 
-// ensureColocGroupAutoscaler ensures that a multidimensional pod autoscaler is
-// configured for the given colocation group.
-func ensureColocGroupAutoscaler(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup) error {
+// ensureReplicaSetAutoscaler ensures that a multidimensional pod autoscaler is
+// configured for the given Kubernetes ReplicaSet.
+func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
 	dep := cfg.Deployment
-	name := name{dep.App.Name, group.Name, dep.Id[:8]}.DNSLabel()
+	name := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	var b strings.Builder
 	if err := autoJSONTmpl.Execute(&b, struct {
 		Name             string
@@ -442,12 +442,8 @@ func ensureColocGroupAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 	return patchMultidimPodAutoscaler(ctx, cluster, patchOptions{logger: logger}, b.String())
 }
 
-func colocGroupContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig, group *protos.ColocationGroup) (v1.Container, error) {
+func appContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig, replicaSet string) (v1.Container, error) {
 	cfgStr, err := proto.ToEnv(cfg)
-	if err != nil {
-		return v1.Container{}, err
-	}
-	groupStr, err := proto.ToEnv(group)
 	if err != nil {
 		return v1.Container{}, err
 	}
@@ -468,7 +464,7 @@ func colocGroupContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig
 	env := []v1.EnvVar{
 		// These environment variables are read by a Service Weaver binary.
 		{Name: configEnvKey, Value: cfgStr},
-		{Name: colocationGroupEnvKey, Value: groupStr},
+		{Name: replicaSetEnvKey, Value: replicaSet},
 
 		// These environment variables are read by the babysitter binary.
 		{Name: containerMetadataEnvKey, Value: metaStr},
@@ -521,7 +517,7 @@ var serviceExportTmpl = template.Must(template.New("se").Parse(`{
 
 // ensureListenerService ensures that a service that exposes the given network
 // listener is running in the given cluster.
-func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, group *protos.ColocationGroup, lis *protos.Listener) error {
+func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string, lis *nanny.Listener) error {
 	_, portStr, err := net.SplitHostPort(lis.Addr)
 	if err != nil {
 		return fmt.Errorf("invalid listener address %v: %w", lis.Addr, err)
@@ -536,7 +532,7 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *lo
 		return fmt.Errorf("internal error: error encoding listener %+v: %w", lis, err)
 	}
 	svcName := name{cluster.Region, dep.App.Name, lis.Name, dep.Id[:8]}.DNSLabel()
-	targetName := name{dep.App.Name, group.Name, dep.Id[:8]}.DNSSubdomain()
+	targetName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSSubdomain()
 	if err := patchService(ctx, cluster, patchOptions{logger: logger}, &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      svcName,
@@ -592,8 +588,8 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *lo
 
 // deleteListenerService deletes the service that exposes the given network
 // listener.
-func deleteListenerService(ctx context.Context, cluster *ClusterInfo, app, version string, lis *protos.Listener) error {
-	name := name{cluster.Region, app, lis.Name, version[:8]}.DNSLabel()
+func deleteListenerService(ctx context.Context, cluster *ClusterInfo, app, version string, lis string) error {
+	name := name{cluster.Region, app, lis, version[:8]}.DNSLabel()
 	if err := cluster.Clientset.CoreV1().Services(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
 		return err
 	}
@@ -609,7 +605,7 @@ func deleteListenerService(ctx context.Context, cluster *ClusterInfo, app, versi
 
 // getListeners returns the list of all network listeners created by the
 // given application deployment.
-func getListeners(ctx context.Context, clientset *kubernetes.Clientset, app, version string) ([]*protos.Listener, error) {
+func getListeners(ctx context.Context, clientset *kubernetes.Clientset, app, version string) ([]*nanny.Listener, error) {
 	cli := clientset.CoreV1().Services(namespaceName)
 	opts := metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set{
@@ -621,13 +617,13 @@ func getListeners(ctx context.Context, clientset *kubernetes.Clientset, app, ver
 	if err != nil {
 		return nil, err
 	}
-	listeners := make([]*protos.Listener, 0, len(svcs.Items))
+	listeners := make([]*nanny.Listener, 0, len(svcs.Items))
 	for _, svc := range svcs.Items {
 		enc, ok := svc.ObjectMeta.Annotations[serviceListenerKey]
 		if !ok {
 			continue
 		}
-		listener := &protos.Listener{}
+		listener := &nanny.Listener{}
 		if err := protoValueDecode(enc, listener); err != nil {
 			return nil, fmt.Errorf(
 				"internal error: error decoding listener for service %q: %w",
@@ -641,7 +637,7 @@ func getListeners(ctx context.Context, clientset *kubernetes.Clientset, app, ver
 // updateGlobalExternalTrafficRoutes updates the traffic routing rules for the
 // global external gateway in the given (config) cluster, using the provided
 // traffic assignments.
-func updateGlobalExternalTrafficRoutes(ctx context.Context, logger *logging.FuncLogger, cluster *ClusterInfo, assignment *nanny.TrafficAssignment) error {
+func updateGlobalExternalTrafficRoutes(ctx context.Context, logger *slog.Logger, cluster *ClusterInfo, assignment *nanny.TrafficAssignment) error {
 	if err := sanitizeGlobalTrafficRoutes(ctx, cluster, logger, assignment); err != nil {
 		return err
 	}
@@ -659,7 +655,7 @@ func updateGlobalExternalTrafficRoutes(ctx context.Context, logger *logging.Func
 // sanitizeGlobalTrafficRoutes ensures that all traffic routes in the given
 // assignment are ready to receive traffic, removing them from the assignment
 // if they are not.
-func sanitizeGlobalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, assignment *nanny.TrafficAssignment) error {
+func sanitizeGlobalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, assignment *nanny.TrafficAssignment) error {
 	// For each route that appears in the traffic assignments, perform the
 	// following tasks:
 	//   (1) Check if the corresponding ServiceImport resource has been
@@ -733,7 +729,7 @@ func sanitizeGlobalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logg
 // UpdateRegionalInternalTrafficRoutes updates the traffic routing rules for the
 // internal regional gateway in the given cluster, using the provided traffic
 // assignments.
-func updateRegionalInternalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, assignment *nanny.TrafficAssignment) error {
+func updateRegionalInternalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, assignment *nanny.TrafficAssignment) error {
 	return updateTrafficRoutes(ctx, cluster, logger, trafficUpdateSpec{
 		isGlobal:   false,
 		assignment: assignment,
@@ -747,7 +743,7 @@ type trafficUpdateSpec struct {
 
 // updateTrafficRoutes updates the traffic routing rules for the gateway,
 // using the provided traffic assignments.
-func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, spec trafficUpdateSpec) error {
+func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, spec trafficUpdateSpec) error {
 	gatewayName := internalGatewayName
 	if spec.isGlobal {
 		gatewayName = externalGatewayName
@@ -855,7 +851,7 @@ func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *logg
 // updateGlobalExternalGateway updates the global external gateway in the
 // given (config) cluster, setting up the certificates corresponding to the
 // hostnames in the given traffic assignment, if necessary.
-func updateGlobalExternalGateway(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, assignment *nanny.TrafficAssignment) error {
+func updateGlobalExternalGateway(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, assignment *nanny.TrafficAssignment) error {
 	hosts := maps.Keys(assignment.HostAssignment)
 	if len(hosts) == 0 {
 		// Append a noop host; this host will never receive any traffic but
@@ -955,7 +951,7 @@ func computeTrafficBackends(isGlobal bool, cluster *ClusterInfo, allocations []*
 
 // ensureSSLCertificate ensures that a Google-managed SSL certificate for the
 // given application hostname has been created.
-func ensureSSLCertificate(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, host string) (string, error) {
+func ensureSSLCertificate(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, host string) (string, error) {
 	certName := name{"serviceweaver", host}.DNSLabel()
 	if err := patchSSLCertificate(ctx, cluster.CloudConfig, patchOptions{logger: logger}, &computepb.SslCertificate{
 		Name: &certName,
@@ -975,7 +971,7 @@ func ensureSSLCertificate(ctx context.Context, cluster *ClusterInfo, logger *log
 // capacity is available to the given application version in the given cluster
 // for the given duration [1].
 // [1]: https://wdenniss.com/autopilot-capacity-reservation
-func ensureTemporarySpareCapacity(ctx context.Context, cluster *ClusterInfo, logger *logging.FuncLogger, cfg *config.GKEConfig, cpu resource.Quantity, duration time.Duration) error {
+func ensureTemporarySpareCapacity(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, cpu resource.Quantity, duration time.Duration) error {
 	dep := cfg.Deployment
 	name := name{tempSpareCapacityJobPrefix, dep.App.Name, dep.Id[:8]}.DNSLabel()
 

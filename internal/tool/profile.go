@@ -24,17 +24,18 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/google/pprof/profile"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"github.com/google/pprof/profile"
 )
 
 type ProfileSpec struct {
 	Tool       string        // e.g., weaver-gke, weaver-gke-local
 	Flags      *flag.FlagSet // command line flags
-	GetProfile func(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error)
+	GetProfile func(ctx context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error)
 
 	// Controller returns the HTTP address of the controller and an HTTP client
 	// that can be used to contact the controller.
@@ -87,7 +88,7 @@ func (p *ProfileSpec) profileFn(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	req := &protos.RunProfiling{
+	req := &nanny.GetProfileRequest{
 		AppName:   app,
 		VersionId: p.version,
 	}
@@ -102,7 +103,7 @@ func (p *ProfileSpec) profileFn(ctx context.Context, args []string) error {
 	}
 
 	// Start the profile request.
-	reply := &protos.Profile{}
+	reply := &protos.GetProfileReply{}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -123,17 +124,14 @@ func (p *ProfileSpec) profileFn(ctx context.Context, args []string) error {
 		<-done
 	}
 
-	if err != nil {
-		return fmt.Errorf("cannot create profile: %w", err)
-	}
 	if len(reply.Data) == 0 {
-		if len(reply.Errors) == 0 {
+		if err == nil {
 			return fmt.Errorf("empty profile data")
 		}
 		// NOTE: This branch should never be taken.
-		return fmt.Errorf("cannot create profile: %v", reply.Errors)
-	} else if len(reply.Errors) > 0 {
-		fmt.Fprintln(os.Stderr, "Partial profile data received: the profile may not be accurate. Errors:", reply.Errors)
+		return fmt.Errorf("cannot create profile: %v", err)
+	} else if err != nil {
+		fmt.Fprintln(os.Stderr, "Partial profile data received: the profile may not be accurate. Error:", err)
 	}
 	prof, err := profile.ParseData(reply.Data)
 	if err != nil {
@@ -141,7 +139,7 @@ func (p *ProfileSpec) profileFn(ctx context.Context, args []string) error {
 	}
 
 	// Save the profile in a file.
-	name := fmt.Sprintf("serviceweaver_%s_%s_profile_*.pb.gz", reply.AppName, p.typ)
+	name := fmt.Sprintf("serviceweaver_%s_%s_profile_*.pb.gz", app, p.typ)
 	f, err := os.CreateTemp(os.TempDir(), name)
 	if err != nil {
 		return fmt.Errorf("saving profile: %w", err)

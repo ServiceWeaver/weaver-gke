@@ -17,12 +17,12 @@ package gke
 import (
 	"context"
 
+	"github.com/ServiceWeaver/weaver/runtime/retry"
+	"golang.org/x/exp/slog"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 )
 
 // kubeModifier performs a read-modify-write operation on a Kubernetes
@@ -34,7 +34,7 @@ import (
 type kubeModifier struct {
 	cluster *ClusterInfo // Cluster the resource is being modified ins.
 	desc    string       // Description of the resource being modified.
-	logger  *logging.FuncLogger
+	logger  *slog.Logger
 
 	// Reads the current value of the resource.
 	read func(context.Context) (metav1.Object, error)
@@ -107,7 +107,7 @@ func (m kubeModifier) Run(ctx context.Context, name string) error {
 // written back to the cluster. If this write fails or if the value has been
 // mutated in the meantime, the entire read-modify-write cycle is performed
 // again.
-func modifyServiceImport(ctx context.Context, logger *logging.FuncLogger, cluster *ClusterInfo, name string, fn func(*unstructured.Unstructured) bool) error {
+func modifyServiceImport(ctx context.Context, logger *slog.Logger, cluster *ClusterInfo, name string, fn func(*unstructured.Unstructured) bool) error {
 	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
 		Group:    "net.gke.io",
 		Version:  "v1",

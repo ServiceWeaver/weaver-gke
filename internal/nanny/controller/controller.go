@@ -19,24 +19,21 @@
 package controller
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net/http"
 	"sort"
-	"sync"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
-	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
+	"github.com/ServiceWeaver/weaver/runtime/profiling"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/google/pprof/profile"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slog"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
@@ -78,7 +75,7 @@ type controller struct {
 	// TODO(mwhittaker): See the comment on distributor.ctx.
 	ctx              context.Context
 	store            store.Store
-	logger           *logging.FuncLogger
+	logger           *slog.Logger
 	rolloutProcessor rolloutProcessor
 	actuationDelay   time.Duration
 	distributor      func(addr string) clients.DistributorClient
@@ -89,7 +86,7 @@ type controller struct {
 func Start(ctx context.Context,
 	mux *http.ServeMux,
 	store store.Store,
-	logger *logging.FuncLogger,
+	logger *slog.Logger,
 	actuationDelay time.Duration,
 	distributor func(addr string) clients.DistributorClient,
 	fetchAssignmentsInterval time.Duration,
@@ -143,7 +140,7 @@ func (c *controller) handleKill(ctx context.Context, req *KillRequest) error {
 }
 
 // handleRunProfiling is the handler for the RunProfilingURL endpoint.
-func (c *controller) handleRunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
+func (c *controller) handleRunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	// Load the application state.
 	state, version, err := c.loadAppState(ctx, req.AppName)
 	if err != nil {
@@ -173,14 +170,14 @@ func (c *controller) handleRunProfiling(ctx context.Context, req *protos.RunProf
 
 	c.logger.Info("Profiling", "version", req.VersionId, "application", req.AppName)
 	prof, err := c.runProfiling(ctx, versionState, req)
-	if err != nil {
+	if prof == nil {
 		c.logger.Error("Cannot profile", err, "version", req.VersionId, "application", req.AppName)
 		return nil, err
 	}
 	if len(prof.Data) == 0 {
 		c.logger.Info("Empty profile", "version", req.VersionId, "application", req.AppName)
-	} else if len(prof.Errors) > 0 {
-		c.logger.Error("Partial profile", errlist.FromStrings(prof.Errors), "version", req.VersionId, "application", req.AppName)
+	} else if err != nil {
+		c.logger.Error("Partial profile", err, "version", req.VersionId, "application", req.AppName)
 	} else {
 		c.logger.Info("Successfully profiled", "version", req.VersionId, "application", req.AppName)
 	}
@@ -436,7 +433,6 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 		SubmissionId:   versionState.SubmissionId,
 		SubmissionTime: versionState.SubmissionTime,
 		GkeConfig:      versionState.Config,
-		Config:         versionState.Config.Deployment.App,
 	}
 
 	statuses := map[AppVersionDistributorStatus]int{}
@@ -466,36 +462,36 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 		}
 		return ""
 	}
-	var groups []*GroupStatus
+	var groups []*ReplicaSetStatus
 	listeners := map[string]*ListenerStatus{}
 	for loc, d := range versionState.Distributors {
-		if d.Groups == nil {
+		if d.ReplicaSets == nil {
 			continue
 		}
-		for _, group := range d.Groups.Groups {
+		for _, group := range d.ReplicaSets.ReplicaSets {
 			var numHealthyReplicas int
-			for _, r := range group.Replicas {
-				if r.HealthStatus == protos.HealthStatus_HEALTHY {
+			for _, pod := range group.Pods {
+				if pod.HealthStatus == protos.HealthStatus_HEALTHY {
 					numHealthyReplicas++
 				}
 			}
 			for _, l := range group.Listeners {
 				var hostname string
 				var public bool
-				if hostname = getPublicHostname(l.Name); hostname != "" {
+				if hostname = getPublicHostname(l); hostname != "" {
 					public = true
 				} else {
 					public = false
-					hostname = fmt.Sprintf("%s.%s.%s", l.Name, loc, distributor.InternalDNSDomain)
+					hostname = fmt.Sprintf("%s.%s.%s", l, loc, distributor.InternalDNSDomain)
 				}
-				ls := listeners[l.Name]
+				ls := listeners[l]
 				if ls == nil {
 					ls = &ListenerStatus{
-						Name:     l.Name,
+						Name:     l,
 						Public:   public,
 						Hostname: []string{hostname},
 					}
-					listeners[l.Name] = ls
+					listeners[l] = ls
 					continue
 				}
 				if !public {
@@ -503,21 +499,21 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 				}
 
 			}
-			groups = append(groups, &GroupStatus{
+			groups = append(groups, &ReplicaSetStatus{
 				Name:            group.Name,
 				Location:        loc,
 				HealthyReplicas: int64(numHealthyReplicas),
-				TotalReplicas:   int64(len(group.Replicas)),
+				TotalReplicas:   int64(len(group.Pods)),
 				Components:      group.Components,
 			})
 		}
 	}
-	status.Groups = groups
+	status.ReplicaSets = groups
 	status.Listeners = maps.Values(listeners)
 	return status
 }
 
-func (c *controller) runProfiling(ctx context.Context, v *AppVersionState, req *protos.RunProfiling) (*protos.Profile, error) {
+func (c *controller) runProfiling(ctx context.Context, v *AppVersionState, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	// NOTE: For now, profile in all the location the application is being
 	// rolled out to. In the future, we may want to pick only one, but we also
 	// have to make sure this location is receiving traffic.
@@ -535,78 +531,20 @@ func (c *controller) runProfiling(ctx context.Context, v *AppVersionState, req *
 		addrs = append(addrs, addr)
 	}
 
-	type distributorState struct {
-		d       clients.DistributorClient
-		profile *profile.Profile
-		errs    []string
-	}
-	states := make([]*distributorState, len(addrs))
-	for i, addr := range addrs {
-		states[i] = &distributorState{d: c.distributor(addr)}
-	}
-
-	// Fetch profiles from all the distributors.
-	var wait sync.WaitGroup
-	wait.Add(len(states))
-	for _, state := range states {
-		state := state
-		go func() {
-			defer wait.Done()
-			p, err := state.d.RunProfiling(ctx, req)
-			if err != nil {
-				state.errs = append(state.errs, err.Error())
-				return
+	groups := make([][]func() ([]byte, error), 0, len(addrs))
+	for _, addr := range addrs {
+		d := c.distributor(addr)
+		group := []func() ([]byte, error){func() ([]byte, error) {
+			p, err := d.RunProfiling(ctx, req)
+			if p != nil {
+				return p.Data, err
 			}
-			state.errs = append(state.errs, p.Errors...)
-			if len(p.Data) == 0 {
-				return
-			}
-			prof, err := profile.ParseData(p.Data)
-			if err != nil {
-				state.errs = append(state.errs, err.Error())
-				return
-			}
-			state.profile = prof
-		}()
-	}
-	wait.Wait()
-
-	// Collect all of the non-nil profiles and errors from all groups.
-	var profs []*profile.Profile
-	var errs []string
-	for _, state := range states {
-		errs = append(errs, state.errs...)
-		if state.profile != nil {
-			profs = append(profs, state.profile)
-		}
-	}
-
-	if len(profs) == 0 && len(errs) > 0 {
-		// No profile data but have errors: that's an error.
-		return nil, fmt.Errorf("error collecting profile: %v", errs)
-	}
-
-	// Fill the final merged profile.
-	final := &protos.Profile{
-		AppName:   req.AppName,
-		VersionId: req.VersionId,
-		Errors:    errs,
-	}
-	if len(profs) > 0 {
-		merged := profs[0]
-		if len(profs) > 1 {
-			var err error
-			if merged, err = profile.Merge(profs); err != nil {
-				return nil, err
-			}
-		}
-		var buf bytes.Buffer
-		if err := merged.Write(&buf); err != nil {
 			return nil, err
-		}
-		final.Data = buf.Bytes()
+		}}
+		groups = append(groups, group)
 	}
-	return final, nil
+	data, err := profiling.ProfileGroups(groups)
+	return &protos.GetProfileReply{Data: data}, err
 }
 
 // traffic returns the current global traffic assignment.
@@ -644,7 +582,7 @@ func (c *controller) traffic(ctx context.Context) (*nanny.TrafficAssignment, err
 // than at the granularity of a hostname.
 func projectedTraffic(app string, versions map[string]*AppVersionState, at time.Time) (*nanny.TrafficAssignment, error) {
 	// See the comment above the application.traffic method.
-	listeners := map[string][]*protos.Listener{app: {{Name: app}}}
+	listeners := map[string][]*nanny.Listener{app: {{Name: app}}}
 
 	// Get a list of versions in submission id order.
 	var vs []*AppVersionState

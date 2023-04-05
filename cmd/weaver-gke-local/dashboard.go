@@ -41,7 +41,7 @@ var dashboardSpec = tool.DashboardSpec{
 		if err != nil {
 			return err
 		}
-		mux.Handle("/metrics", local.NewPrometheusHandler(metricDB, &logger))
+		mux.Handle("/metrics", local.NewPrometheusHandler(metricDB, logger))
 
 		// Start a separate Perfetto server, which has to run on
 		// a specific port.

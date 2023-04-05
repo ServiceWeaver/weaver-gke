@@ -20,7 +20,6 @@ package distributor;
 import "google/protobuf/timestamp.proto";
 import "internal/config/config.proto";
 import "internal/nanny/nanny.proto";
-import "runtime/protos/runtime.proto";
 
 // AppState contains the state managed for an application by the distributor.
 message AppState {
@@ -44,11 +43,11 @@ message AppVersionState {
   // was submitted for rollout.
   int64 order = 3;
 
-  // All known groups for this application version.
-  nanny.GroupState groups = 4;
+  // All known Kubernetes ReplicaSets for this application version.
+  nanny.ReplicaSetState replica_sets = 4;
 
   // All known listeners for this application version.
-  repeated runtime.Listener listeners = 7;
+  repeated nanny.Listener listeners = 7;
 
   enum Status {
     STARTING = 0;  // should be started

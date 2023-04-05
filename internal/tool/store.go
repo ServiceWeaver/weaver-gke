@@ -22,11 +22,11 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ServiceWeaver/weaver-gke/internal/bench"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"github.com/google/uuid"
 )
 
 type StoreSpec struct {
@@ -190,7 +190,7 @@ func benchmark(ctx context.Context, makeStore func(context.Context) (store.Store
 		ValueSize:    500,
 		ReadFraction: 0.5,
 		Duration:     10 * time.Second,
-		Logger:       &logger,
+		Logger:       logger,
 		Parallelism:  4,
 	}
 	logger.Debug(fmt.Sprintf("NumKeys      : %d", config.NumKeys))

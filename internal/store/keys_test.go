@@ -46,9 +46,9 @@ func TestKeys(t *testing.T) {
 			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/key",
 		},
 		{
-			name: "Process",
-			got:  ProcessKey("collatz", id, "OddEven", "key"),
-			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/process/OddEven/key",
+			name: "ReplicaSet",
+			got:  ReplicaSetKey("collatz", id, "OddEven", "key"),
+			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/replica_set/OddEven/key",
 		},
 	}
 

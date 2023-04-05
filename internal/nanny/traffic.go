@@ -18,18 +18,17 @@ import (
 	"fmt"
 
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
-	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 // CascadeTarget encapsulates the traffic specific information about a version
 // of a Service Weaver app. Typically, you create one CascadeTarget for every version of
 // your app and then call CascadeTraffic to assign traffic between them.
 type CascadeTarget struct {
-	Location        string                        // e.g. "local", "us-central1"
-	AppName         string                        // e.g. "collatz", "todo"
-	VersionId       string                        // e.g. "6ba7b810-9dad-11d1"
-	Listeners       map[string][]*protos.Listener // listeners, keyed by host
-	TrafficFraction float32                       // the desired traffic fraction
+	Location        string                 // e.g. "local", "us-central1"
+	AppName         string                 // e.g. "collatz", "todo"
+	VersionId       string                 // e.g. "6ba7b810-9dad-11d1"
+	Listeners       map[string][]*Listener // listeners, keyed by host
+	TrafficFraction float32                // the desired traffic fraction
 }
 
 // CascadeTraffic assigns traffic to a set of targets. For every host, a

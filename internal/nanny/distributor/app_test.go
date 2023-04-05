@@ -28,7 +28,6 @@ import (
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
@@ -61,7 +60,7 @@ type versionAppTest struct {
 	name                 string         // version name
 	submissionId         int            // submission id
 	targetFn             []fractionSpec // version target function
-	listeners            []*protos.Listener
+	listeners            []*nanny.Listener
 	publicListenerConfig []*config.GKEConfig_PublicListener
 }
 
@@ -105,7 +104,7 @@ func newAppVersion(name string, submissionId int, listeners []string, targetFn .
 			})
 			l = name
 		}
-		v.listeners = append(v.listeners, &protos.Listener{Name: l})
+		v.listeners = append(v.listeners, &nanny.Listener{Name: l})
 	}
 	return v
 }
@@ -639,7 +638,7 @@ func TestUpdate(t *testing.T) {
 				distributor, err := Start(ctx,
 					http.NewServeMux(), // unused
 					store.NewFakeStore(),
-					&logging.NewTestLogger(t).FuncLogger,
+					logging.NewTestLogger(t),
 					&mockManagerClient{nil, nil, nil, nil},
 					testRegion,
 					nil, // babysitterConstructor
@@ -648,11 +647,10 @@ func TestUpdate(t *testing.T) {
 					0,   // applyTrafficInterval
 					0,   // detectAppliedTrafficInterval
 					nil, // applyTraffic
-					func(_ context.Context, cfg *config.GKEConfig) ([]*protos.Listener, error) {
-						id := runtime.DeploymentID(cfg.Deployment)
-						ver, ok := versions[id.String()]
+					func(_ context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
+						ver, ok := versions[cfg.Deployment.Id]
 						if !ok {
-							panic(fmt.Errorf("unknown version id: %v", id))
+							panic(fmt.Errorf("unknown version id: %v", cfg.Deployment.Id))
 						}
 						return ver.listeners, nil
 					},

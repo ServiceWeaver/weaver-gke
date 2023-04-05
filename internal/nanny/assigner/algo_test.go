@@ -20,12 +20,11 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/testing/protocmp"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 func TestLoadBasedAlgorithm(t *testing.T) {
@@ -33,7 +32,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 		name               string
 		currAssignment     *Assignment
 		candidateResources []string
-		loadUpdate         map[string]*protos.WeaveletLoadReport_ComponentLoad
+		loadUpdate         map[string]*protos.LoadReport_ComponentLoad
 
 		expectedToInvokeAlgo      bool
 		expectedAssignedResources []string
@@ -94,15 +93,15 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				Stats:       &Statistics{},
 			},
 			candidateResources: []string{"resource1", "resource2"},
-			loadUpdate: map[string]*protos.WeaveletLoadReport_ComponentLoad{
+			loadUpdate: map[string]*protos.LoadReport_ComponentLoad{
 				"resource1": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   1024,
 							Load:  80,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 80},
 							},
 						},
@@ -110,12 +109,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource2": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 1024,
 							End:   maxSliceKey,
 							Load:  20,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 1024, Load: 20},
 							},
 						},
@@ -156,15 +155,15 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				Stats:       &Statistics{},
 			},
 			candidateResources: []string{"resource1", "resource2"},
-			loadUpdate: map[string]*protos.WeaveletLoadReport_ComponentLoad{
+			loadUpdate: map[string]*protos.LoadReport_ComponentLoad{
 				"resource1": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   1024,
 							Load:  80,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 20},
 								{Start: 250, Load: 40},
 								{Start: 500, Load: 5},
@@ -176,12 +175,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource2": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 1024,
 							End:   maxSliceKey,
 							Load:  20,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 1024, Load: 20},
 							},
 						},
@@ -249,15 +248,15 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				Stats:       &Statistics{},
 			},
 			candidateResources: []string{"resource1", "resource4", "resource5"},
-			loadUpdate: map[string]*protos.WeaveletLoadReport_ComponentLoad{
+			loadUpdate: map[string]*protos.LoadReport_ComponentLoad{
 				"resource1": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   500,
 							Load:  10,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 2},
 								{Start: 5, Load: 8},
 							},
@@ -266,7 +265,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 500,
 							End:   1024,
 							Load:  0,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 500, Load: 0},
 							},
 						},
@@ -274,12 +273,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource2": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 1024,
 							End:   2056,
 							Load:  30,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 1024, Load: 5},
 								{Start: 1400, Load: 10},
 								{Start: 1600, Load: 10},
@@ -290,12 +289,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource3": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 2056,
 							End:   5012,
 							Load:  30,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 2056, Load: 2},
 								{Start: 3200, Load: 8},
 								{Start: 4200, Load: 15},
@@ -306,7 +305,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 5012,
 							End:   10000,
 							Load:  10,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 5012, Load: 5},
 								{Start: 7500, Load: 5},
 							},
@@ -315,12 +314,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource4": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 10000,
 							End:   maxSliceKey,
 							Load:  20,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 10000, Load: 20},
 							},
 						},
@@ -380,15 +379,15 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				Stats:       &Statistics{},
 			},
 			candidateResources: []string{"resource1", "resource2", "resource3", "resource4"},
-			loadUpdate: map[string]*protos.WeaveletLoadReport_ComponentLoad{
+			loadUpdate: map[string]*protos.LoadReport_ComponentLoad{
 				"resource1": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   minSliceKey + 1,
 							Load:  40,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 40},
 							},
 						},
@@ -396,12 +395,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource2": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey + 1,
 							End:   2056,
 							Load:  40,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey + 1, Load: 10},
 								{Start: 1500, Load: 10},
 								{Start: 2000, Load: 20},
@@ -411,12 +410,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource3": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 2056,
 							End:   5012,
 							Load:  10,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 2056, Load: 10},
 							},
 						},
@@ -424,12 +423,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource4": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 5012,
 							End:   maxSliceKey,
 							Load:  10,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 5012, Load: 10},
 							},
 						},
@@ -486,15 +485,15 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				Stats:       &Statistics{},
 			},
 			candidateResources: []string{"resource1", "resource2", "resource3"},
-			loadUpdate: map[string]*protos.WeaveletLoadReport_ComponentLoad{
+			loadUpdate: map[string]*protos.LoadReport_ComponentLoad{
 				"resource1": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   minSliceKey + 1,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 1},
 							},
 						},
@@ -502,7 +501,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: minSliceKey + 1,
 							End:   1024,
 							Load:  50,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey + 1, Load: 50},
 							},
 						},
@@ -510,12 +509,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource2": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   minSliceKey + 1,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 1},
 							},
 						},
@@ -523,7 +522,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 1024,
 							End:   2056,
 							Load:  30,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 1024, Load: 30},
 							},
 						},
@@ -531,12 +530,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource3": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   minSliceKey + 1,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 1},
 							},
 						},
@@ -544,7 +543,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 2056,
 							End:   maxSliceKey,
 							Load:  20,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 2056, Load: 20},
 							},
 						},
@@ -635,15 +634,15 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				Stats:       &Statistics{},
 			},
 			candidateResources: []string{"resource1", "resource2"},
-			loadUpdate: map[string]*protos.WeaveletLoadReport_ComponentLoad{
+			loadUpdate: map[string]*protos.LoadReport_ComponentLoad{
 				"resource1": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: minSliceKey,
 							End:   10,
 							Load:  50,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: minSliceKey, Load: 50},
 							},
 						},
@@ -651,7 +650,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 10,
 							End:   20,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 10, Load: 1},
 							},
 						},
@@ -659,7 +658,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 20,
 							End:   30,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 20, Load: 1},
 							},
 						},
@@ -667,7 +666,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 30,
 							End:   31,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 30, Load: 1},
 							},
 						},
@@ -675,7 +674,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 31,
 							End:   32,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 31, Load: 2},
 							},
 						},
@@ -683,7 +682,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 32,
 							End:   100,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 31, Load: 1},
 							},
 						},
@@ -691,7 +690,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 100,
 							End:   150,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 100, Load: 1},
 							},
 						},
@@ -699,7 +698,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 150,
 							End:   1024,
 							Load:  100,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 150, Load: 100},
 							},
 						},
@@ -707,12 +706,12 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 				},
 				"resource2": {
 					Version: 0,
-					Load: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad{
+					Load: []*protos.LoadReport_SliceLoad{
 						{
 							Start: 31,
 							End:   32,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 31, Load: 1},
 							},
 						},
@@ -720,7 +719,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 1024,
 							End:   2056,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 1024, Load: 1},
 							},
 						},
@@ -728,7 +727,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 2056,
 							End:   5012,
 							Load:  1,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 2056, Load: 1},
 							},
 						},
@@ -736,7 +735,7 @@ func TestLoadBasedAlgorithm(t *testing.T) {
 							Start: 5012,
 							End:   maxSliceKey,
 							Load:  100,
-							Splits: []*protos.WeaveletLoadReport_ComponentLoad_SliceLoad_SubsliceLoad{
+							Splits: []*protos.LoadReport_SubsliceLoad{
 								{Start: 5012, Load: 100},
 							},
 						},
@@ -1123,9 +1122,6 @@ func randAssignment(rand *rand.Rand) *Assignment {
 	}
 
 	assignment := &Assignment{
-		App:                "app",
-		DeploymentId:       uuid.New().String(),
-		Component:          "component",
 		Version:            rand.Uint64(),
 		Slices:             slices,
 		CandidateResources: resourcesSet,

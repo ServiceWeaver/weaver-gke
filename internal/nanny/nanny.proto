@@ -51,25 +51,18 @@ message ApplicationCleanupRequest {
 }
 
 // GetListenerAddressRequest is a request to the manager to get an address
-// a listener in a given colocation group should listen on.
+// a listener in a given Kubernetes ReplicaSet should listen on.
 message GetListenerAddressRequest {
-  runtime.ColocationGroup group = 1;
-  string listener = 2;
+  string replica_set = 1; // ReplicaSet name (e.g., "main").
+  string listener = 2;    // Listener name.
   config.GKEConfig config = 3;
 }
 
 // ExportListenerRequest is a request to the manager to export a listener.
 message ExportListenerRequest {
-  runtime.ColocationGroup group = 1;
-  runtime.Listener listener = 2;
+  string replica_set = 1;  // ReplicaSet name (e.g., "main")
+  Listener listener = 2;
   config.GKEConfig config = 3;
-}
-
-// ColocationGroupStartEequest is a request to the manager to start
-// a colocation group for a given application version.
-message ColocationGroupStartRequest {
-  runtime.ColocationGroup group = 1;
-  config.GKEConfig config = 2;
 }
 
 // ApplicationDeploymentRequest is a request to the manager to deploy a set of
@@ -93,12 +86,82 @@ message ApplicationDeleteRequest {
   repeated string versions = 2;
 }
 
-// ReplicaToRegister is a request to the manager to register the given Service Weaver
-// replica, running in the given babysitter.
-message ReplicaToRegister {
-  string pod_name = 1;           // Replica pod name (e.g., main-012345-6789)
-  string babysitter_address = 2; // e.g., host:1234
-  runtime.ReplicaToRegister replica = 3;
+// ActivateComponentRequest is a request to ensure that the provided
+// component is running somewhere.
+message ActivateComponentRequest {
+  string component = 1;        // Component that needs to be activated.
+  bool routed = 2;             // Is the component routed?
+  config.GKEConfig config = 3;
+}
+
+// RegisterReplicaRequest is a request to the manager to register the weavelet
+// running in the given babysitter.
+message RegisterReplicaRequest {
+  string replica_set = 1;        // ReplicaSet name (e.g., "main")
+  string pod_name = 2;           // Pod name (e.g., main-012345-6789)
+  string babysitter_address = 3; // babysitter address, e.g., host:1234
+  string weavelet_address = 4;   // weavelet address, e.g., host:1234
+  config.GKEConfig config = 5;
+}
+
+// GetComponentsRequest is a request to the manager to get the latest set of
+// components to run.
+message GetComponentsRequest {
+  string replica_set = 1;       // ReplicaSet name (e.g., "main")
+  string version = 2;           // Version of the latest fetched component set.   
+  config.GKEConfig config = 3;
+}
+
+// GetComponentsReply is a manager's reply to GetComponentsRequest.
+message GetComponentsReply {
+  string version = 1;              // Version of the current component set.
+  repeated string components = 2;  // A list of components to run.
+}
+
+// GetRoutingInfo is a request to the manager to retrieve routing information
+// for a given component.
+message GetRoutingRequest {
+  string component = 1;         // Component that needs to be activated.
+  string version = 2;           // Version of the latest fetched component set.
+  config.GKEConfig config = 3;
+}
+
+// RoutingInfo is a manager's reply to GetRoutingRequest.
+message GetRoutingReply {
+  string version = 1;
+  runtime.RoutingInfo routing = 2;
+}
+
+// GetProfileRequest is a request to profile the given application version or
+// a collection of applications and their versions.
+message GetProfileRequest {
+  // Application name and version.
+  //
+  // If the application name is non-empty, the request is for profiling only
+  // the given application; otherwise, the request is to profile all active
+  // applications.
+  // If the application version is non-empty, the request is for profiling
+  // only a particular application version; otherwise, the request is for
+  // profiling all versions of an application (or a collection of applications).
+  // It is illegal to specify the version and not the application name.
+  string app_name = 1;
+  string version_id = 2;
+
+  // Type of the profile (e.g., heap, cpu).
+  runtime.ProfileType profile_type = 3;
+
+  // Duration of CPU profiles, in nanoseconds.
+  int64 cpu_duration_ns = 4;
+}
+
+// LoadReport contains load information for all routed components hosted by a
+// particular weavelet.
+message LoadReport {
+  runtime.LoadReport load = 1;
+  string replica_set = 2;  // ReplicaSet name (e.g., "main")
+  string pod_name = 3;
+  string weavelet_addr = 4;
+  config.GKEConfig config = 5;
 }
 
 // ApplicationStateAtDistributorRequest is a request to the distributor to get
@@ -128,51 +191,51 @@ message VersionStateAtDistributor {
   // reapply).
   bool rollout_completed = 3;
 
-  // Whether the main group is deployed.
+  // Whether the main ReplicaSet is deployed.
   bool is_deployed = 4;
 
-  // All known groups for this application version.
-  GroupState groups = 5;
+  // All known Kubernetes ReplicaSets for this application version.
+  ReplicaSetState replica_sets = 5;
 }
 
-// GroupStateRequest is a request to receive the state of groups for the given
-// application version or a collection of applications and their versions.
-message GroupStateRequest {
+// GetReplicaSetStateRequest is a request to fetch the state of Kubernetes
+// ReplicaSets for the given application version or a collection of
+// applications and their versions.
+message GetReplicaSetStateRequest {
   // Application name and version.
   //
   // If the application name is non-empty, the request is for retrieving
-  // group state only for the given application; otherwise, the request is
-  // for retrieving group state for all active applications.
+  // ReplicaSet state only for the given application; otherwise, the request is
+  // for retrieving ReplicaSet state for all active applications.
   // If the application version is non-empty, the request is for retrieving
-  // group state only for a particular version of an application; otherwise,
-  // the request is for retrieving group state for all versions of an
-  // application (or a collection of applications).
+  // ReplicaSet state only for a particular version of an application;
+  // otherwise, the request is for retrieving ReplicaSet state for all versions
+  // of an application (or a collection of applications).
   // It is illegal to specify the version and not the application name.
   string app_name = 1;
   string version_id = 2;
 }
 
-// GroupState stores the colocation group state for an application version or a
-// collection of applications and their versions.
-message GroupState {
-  // Group stores information about an application version group.
-  message Group {
+// ReplicaSetState stores information about Kubernetes ReplicaSets.
+message ReplicaSetState {
+  // ReplicaSet stores information about an application version ReplicaSet.
+  message ReplicaSet {
     string name = 1;
 
-    // Replica stores information about a colocation group replica.
-    message Replica {
+    // Pod stores information about a Pod inside the ReplicaSet.
+    message Pod {
       string weavelet_addr = 1;               // Weavelet address.
       string babysitter_addr = 2;             // Babysitter address.
       runtime.HealthStatus health_status = 3; // Health status.
     }
-    repeated Replica replicas = 2; // All known group replicas.
-    repeated string components = 3; // Active components hosted by the group.
-    repeated runtime.Listener listeners = 4; // Listeners hosted by the group.
+    repeated Pod pods = 2;
+    repeated string components = 3; // Active components hosted by ReplicaSet.
+    repeated string listeners = 4; // Listeners hosted by ReplicaSet.
   }
-  repeated Group groups = 3;
+  repeated ReplicaSet replica_sets = 3;
 
-  // Errors encountered collecting the group state.
-  // Note that the group data may be partially populated even if there were
+  // Errors encountered collecting the ReplicaSet state.
+  // Note that the ReplicaSet data may be partially populated even if there were
   // collection errors.
   repeated string errors = 4;
 }
@@ -256,5 +319,11 @@ message TrafficAllocation {
   string app_name = 2;            // name of the application
   string version_id = 3;          // application version id
   float traffic_fraction = 4;     // traffic fraction allocated for version id
-  runtime.Listener listener = 5;  // network listener
+  Listener listener = 5;          // network listener
+}
+
+// Listener holds information about a network listener.
+message Listener {
+  string name = 1;  // listener name
+  string addr = 2;  // network address
 }

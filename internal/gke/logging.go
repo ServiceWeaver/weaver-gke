@@ -30,6 +30,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/google/cel-go/common/operators"
+	"golang.org/x/exp/slog"
 	"google.golang.org/api/iterator"
 	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
@@ -57,9 +58,9 @@ func newCloudLoggingClient(ctx context.Context, meta *ContainerMetadata) (*Cloud
 	return &CloudLoggingClient{meta, client, client.Logger("serviceweaver")}, nil
 }
 
-// Logger returns a new logging.FuncLogger that logs to Google Cloud Logging.
-func (cl *CloudLoggingClient) Logger(opts wlogging.Options) *wlogging.FuncLogger {
-	return &wlogging.FuncLogger{Opts: opts, Write: cl.Log}
+// Logger returns a new slog.Logger that logs to Google Cloud Logging.
+func (cl *CloudLoggingClient) Logger(opts wlogging.Options) *slog.Logger {
+	return slog.New(&wlogging.LogHandler{Opts: opts, Write: cl.Log})
 }
 
 // Log logs the provided entry to Google Cloud Logging.

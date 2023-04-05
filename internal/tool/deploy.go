@@ -150,9 +150,6 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error {
 	deployment := cfg.Deployment
 	app := deployment.App
-	if err := runtime.CheckDeployment(deployment); err != nil {
-		return err
-	}
 
 	info, err := os.Stat(app.Binary)
 	if err != nil {

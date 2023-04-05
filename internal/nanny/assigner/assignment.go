@@ -21,8 +21,8 @@ import (
 	"reflect"
 	"sort"
 
-	"google.golang.org/protobuf/proto"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -88,25 +88,15 @@ func FromProto(assignmentP *protos.Assignment) (*Assignment, error) {
 		slices = append(slices, slice)
 	}
 	return &Assignment{
-		App:          assignmentP.App,
-		DeploymentId: assignmentP.DeploymentId,
-		Component:    assignmentP.Component,
-		Version:      assignmentP.Version,
-		Slices:       slices,
-		Constraints:  &AlgoConstraints{},
-		Stats:        &Statistics{},
+		Version:     assignmentP.Version,
+		Slices:      slices,
+		Constraints: &AlgoConstraints{},
+		Stats:       &Statistics{},
 	}, nil
 }
 
 // toProto returns an assignment proto from an assignment.
 func toProto(a *Assignment) *protos.Assignment {
-	proto := &protos.Assignment{
-		App:          a.App,
-		DeploymentId: a.DeploymentId,
-		Component:    a.Component,
-		Version:      a.Version,
-	}
-
 	var slices []*protos.Assignment_Slice
 	for _, slice := range a.Slices {
 		slices = append(slices, &protos.Assignment_Slice{
@@ -114,8 +104,10 @@ func toProto(a *Assignment) *protos.Assignment {
 			Replicas: Replicas(slice),
 		})
 	}
-	proto.Slices = slices
-	return proto
+	return &protos.Assignment{
+		Slices:  slices,
+		Version: a.Version,
+	}
 }
 
 // AssignedResources returns all the resources assigned to the entire key space
@@ -143,7 +135,7 @@ func AssignedResources(a *Assignment) []string {
 // a given resource.
 //
 // TODO(rgrandl): handle errors more gracefully.
-func updateLoad(a *Assignment, resource string, load *protos.WeaveletLoadReport_ComponentLoad) error {
+func updateLoad(a *Assignment, resource string, load *protos.LoadReport_ComponentLoad) error {
 	for _, loadReport := range load.Load {
 		reportedSlice := &Slice{
 			StartInclusive: &SliceKey{Val: loadReport.Start},
@@ -237,17 +229,6 @@ func resourcesByLoad(a *Assignment) []*resourceInfo {
 
 // isBuiltOnAssignment returns whether assignment a is related to the old assignment.
 func isBuiltOnAssignment(a *Assignment, old *Assignment) error {
-	if a.App != old.App {
-		return fmt.Errorf("assignment for app: %s and not %s", a.App, old.App)
-	}
-	if a.DeploymentId != old.DeploymentId {
-		return fmt.Errorf("assignment for deployment: %s and not %s",
-			a.DeploymentId, old.DeploymentId)
-	}
-	if a.Component != old.Component {
-		return fmt.Errorf("assignment for component: %s and not %s", a.Component, old.Component)
-	}
-
 	// TODO(rgrandl): ensure versions are monotonically increasing instead.
 	if a.Version < old.Version {
 		return fmt.Errorf("assignment has version %d that is older than %d",
@@ -317,7 +298,6 @@ func sizeLimit(a *Assignment) int {
 
 // validateAssignment validates that an assignment is valid.
 func validateAssignment(assignment *protos.Assignment) error {
-
 	if len(assignment.Slices) == 0 {
 		// If a component doesn't have any replicas, its assignment doesn't have
 		// any slices. This is okay. a component may not have any replicas if the

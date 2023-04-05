@@ -23,12 +23,12 @@ import (
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/exp/maps"
+	"golang.org/x/exp/slog"
 )
 
 // The interval beyond which we ignore metric values in the metric database.
@@ -40,7 +40,7 @@ const freshness = time.Minute
 // metrics stored in the given metric database.
 type promCollector struct {
 	db     *metricdb.T
-	logger *logging.FuncLogger
+	logger *slog.Logger
 
 	// If non-empty, only metrics that correspond to the given app/version
 	// are collected.
@@ -51,7 +51,7 @@ type promCollector struct {
 	descs map[uint64]*promDescriptor // metric descriptors cached by metric id
 }
 
-func newPromCollector(db *metricdb.T, logger *logging.FuncLogger, app, version string) *promCollector {
+func newPromCollector(db *metricdb.T, logger *slog.Logger, app, version string) *promCollector {
 	return &promCollector{
 		db:      db,
 		logger:  logger,
@@ -157,7 +157,7 @@ func (e *promCollector) getDescriptor(m *metrics.MetricSnapshot) *promDescriptor
 // parameters.
 type promHandler struct {
 	db     *metricdb.T
-	logger *logging.FuncLogger
+	logger *slog.Logger
 }
 
 // NewPrometheusHandler returns a Prometheus HTTP handler that exports metrics
@@ -165,7 +165,7 @@ type promHandler struct {
 // following query parameters:
 //   - app=<app>,         which restricts metrics to the given application, and
 //   - version=<version>, which restricts metrics to the given app version.
-func NewPrometheusHandler(db *metricdb.T, logger *logging.FuncLogger) http.Handler {
+func NewPrometheusHandler(db *metricdb.T, logger *slog.Logger) http.Handler {
 	return &promHandler{db: db, logger: logger}
 }
 

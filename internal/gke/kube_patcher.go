@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slog"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	apiv1 "k8s.io/api/core/v1"
@@ -47,7 +47,7 @@ const (
 type patchOptions struct {
 	// Logger to use for printing patching messages. If nil, messages are
 	// printed to os.Stderr.
-	logger *logging.FuncLogger
+	logger *slog.Logger
 }
 
 // kubePatcher applies changes to Kubernetes resources (e.g., services,

@@ -20,15 +20,15 @@ import (
 	"fmt"
 
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
 // RecordListener records the network listener exported by an application
 // version.
-func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, lis *protos.Listener) error {
+func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, lis *nanny.Listener) error {
 	// Record the listener by adding a serialized version of the listener
 	// to internal.ListenState, stored under an application-version-scoped key
 	// "listeners" (e.g. /app/todo/deployment/a47e1a97/listeners).
@@ -45,8 +45,8 @@ func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, l
 	}
 
 	dep := cfg.Deployment
-	key := store.DeploymentKey(dep.App.Name, runtime.DeploymentID(dep), "listeners")
-	histKey := store.DeploymentKey(dep.App.Name, runtime.DeploymentID(dep), store.HistoryKey)
+	key := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), "listeners")
+	histKey := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), store.HistoryKey)
 	err := store.AddToSet(ctx, s, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.
@@ -65,9 +65,9 @@ func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, l
 // If a replica that exports a listener dies, we don't update the traffic rules
 // to reflect the new set of listeners in case of a gke-local deployer. Note
 // that this is intentional, as we don't worry about processes deaths.
-func getListeners(ctx context.Context, s store.Store, cfg *config.GKEConfig) ([]*protos.Listener, error) {
+func getListeners(ctx context.Context, s store.Store, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
 	dep := cfg.Deployment
-	key := store.DeploymentKey(dep.App.Name, runtime.DeploymentID(dep), "listeners")
+	key := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), "listeners")
 	var state ListenState
 	if _, err := store.GetProto(ctx, s, key, &state, nil); err != nil {
 		return nil, err

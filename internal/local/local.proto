@@ -17,10 +17,10 @@ syntax = "proto3";
 option go_package = "github.com/ServiceWeaver/weaver-gke/internal/local";
 
 package local;
-import "runtime/protos/runtime.proto";
+import "internal/nanny/nanny.proto";
 
 // ListenState contains the state stored for the network listeners in the store.
 message ListenState {
   // Listeners is the set of all exported listeners in the deployment.
-  repeated runtime.Listener listeners = 1;
+  repeated nanny.Listener listeners = 1;
 }

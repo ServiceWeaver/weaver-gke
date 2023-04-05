@@ -34,6 +34,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/testing/protocmp"
 )
 
@@ -61,21 +62,21 @@ func startServer(t *testing.T) (*httptest.Server, chan string) {
 	if err := Start(ctx,
 		mux,
 		store.NewFakeStore(),
-		&logging.NewTestLogger(t).FuncLogger,
+		logging.NewTestLogger(t),
 		"", // dialAddr
 		func(addr string) clients.BabysitterClient {
 			return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 		},
 		func(context.Context, string) (bool, error) { return true, nil },
-		func(_ context.Context, _ *config.GKEConfig, group *protos.ColocationGroup, listener string) (int, error) {
-			events <- "getListenerPort " + group.Name + " " + listener
+		func(_ context.Context, _ *config.GKEConfig, replicaSet string, listener string) (int, error) {
+			events <- "getListenerPort " + replicaSet + " " + listener
 			return testListenerPort, nil
 		},
-		func(context.Context, *config.GKEConfig, *protos.ColocationGroup, *protos.Listener) (*protos.ExportListenerReply, error) {
+		func(context.Context, *config.GKEConfig, string, *nanny.Listener) (*protos.ExportListenerReply, error) {
 			return &protos.ExportListenerReply{ProxyAddress: "listener:8888"}, nil
 		},
-		func(_ context.Context, _ *config.GKEConfig, group *protos.ColocationGroup) error {
-			events <- "startColocationGroup " + group.Name
+		func(_ context.Context, _ *config.GKEConfig, replicaSet string) error {
+			events <- "startReplicaSet " + replicaSet
 			return nil
 		},
 		func(context.Context, string, []string) error { return nil },
@@ -85,11 +86,12 @@ func startServer(t *testing.T) (*httptest.Server, chan string) {
 	return httptest.NewServer(mux), events
 }
 
-func makeConfig() *config.GKEConfig {
+func makeConfig(colocate ...string) *config.GKEConfig {
 	return &config.GKEConfig{
 		Deployment: &protos.Deployment{
 			App: &protos.AppConfig{
-				Name: "todo",
+				Name:     "todo",
+				Colocate: []*protos.ComponentGroup{{Components: colocate}},
 			},
 			Id: "11111111-1111-1111-1111-111111111111",
 		},
@@ -113,28 +115,28 @@ func TestDeploy(t *testing.T) {
 		t.Fatalf("couldn't deploy %v: %v", cfg, err)
 	}
 
-	if event := nextEvent(events); event != "startColocationGroup main" {
+	if event := nextEvent(events); event != "startReplicaSet main" {
 		t.Fatalf("main not started: got %q", event)
 	}
 
 	// Verify that the process eventst)
 	defer ts.Close()
 
-	// Start process and check that it has started.
-	req := &nanny.ColocationGroupStartRequest{
-		Config: makeConfig(),
-		Group:  &protos.ColocationGroup{Name: "bar"},
+	// Start the component and check that it has started.
+	req := &nanny.ActivateComponentRequest{
+		Component: "bar",
+		Config:    makeConfig(),
 	}
 
 	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
 		Client:  ts.Client(),
 		Addr:    ts.URL,
-		URLPath: startColocationGroupURL,
+		URLPath: activateComponentURL,
 		Request: req,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if event := nextEvent(events); event != "startColocationGroup bar" {
+	if event := nextEvent(events); event != "startReplicaSet bar" {
 		t.Fatalf("bar not started: got %q", event)
 	}
 }
@@ -145,12 +147,12 @@ func TestGetListenerAddress(t *testing.T) {
 
 	// Start process and check that it has started.
 	req := &nanny.GetListenerAddressRequest{
-		Group:    &protos.ColocationGroup{Name: "bar"},
-		Listener: "foo",
-		Config:   makeConfig(),
+		ReplicaSet: "bar",
+		Listener:   "foo",
+		Config:     makeConfig(),
 	}
 
-	reply := &protos.GetAddressReply{}
+	reply := &protos.GetListenerAddressReply{}
 	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
 		Client:  ts.Client(),
 		Addr:    ts.URL,
@@ -163,7 +165,7 @@ func TestGetListenerAddress(t *testing.T) {
 	if event := nextEvent(events); event != "getListenerPort bar foo" {
 		t.Fatalf("foo port not requested: got %q", event)
 	}
-	expect := &protos.GetAddressReply{
+	expect := &protos.GetListenerAddressReply{
 		Address: fmt.Sprintf(":%d", testListenerPort),
 	}
 	if diff := cmp.Diff(reply, expect, protocmp.Transform()); diff != "" {
@@ -175,18 +177,16 @@ func TestGetRoutingInfo(t *testing.T) {
 	ts, _ := startServer(t)
 	defer ts.Close()
 
-	cfg := makeConfig()
-	d := cfg.Deployment
+	cfg := makeConfig("sharded", "unsharded")
 
 	// add adds a new resolvable address.
 	addReplica := func(addr string) {
-		req := &nanny.ReplicaToRegister{
-			Replica: &protos.ReplicaToRegister{
-				App:          d.App.Name,
-				DeploymentId: d.Id,
-				Group:        "foo",
-				Address:      addr,
-			},
+		req := &nanny.RegisterReplicaRequest{
+			ReplicaSet:        "sharded",
+			PodName:           "unused",
+			BabysitterAddress: "unused",
+			WeaveletAddress:   addr,
+			Config:            cfg,
 		}
 		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
 			Client:  ts.Client(),
@@ -198,19 +198,17 @@ func TestGetRoutingInfo(t *testing.T) {
 		}
 	}
 
-	// startComponents registers a set of components to be started.
+	// activateComponent activates the given component.
 	startComponent := func(component string, isRouted bool) {
-		req := &protos.ComponentToStart{
-			App:             d.App.Name,
-			DeploymentId:    d.Id,
-			ColocationGroup: "foo",
-			Component:       component,
-			IsRouted:        isRouted,
+		req := &nanny.ActivateComponentRequest{
+			Component: component,
+			Routed:    isRouted,
+			Config:    cfg,
 		}
 		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
 			Client:  ts.Client(),
 			Addr:    ts.URL,
-			URLPath: startComponentURL,
+			URLPath: activateComponentURL,
 			Request: req,
 		}); err != nil {
 			t.Fatal(err)
@@ -218,14 +216,13 @@ func TestGetRoutingInfo(t *testing.T) {
 	}
 
 	// resolve returns sorted list of resolvable addresses along with an assignment.
-	resolve := func(v string) *protos.RoutingInfo {
-		req := &protos.GetRoutingInfo{
-			App:          d.App.Name,
-			DeploymentId: d.Id,
-			Group:        "foo",
-			Version:      v,
+	resolve := func(version, component string) *nanny.GetRoutingReply {
+		req := &nanny.GetRoutingRequest{
+			Component: component,
+			Version:   version,
+			Config:    cfg,
 		}
-		var reply protos.RoutingInfo
+		var reply nanny.GetRoutingReply
 		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
 			Client:  ts.Client(),
 			Addr:    ts.URL,
@@ -235,15 +232,15 @@ func TestGetRoutingInfo(t *testing.T) {
 		}); err != nil {
 			t.Fatal(err)
 		}
-		sort.Strings(reply.Replicas)
+		sort.Strings(reply.Routing.Replicas)
 		return &reply
 	}
 
-	routingInfo := resolve("")
-	if len(routingInfo.Replicas) != 0 {
-		t.Fatalf("resolve(empty) = %v; want []", routingInfo.Replicas)
+	routingInfo := resolve("", "nonexistent")
+	if len(routingInfo.Routing.Replicas) != 0 {
+		t.Fatalf("resolve(empty) = %v; want []", routingInfo.Routing.Replicas)
 	}
-	if routingInfo.Assignments != nil {
+	if routingInfo.Routing.Assignment != nil {
 		t.Fatalf("no components registered; assignment should be nil")
 	}
 
@@ -258,17 +255,30 @@ func TestGetRoutingInfo(t *testing.T) {
 	addReplica(testData[1])
 
 	// Register two components to start.
-	startComponent("unshardedComponent", false)
-	startComponent("shardedComponent", true)
+	startComponent("sharded", true)
+	startComponent("unsharded", false)
 
-	routingInfo = resolve("")
-	if diff := cmp.Diff(testData[:2], routingInfo.Replicas); diff != "" {
+	routingInfo = resolve("", "unsharded")
+	if diff := cmp.Diff(testData[:2], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
 	}
 	if routingInfo.Version == "" {
 		t.Fatal("no version returned by resolver")
 	}
-	assignment, _ := assigner.FromProto(routingInfo.Assignments[0])
+	if routingInfo.Routing.Assignment != nil {
+		t.Fatalf("want empty assignment, got %v", prototext.Format(routingInfo.Routing.Assignment))
+	}
+	routingInfo = resolve("", "sharded")
+	if diff := cmp.Diff(testData[:2], routingInfo.Routing.Replicas); diff != "" {
+		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
+	}
+	if routingInfo.Version == "" {
+		t.Fatal("no version returned by resolver")
+	}
+	if routingInfo.Routing.Assignment == nil {
+		t.Fatalf("nil assignment")
+	}
+	assignment, _ := assigner.FromProto(routingInfo.Routing.Assignment)
 	got := assigner.AssignedResources(assignment)
 	sort.Strings(got)
 	if diff := cmp.Diff(got, []string{testData[0], testData[1]}); diff != "" {
@@ -285,21 +295,18 @@ func TestGetRoutingInfo(t *testing.T) {
 		time.Sleep(delay)
 		addReplica(testData[2]) // Delayed change that should make resolve call succeed.
 	}()
-	routingInfo = resolve(routingInfo.Version)
+	routingInfo = resolve(routingInfo.Version, "sharded")
 	finish := time.Now()
-	if diff := cmp.Diff(testData[:3], routingInfo.Replicas); diff != "" {
+	if diff := cmp.Diff(testData[:3], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
 	}
 	if elapsed := finish.Sub(start); elapsed < delay {
 		t.Fatalf("resolver returned in %v; expecting >= %v", elapsed, delay)
 	}
-	if len(routingInfo.Assignments) != 1 {
-		t.Fatal("assignments should contain only one entry")
+	if routingInfo.Routing.Component != "sharded" {
+		t.Fatal("assignments should contain an assignment for sharded")
 	}
-	if routingInfo.Assignments[0].Component != "shardedComponent" {
-		t.Fatal("assignments should contain an assignment for shardedComponent")
-	}
-	if routingInfo.Assignments[0].Version != 2 {
-		t.Fatalf("unexpected assignment version; want: 2; got: %d\n", routingInfo.Assignments[0].Version)
+	if routingInfo.Routing.Assignment.Version != 2 {
+		t.Fatalf("unexpected assignment version; want: 2; got: %d\n", routingInfo.Routing.Assignment.Version)
 	}
 }

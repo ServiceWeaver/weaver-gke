@@ -64,41 +64,31 @@ func (h *HttpClient) Delete(ctx context.Context, req *nanny.ApplicationDeleteReq
 	})
 }
 
-// GetGroupState implements the clients.ManagerClient interface.
-func (h *HttpClient) GetGroupState(ctx context.Context, req *nanny.GroupStateRequest) (*nanny.GroupState, error) {
-	reply := &nanny.GroupState{}
+// GetReplicaSetState implements the clients.ManagerClient interface.
+func (h *HttpClient) GetReplicaSetState(ctx context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
+	reply := &nanny.ReplicaSetState{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
-		URLPath: getGroupStateURL,
+		URLPath: getReplicaSetStateURL,
 		Request: req,
 		Reply:   reply,
 	})
 	return reply, err
 }
 
-// StartComponent implements the clients.ManagerClient interface.
-func (h *HttpClient) StartComponent(ctx context.Context, req *protos.ComponentToStart) error {
+// ActivateComponent implements the clients.ManagerClient interface.
+func (h *HttpClient) ActivateComponent(ctx context.Context, req *nanny.ActivateComponentRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
-		URLPath: startComponentURL,
-		Request: req,
-	})
-}
-
-// StartColocationGroup implements the clients.ManagerClient interface.
-func (h *HttpClient) StartColocationGroup(ctx context.Context, req *nanny.ColocationGroupStartRequest) error {
-	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  http.DefaultClient,
-		Addr:    h.Addr,
-		URLPath: startColocationGroupURL,
+		URLPath: activateComponentURL,
 		Request: req,
 	})
 }
 
 // RegisterReplica implements the clients.ManagerClient interface.
-func (h *HttpClient) RegisterReplica(ctx context.Context, req *nanny.ReplicaToRegister) error {
+func (h *HttpClient) RegisterReplica(ctx context.Context, req *nanny.RegisterReplicaRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
@@ -108,7 +98,7 @@ func (h *HttpClient) RegisterReplica(ctx context.Context, req *nanny.ReplicaToRe
 }
 
 // ReportLoad implements the clients.ManagerClient interface.
-func (h *HttpClient) ReportLoad(ctx context.Context, req *protos.WeaveletLoadReport) error {
+func (h *HttpClient) ReportLoad(ctx context.Context, req *nanny.LoadReport) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
@@ -117,8 +107,9 @@ func (h *HttpClient) ReportLoad(ctx context.Context, req *protos.WeaveletLoadRep
 	})
 }
 
-func (h *HttpClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
-	reply := &protos.GetAddressReply{}
+// GetListenerAddress implements the clients.ManagerClient interface.
+func (h *HttpClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
+	reply := &protos.GetListenerAddressReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
@@ -147,8 +138,8 @@ func (h *HttpClient) ExportListener(ctx context.Context, req *nanny.ExportListen
 }
 
 // GetRoutingInfo implements the clients.ManagerClient interface.
-func (h *HttpClient) GetRoutingInfo(ctx context.Context, req *protos.GetRoutingInfo) (*protos.RoutingInfo, error) {
-	reply := &protos.RoutingInfo{}
+func (h *HttpClient) GetRoutingInfo(ctx context.Context, req *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
+	reply := &nanny.GetRoutingReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
@@ -162,9 +153,9 @@ func (h *HttpClient) GetRoutingInfo(ctx context.Context, req *protos.GetRoutingI
 }
 
 // GetComponentsToStart implements the clients.ManagerClient interface.
-func (h *HttpClient) GetComponentsToStart(ctx context.Context, req *protos.GetComponentsToStart) (
-	*protos.ComponentsToStart, error) {
-	reply := &protos.ComponentsToStart{}
+func (h *HttpClient) GetComponentsToStart(ctx context.Context, req *nanny.GetComponentsRequest) (
+	*nanny.GetComponentsReply, error) {
+	reply := &nanny.GetComponentsReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,

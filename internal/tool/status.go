@@ -112,13 +112,13 @@ func componentsStatus(w io.Writer, status *controller.Status) {
 			return app.Versions[i].SubmissionId < app.Versions[j].SubmissionId
 		})
 		for _, dep := range app.Versions {
-			sort.SliceStable(dep.Groups, func(i, j int) bool {
-				return dep.Groups[i].Name < dep.Groups[j].Name
+			sort.SliceStable(dep.ReplicaSets, func(i, j int) bool {
+				return dep.ReplicaSets[i].Name < dep.ReplicaSets[j].Name
 			})
-			sort.SliceStable(dep.Groups, func(i, j int) bool {
-				return dep.Groups[i].Location < dep.Groups[j].Location
+			sort.SliceStable(dep.ReplicaSets, func(i, j int) bool {
+				return dep.ReplicaSets[i].Location < dep.ReplicaSets[j].Location
 			})
-			for _, group := range dep.Groups {
+			for _, group := range dep.ReplicaSets {
 				sort.Slice(group.Components, func(i, j int) bool {
 					return group.Components[i] < group.Components[j]
 				})

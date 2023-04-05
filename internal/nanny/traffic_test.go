@@ -22,7 +22,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/uuid"
 	"google.golang.org/protobuf/testing/protocmp"
-	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 func TestCascade(t *testing.T) {
@@ -71,7 +70,7 @@ func TestCascadeTrafficForHost(t *testing.T) {
 			Location:  "host1",
 			AppName:   "app",
 			VersionId: toUUID(1),
-			Listeners: map[string][]*protos.Listener{
+			Listeners: map[string][]*Listener{
 				"host1": {
 					{Name: "lis1", Addr: "1.1.1.1:1111"},
 					{Name: "lis2", Addr: "2.2.2.2:2222"},
@@ -90,28 +89,28 @@ func TestCascadeTrafficForHost(t *testing.T) {
 				AppName:         "app",
 				VersionId:       toUUID(1),
 				TrafficFraction: 0.25,
-				Listener:        &protos.Listener{Name: "lis1", Addr: "1.1.1.1:1111"},
+				Listener:        &Listener{Name: "lis1", Addr: "1.1.1.1:1111"},
 			},
 			{
 				Location:        "host1",
 				AppName:         "app",
 				VersionId:       toUUID(1),
 				TrafficFraction: 0.25,
-				Listener:        &protos.Listener{Name: "lis2", Addr: "2.2.2.2:2222"},
+				Listener:        &Listener{Name: "lis2", Addr: "2.2.2.2:2222"},
 			},
 			{
 				Location:        "host1",
 				AppName:         "app",
 				VersionId:       toUUID(1),
 				TrafficFraction: 0.25,
-				Listener:        &protos.Listener{Name: "lis3", Addr: "3.3.3.3:3333"},
+				Listener:        &Listener{Name: "lis3", Addr: "3.3.3.3:3333"},
 			},
 			{
 				Location:        "host1",
 				AppName:         "app",
 				VersionId:       toUUID(1),
 				TrafficFraction: 0.25,
-				Listener:        &protos.Listener{Name: "lis4", Addr: "4.4.4.4:4444"},
+				Listener:        &Listener{Name: "lis4", Addr: "4.4.4.4:4444"},
 			},
 		},
 	}

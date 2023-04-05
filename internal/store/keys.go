@@ -46,13 +46,12 @@ const (
 //     store.Put(ctx, key, "terminating", nil)
 //
 // We have the following Key functions. Assume an app named collatz, a
-// deployment id 123, a process named OddEven, and a component named Odd.
+// deployment id 123, and a ReplicaSet named OddEven.
 //
 //     1. GlobalKey:      "/key".
 //     2. ApplicationKey: "/app/collatz/key".
 //     3. DeploymentKey:  "/app/collatz/deployment/123/key".
-//     4. ProcessKey:     "/app/collatz/deployment/123/process/OddEven/key".
-//     5. ComponentKey:   "/app/collatz/deployment/123/component/Odd/key".
+//     4. ReplicaSetKey:  "/app/collatz/deployment/123/replica_set/OddEven/key".
 
 func join(elements ...string) string {
 	// Note that we don't use path.Join because we allow empty keys and
@@ -80,17 +79,10 @@ func DeploymentKey(app string, deploymentID uuid.UUID, key string) string {
 	return join("app", app, "deployment", deploymentID.String(), key)
 }
 
-// ColocationGroupKey returns keys in the format
-// "/app/collatz/deployment/123/group/OddEven/key", where "collatz" is the
-// application name, 123 is the deployment id, and OddEven is the colocation
-// group name.
-func ColocationGroupKey(app string, deploymentID uuid.UUID, group string, key string) string {
-	return join("app", app, "deployment", deploymentID.String(), "group", group, key)
-}
-
-// ProcessKey returns keys in the format
-// "/app/collatz/deployment/123/process/OddEven/key", where "collatz" is the
-// application name, 123 is the deployment id, and OddEven is the process name.
-func ProcessKey(app string, deploymentID uuid.UUID, proc string, key string) string {
-	return join("app", app, "deployment", deploymentID.String(), "process", proc, key)
+// ReplicaSetKey returns keys in the format
+// "/app/collatz/deployment/123/replica_set/OddEven/key", where "collatz" is the
+// application name, 123 is the deployment id, and OddEven is the Kubernetes
+// ReplicaSet name.
+func ReplicaSetKey(app string, deploymentID uuid.UUID, replicaSet string, key string) string {
+	return join("app", app, "deployment", deploymentID.String(), "replica_set", replicaSet, key)
 }

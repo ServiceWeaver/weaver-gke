@@ -29,10 +29,10 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slog"
 )
 
 const (
@@ -40,9 +40,8 @@ const (
 	deployURL               = "/manager/deploy"
 	stopURL                 = "/manager/stop"
 	deleteURL               = "/manager/delete"
-	getGroupStateURL        = "/manager/get_group_state"
-	startComponentURL       = "/manager/start_component"
-	startColocationGroupURL = "/manager/start_colocation_group"
+	getReplicaSetStateURL   = "/manager/get_replica_set_state"
+	activateComponentURL    = "/manager/activate_component"
 	registerReplicaURL      = "/manager/register_replica"
 	reportLoadURL           = "/manager/report_load"
 	getListenerAddressURL   = "/manager/get_listener_address"
@@ -56,20 +55,21 @@ type manager struct {
 	ctx      context.Context
 	store    store.Store
 	assigner *assigner.Assigner
-	logger   *logging.FuncLogger
+	logger   *slog.Logger
 
 	// Address on which the manager may be reached from a Service Weaver group.
 	selfAddr string
 
 	// Returns the port the network listener should listen on inside the
-	// colocation group.
-	getListenerPort func(context.Context, *config.GKEConfig, *protos.ColocationGroup, string) (int, error)
+	// Kubernetes ReplicaSet.
+	getListenerPort func(context.Context, *config.GKEConfig, string, string) (int, error)
 
-	// Record the network listener exported by an application version's colocation group.
-	exportListener func(context.Context, *config.GKEConfig, *protos.ColocationGroup, *protos.Listener) (*protos.ExportListenerReply, error)
+	// Export the network listener that runs inside the given Kubernetes
+	// ReplicaSet.
+	exportListener func(context.Context, *config.GKEConfig, string, *nanny.Listener) (*protos.ExportListenerReply, error)
 
-	// Start running an application version's colocation group.
-	startColocationGroup func(context.Context, *config.GKEConfig, *protos.ColocationGroup) error
+	// Start running the Kubernetes ReplicaSet.
+	startReplicaSet func(context.Context, *config.GKEConfig, string) error
 
 	// Stops all the groups for a list of applications versions.
 	stopAppVersions func(ctx context.Context, app string, versions []string) error
@@ -84,26 +84,26 @@ var _ clients.ManagerClient = &manager{}
 func Start(ctx context.Context,
 	mux *http.ServeMux,
 	store store.Store,
-	logger *logging.FuncLogger,
+	logger *slog.Logger,
 	dialAddr string,
 	babysitterConstructor func(string) clients.BabysitterClient,
 	replicaExists func(context.Context, string) (bool, error),
-	getListenerPort func(context.Context, *config.GKEConfig, *protos.ColocationGroup, string) (int, error),
-	exportListener func(context.Context, *config.GKEConfig, *protos.ColocationGroup, *protos.Listener) (*protos.ExportListenerReply, error),
-	startColocationGroup func(context.Context, *config.GKEConfig, *protos.ColocationGroup) error,
+	getListenerPort func(context.Context, *config.GKEConfig, string, string) (int, error),
+	exportListener func(context.Context, *config.GKEConfig, string, *nanny.Listener) (*protos.ExportListenerReply, error),
+	startReplicaSet func(context.Context, *config.GKEConfig, string) error,
 	stopAppVersions func(context.Context, string, []string) error,
 	deleteAppVersions func(context.Context, string, []string) error) error {
 	m := &manager{
-		ctx:                  ctx,
-		store:                store,
-		assigner:             assigner.NewAssigner(ctx, store, logger, assigner.EqualDistributionAlgorithm, babysitterConstructor, replicaExists),
-		logger:               logger,
-		selfAddr:             dialAddr,
-		getListenerPort:      getListenerPort,
-		exportListener:       exportListener,
-		startColocationGroup: startColocationGroup,
-		stopAppVersions:      stopAppVersions,
-		deleteAppVersions:    deleteAppVersions,
+		ctx:               ctx,
+		store:             store,
+		assigner:          assigner.NewAssigner(ctx, store, logger, assigner.EqualDistributionAlgorithm, babysitterConstructor, replicaExists),
+		logger:            logger,
+		selfAddr:          dialAddr,
+		getListenerPort:   getListenerPort,
+		exportListener:    exportListener,
+		startReplicaSet:   startReplicaSet,
+		stopAppVersions:   stopAppVersions,
+		deleteAppVersions: deleteAppVersions,
 	}
 	m.addHandlers(mux) // keeps a ref on "manager"
 	return nil
@@ -114,9 +114,8 @@ func (m *manager) addHandlers(mux *http.ServeMux) {
 	mux.HandleFunc(deployURL, protomsg.HandlerDo(m.logger, m.Deploy))
 	mux.HandleFunc(stopURL, protomsg.HandlerDo(m.logger, m.Stop))
 	mux.HandleFunc(deleteURL, protomsg.HandlerDo(m.logger, m.Delete))
-	mux.HandleFunc(getGroupStateURL, protomsg.HandlerFunc(m.logger, m.GetGroupState))
-	mux.HandleFunc(startComponentURL, protomsg.HandlerDo(m.logger, m.StartComponent))
-	mux.HandleFunc(startColocationGroupURL, protomsg.HandlerDo(m.logger, m.StartColocationGroup))
+	mux.HandleFunc(getReplicaSetStateURL, protomsg.HandlerFunc(m.logger, m.GetReplicaSetState))
+	mux.HandleFunc(activateComponentURL, protomsg.HandlerDo(m.logger, m.ActivateComponent))
 	mux.HandleFunc(registerReplicaURL, protomsg.HandlerDo(m.logger, m.RegisterReplica))
 	mux.HandleFunc(reportLoadURL, protomsg.HandlerDo(m.logger, m.ReportLoad))
 	mux.HandleFunc(getListenerAddressURL, protomsg.HandlerFunc(m.logger, m.GetListenerAddress))
@@ -147,40 +146,28 @@ func (m *manager) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRe
 }
 
 func (m *manager) deploy(ctx context.Context, cfg *config.GKEConfig) error {
-	// Update the manager address, so the groups in this deployment can
+	// Update the manager address, so the babysitters in this deployment can
 	// reach the local manager.
 	cfg.ManagerAddr = m.selfAddr
 
-	// Register the main group to be started.
-	dep := cfg.Deployment
-	if err := m.assigner.RegisterComponentToStart(ctx,
-		&protos.ComponentToStart{
-			App:             dep.App.Name,
-			DeploymentId:    dep.Id,
-			ColocationGroup: "main",
-			Component:       "main",
-			IsRouted:        false,
-		}); err != nil {
-		return err
-	}
-
-	// Start the main colocation group in this deployment.
-	group := &protos.ColocationGroup{Name: "main"}
-	if err := m.startColocationGroup(m.ctx, cfg, group); err != nil {
-		return fmt.Errorf("cannot start %q: %v", dep.Id, err)
-	}
-	return nil
+	// Activate the main component.
+	return m.ActivateComponent(ctx, &nanny.ActivateComponentRequest{
+		Component: "main",
+		Routed:    false,
+		Config:    cfg,
+	})
 }
 
-// Stop stops all the groups associated with a list of applications
-// versions.
+// Stop stops all of the Kubernetes ReplicaSets associated with a list of
+// applications versions.
 //
-// Note that it is the responsibility of the stopAppVersions() method to stop all
-// groups. stopAppVersions() might be blocking and may not finish before the
-// request from the distributor timeouts. However, the distributor will keep
-// sending the list of versions to delete as long as it didn't get a successful
-// reply. Eventually, the stopAppVersions() will return immediately once all
-// versions are deleted, in which case the reply to the distributor will be successful.
+// Note that it is the responsibility of the stopAppVersions() method to stop
+// all of the ReplicaSets. stopAppVersions() might be blocking and may not
+// finish before the request from the distributor times out. However, the
+// distributor will keep sending the list of versions to delete as long as it
+// didn't get a successful reply. Eventually, the stopAppVersions() will return
+// immediately once all versions are deleted, in which case the reply to the
+// distributor will be successful.
 func (m *manager) Stop(_ context.Context, req *nanny.ApplicationStopRequest) error {
 	m.logger.Info("Stopping versions", "versions", req.Versions, "app", req.AppName)
 	if err := m.stop(req); err != nil {
@@ -194,7 +181,7 @@ func (m *manager) stop(req *nanny.ApplicationStopRequest) error {
 	if err := m.stopAppVersions(m.ctx, req.AppName, req.Versions); err != nil {
 		return err
 	}
-	if err := m.assigner.UnregisterGroups(m.ctx, req.AppName, req.Versions); err != nil {
+	if err := m.assigner.UnregisterReplicaSets(m.ctx, req.AppName, req.Versions); err != nil {
 		return err
 	}
 
@@ -253,81 +240,81 @@ func (m *manager) Delete(_ context.Context, req *nanny.ApplicationDeleteRequest)
 	return nil
 }
 
-// GetGroupState returns group information for an application version
+// GetReplicaSetState returns ReplicaSet information for an application version
 // or a set of application versions.
-func (m *manager) GetGroupState(ctx context.Context, req *nanny.GroupStateRequest) (*nanny.GroupState, error) {
-	reply, err := m.assigner.GetGroupState(ctx, req)
+func (m *manager) GetReplicaSetState(ctx context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
+	reply, err := m.assigner.GetReplicaSetState(ctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get group state: %w", err)
 	}
 	return reply, nil
 }
 
-// StartComponent registers a component to start for a group. Every group
-// has a key in the store that contains the set of components the group
-// should be running.
-func (m *manager) StartComponent(ctx context.Context, req *protos.ComponentToStart) error {
-	if err := m.assigner.RegisterComponentToStart(ctx, req); err != nil {
+// ActivateComponent ensures that the given component is hosted by a running
+// Kubernetes ReplicaSet.
+func (m *manager) ActivateComponent(ctx context.Context, req *nanny.ActivateComponentRequest) error {
+	// Register the component with the assigner, which will generate
+	// routing information for the component.
+	if err := m.assigner.RegisterActiveComponent(ctx, req); err != nil {
 		return fmt.Errorf("cannot register component to start for deployment version %q of application %q: %w",
-			req.DeploymentId, req.App, err)
+			req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+	}
+
+	// Ensure that the Kubernetes ReplicaSet, which hosts the component, is
+	// started.
+	rs := nanny.ReplicaSetForComponent(req.Component, req.Config)
+	if err := m.startReplicaSet(m.ctx, req.Config, rs); err != nil {
+		return fmt.Errorf("cannot start ReplicaSet %q in version %q: %w", rs, req.Config.Deployment.Id, err)
 	}
 	return nil
 }
 
-// StartColocationGroup starts a new colocation group for a given application
-// version.
-func (m *manager) StartColocationGroup(_ context.Context, req *nanny.ColocationGroupStartRequest) error {
-	if err := m.startColocationGroup(m.ctx, req.Config, req.Group); err != nil {
-		return fmt.Errorf("cannot start colocation group %q in version %q: %w", req.Group.Name, req.Config.Deployment.Id, err)
-	}
-	return nil
-}
-
-func (m *manager) RegisterReplica(ctx context.Context, req *nanny.ReplicaToRegister) error {
+func (m *manager) RegisterReplica(ctx context.Context, req *nanny.RegisterReplicaRequest) error {
 	if err := m.assigner.RegisterReplica(ctx, req); err != nil {
-		return fmt.Errorf("cannot register replica of group %q in version %v of application %q: %w",
-			req.Replica.Group, req.Replica.DeploymentId, req.Replica.App, err)
+		return fmt.Errorf(
+			"cannot register pod %q in version %v of application %q: %w",
+			req.PodName, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
 	}
 	return nil
 }
 
-func (m *manager) ReportLoad(ctx context.Context, req *protos.WeaveletLoadReport) error {
+func (m *manager) ReportLoad(ctx context.Context, req *nanny.LoadReport) error {
 	if err := m.assigner.OnNewLoadReport(ctx, req); err != nil {
-		return fmt.Errorf("cannot handle load report of group %q in version %v of application %q: %w", req.Group, req.DeploymentId, req.App, err)
+		return fmt.Errorf("cannot handle load report of pod %q in version %v of application %q: %w", req.PodName, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
 	}
 	return nil
 }
 
-func (m *manager) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetAddressReply, error) {
-	port, err := m.getListenerPort(ctx, req.Config, req.Group, req.Listener)
+func (m *manager) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
+	port, err := m.getListenerPort(ctx, req.Config, req.ReplicaSet, req.Listener)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get address for group %s listener %s in version %v of application %q: %w", req.Group.Name, req.Listener, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+		return nil, fmt.Errorf("cannot get address for ReplicaSset %s listener %s in version %v of application %q: %w", req.ReplicaSet, req.Listener, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
 	}
-	return &protos.GetAddressReply{Address: fmt.Sprintf(":%d", port)}, nil
+	return &protos.GetListenerAddressReply{Address: fmt.Sprintf(":%d", port)}, nil
 }
 
 func (m *manager) ExportListener(ctx context.Context, req *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error) {
 	lis := req.Listener
-	if err := m.assigner.RegisterListener(ctx, req.Config.Deployment, req.Group, req.Listener); err != nil {
+	if err := m.assigner.RegisterListener(ctx, req); err != nil {
 		return nil, fmt.Errorf("cannot register listener %q in version %v of application %q: %w", lis.Name, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
 	}
-	return m.exportListener(ctx, req.Config, req.Group, req.Listener)
+	return m.exportListener(ctx, req.Config, req.ReplicaSet, req.Listener)
 }
 
-func (m *manager) GetRoutingInfo(_ context.Context, req *protos.GetRoutingInfo) (*protos.RoutingInfo, error) {
+func (m *manager) GetRoutingInfo(_ context.Context, req *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
 	reply, err := m.assigner.GetRoutingInfo(req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot resolve the address of group %q in version %v of application %q: %v",
-			req.Group, req.DeploymentId, req.App, err)
+		return nil, fmt.Errorf("cannot get routing info for component %q in version %v of application %q: %v",
+			req.Component, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
 	}
 	return reply, nil
 }
 
-func (m *manager) GetComponentsToStart(_ context.Context, req *protos.GetComponentsToStart) (*protos.ComponentsToStart, error) {
+func (m *manager) GetComponentsToStart(_ context.Context, req *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error) {
 	reply, err := m.assigner.GetComponentsToStart(req)
 	if err != nil {
 		return nil, fmt.Errorf("cannot get components to start for deployment version %q of application %q: %w",
-			req.DeploymentId, req.App, err)
+			req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
 	}
 	return reply, nil
 }

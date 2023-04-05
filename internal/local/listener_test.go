@@ -18,8 +18,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
@@ -34,7 +34,7 @@ func TestRecordGetListeners(t *testing.T) {
 	version := newAppVersion(
 		"todo",
 		uuid.MustParse("11111111-1111-1111-1111-111111111111"),
-		[]*protos.Listener{
+		[]*nanny.Listener{
 			{Name: "l1", Addr: "1.1.1.1:1"},
 			{Name: "l1", Addr: "2.2.2.2:2"},
 			{Name: "l1", Addr: "3.3.3.3:3"},
@@ -58,7 +58,7 @@ func TestRecordGetListeners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetListeners: %v", err)
 	}
-	less := func(x, y *protos.Listener) bool { return x.Name < y.Name }
+	less := func(x, y *nanny.Listener) bool { return x.Name < y.Name }
 	if diff := cmp.Diff(version.listeners, listeners,
 		cmpopts.SortSlices(less), protocmp.Transform()); diff != "" {
 		t.Fatalf("bad listeners: (-want +got)\n%s", diff)

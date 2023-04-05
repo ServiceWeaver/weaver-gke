@@ -93,8 +93,8 @@ func (h *HttpClient) GetPrivateTrafficAssignment(ctx context.Context) (*nanny.Tr
 }
 
 // RunProfiling implements the clients.DistributorClient interface.
-func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.RunProfiling) (*protos.Profile, error) {
-	reply := &protos.Profile{}
+func (h *HttpClient) RunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
+	reply := &protos.GetProfileReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  http.DefaultClient,
 		Addr:    h.Addr,
