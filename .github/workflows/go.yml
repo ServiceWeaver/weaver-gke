@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: ["1.19", "1.20"]
+        version: ["1.20"]
         command: ["build", "vet", "lint", "test", "testrace"]
     env:
       GOPRIVATE: github.com/ServiceWeaver/weaver

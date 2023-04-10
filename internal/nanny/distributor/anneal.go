@@ -16,12 +16,12 @@ package distributor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -126,7 +126,7 @@ func (d *Distributor) ManageAppStates(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	var errs errlist.ErrList
+	var errs []error
 	for _, app := range state.Applications {
 		if err := d.mayDeployApp(ctx, app); err != nil {
 			errs = append(errs, fmt.Errorf("error deploying app %v: %w", app, err))
@@ -141,7 +141,7 @@ func (d *Distributor) ManageAppStates(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("error getting ReplicaSet state for app %v: %w", app, err))
 		}
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // mayDeployApp determines whether any versions of a given application need to
@@ -331,7 +331,7 @@ func (d *Distributor) getListenerState(ctx context.Context, app string) error {
 	if err != nil {
 		return err
 	}
-	var errs errlist.ErrList
+	var errs []error
 	for _, v := range state.Versions {
 		if v.Listeners, err = d.getListeners(ctx, v.Config); err != nil {
 			errs = append(errs, err)
@@ -341,7 +341,7 @@ func (d *Distributor) getListenerState(ctx context.Context, app string) error {
 	if _, err := d.saveAppState(ctx, app, state, version); err != nil {
 		errs = append(errs, err)
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // getReplicaSetState retrieve the latest ReplicaSet state for the application
@@ -352,7 +352,7 @@ func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error 
 		return err
 	}
 
-	var errs errlist.ErrList
+	var errs []error
 	for _, version := range state.Versions {
 		// Get ReplicaSet state for the application version.
 		replicaSets, err := d.manager.GetReplicaSetState(ctx, &nanny.GetReplicaSetStateRequest{
@@ -369,7 +369,7 @@ func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error 
 	if _, err := d.saveAppState(ctx, app, state, version); err != nil {
 		errs = append(errs, err)
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // hostname returns the hostname for the given listener, and the boolean value

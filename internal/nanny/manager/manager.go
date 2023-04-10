@@ -20,12 +20,12 @@ package manager
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
@@ -130,14 +130,14 @@ func (m *manager) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRe
 		versionStrs[i] = cfg.Deployment.Id
 	}
 	m.logger.Info("Starting", "versions", versionStrs, "app", req.AppName)
-	var errs errlist.ErrList
+	var errs []error
 	for _, cfg := range req.Versions {
 		if err := m.deploy(ctx, cfg); err != nil {
 			errs = append(errs, err)
 			continue
 		}
 	}
-	if err := errs.ErrorOrNil(); err != nil {
+	if err := errors.Join(errs...); err != nil {
 		m.logger.Error("Error starting", err, "versions", versionStrs, "app", req.AppName)
 		return err
 	}
@@ -193,13 +193,13 @@ func (m *manager) stop(req *nanny.ApplicationStopRequest) error {
 	// been stopped. This is complicated by the fact that the store writes are
 	// spread between the assigner, manager, the gke deployer, and the
 	// gke-local deployer.
-	var errs errlist.ErrList
+	var errs []error
 	for _, version := range req.Versions {
 		if err := m.gcVersion(m.ctx, req.AppName, version); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // gcVersion garbage collects all the store entries for the provided version.
