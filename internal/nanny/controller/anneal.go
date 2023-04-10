@@ -16,10 +16,10 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -78,7 +78,7 @@ func (c *controller) fetchTrafficAssignments(ctx context.Context) error {
 
 	// Send a request to get the latest traffic assignment for public listeners
 	// from each distributor.
-	var errs errlist.ErrList
+	var errs []error
 	for _, d := range state.Distributors {
 		reply, err := c.distributor(d.Location.DistributorAddr).GetPublicTrafficAssignment(ctx)
 		if err != nil {
@@ -104,7 +104,7 @@ func (c *controller) fetchTrafficAssignments(ctx context.Context) error {
 	if err := c.saveState(ctx, state, version); err != nil {
 		errs = append(errs, err)
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // applyTrafficAssignment computes the latest assignment information and applies it.
@@ -131,7 +131,7 @@ func (c *controller) manageState(ctx context.Context) error {
 		return err
 	}
 
-	var errs errlist.ErrList
+	var errs []error
 	for app := range state.Applications {
 		if err := c.getDistributorState(ctx, app); err != nil {
 			errs = append(errs, fmt.Errorf("error getting distributor state: %v", err))
@@ -146,7 +146,7 @@ func (c *controller) manageState(ctx context.Context) error {
 			errs = append(errs, fmt.Errorf("error sending cleanup requests: %v", err))
 		}
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // getDistributorState retrieves the latest application state from all the
@@ -166,7 +166,7 @@ func (c *controller) getDistributorState(ctx context.Context, app string) error 
 	}
 
 	// Retrieve the latest application state from every distributor.
-	var errs errlist.ErrList
+	var errs []error
 	for loc := range locations {
 		addr, err := c.getDistributorAddr(ctx, loc)
 		if err != nil {
@@ -185,7 +185,7 @@ func (c *controller) getDistributorState(ctx context.Context, app string) error 
 	if err := c.saveAppState(ctx, app, state, version); err != nil {
 		errs = append(errs, err)
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // applyLocationUpdate updates the application state with a state update
@@ -314,7 +314,7 @@ func (c *controller) maySendDistributionRequests(ctx context.Context, app string
 	}
 
 	requests := c.createDistributionRequests(app, state)
-	var errs errlist.ErrList
+	var errs []error
 	for loc, req := range requests {
 		var versions []string
 		for _, v := range req.Requests {
@@ -331,7 +331,7 @@ func (c *controller) maySendDistributionRequests(ctx context.Context, app string
 	if err := c.saveAppState(ctx, app, state, version); err != nil {
 		errs = append(errs, err)
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // createDistributionRequests creates distribution requests for all distributors
@@ -406,7 +406,7 @@ func (c *controller) maySendCleanupRequests(ctx context.Context, app string) err
 	}
 
 	// Send the requests.
-	var errs errlist.ErrList
+	var errs []error
 	for loc, req := range reqs {
 		addr, err := c.getDistributorAddr(ctx, loc)
 		if err != nil {
@@ -419,7 +419,7 @@ func (c *controller) maySendCleanupRequests(ctx context.Context, app string) err
 			continue
 		}
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // getDistributorAddr returns the address of the distributor in the provided

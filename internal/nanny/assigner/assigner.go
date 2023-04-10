@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/clients"
-	"github.com/ServiceWeaver/weaver-gke/internal/errlist"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
@@ -683,7 +682,7 @@ func (a *Assigner) OnNewLoadReport(ctx context.Context, req *nanny.LoadReport) e
 		}
 
 		// Update the ReplicaSet's load information.
-		var errs errlist.ErrList
+		var errs []error
 		for c, cLoad := range req.Load.Loads {
 			// Ignore load reports for unknown components.
 			assignment, found := rs.Components[c]
@@ -705,7 +704,7 @@ func (a *Assigner) OnNewLoadReport(ctx context.Context, req *nanny.LoadReport) e
 				errs = append(errs, err)
 			}
 		}
-		return errs.ErrorOrNil()
+		return errors.Join(errs...)
 	})
 	return err
 }
@@ -897,7 +896,7 @@ func (a *Assigner) advanceAssignments(ctx context.Context) error {
 		return fmt.Errorf("assigner state missing")
 	}
 
-	var errs errlist.ErrList
+	var errs []error
 	for _, app := range state.Applications {
 		appState, version, err := a.loadAppState(ctx, app)
 		if err != nil {
@@ -915,7 +914,7 @@ func (a *Assigner) advanceAssignments(ctx context.Context) error {
 			}
 		}
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // annealCheckers attempts to move the actual set of health checkers towards
@@ -933,13 +932,13 @@ func (a *Assigner) annealCheckers(ctx context.Context) error {
 	}
 
 	// Anneal every app.
-	var errs errlist.ErrList
+	var errs []error
 	for _, app := range state.Applications {
 		if err := a.annealCheckersForApp(ctx, app); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // annealCheckersForApp attempts to move the actual set of checkers towards the
@@ -960,7 +959,7 @@ func (a *Assigner) annealCheckersForApp(ctx context.Context, app string) error {
 	a.deleteCheckers(app, state)
 
 	// Add any new checkers.
-	var errs errlist.ErrList
+	var errs []error
 	for _, rid := range state.ReplicaSetIds {
 		replicaSet, version, err := a.loadReplicaSetInfo(ctx, rid)
 		if err != nil {
@@ -976,7 +975,7 @@ func (a *Assigner) annealCheckersForApp(ctx context.Context, app string) error {
 		}
 		a.updateCheckers(rid, replicaSet, protos.HealthStatus_UNKNOWN)
 	}
-	return errs.ErrorOrNil()
+	return errors.Join(errs...)
 }
 
 // deleteCheckers stops and deletes any health checkers that are no longer
