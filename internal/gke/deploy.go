@@ -28,6 +28,7 @@ import (
 	"strings"
 	sync "sync"
 	"text/template"
+	"time"
 
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
@@ -143,6 +144,25 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, nil, err
 	}
 	if err := enableMultiClusterServices(config); err != nil {
+		return nil, nil, err
+	}
+
+	// Wait until the robot accounts corresponding to the enabled cloud services
+	// have been created. This creation can sometimes lags behind and cause
+	// failures for further setup steps.
+	sub := func(str string) string {
+		return fmt.Sprintf(str, config.ProjectNumber)
+	}
+	if err := waitServiceAccountsCreated(ctx, config,
+		sub("serviceAccount:service-%s@gcp-sa-artifactregistry.iam.gserviceaccount.com"),
+		sub("serviceAccount:%s@cloudbuild.gserviceaccount.com"),
+		sub("serviceAccount:service-%s@gcp-sa-cloudbuild.iam.gserviceaccount.com"),
+		sub("serviceAccount:service-%s@compute-system.iam.gserviceaccount.com"),
+		sub("serviceAccount:service-%s@container-engine-robot.iam.gserviceaccount.com"),
+		sub("serviceAccount:%s@cloudservices.gserviceaccount.com"),
+		sub("serviceAccount:service-%s@gcp-sa-gkehub.iam.gserviceaccount.com"),
+		sub("serviceAccount:service-%s@gcp-sa-mcsd.iam.gserviceaccount.com"),
+	); err != nil {
 		return nil, nil, err
 	}
 
@@ -486,7 +506,51 @@ func ensureIAMServiceAccounts(ctx context.Context, config CloudConfig, bindings 
 	return ensureIAMServiceAccount(ctx, config, bindings, applicationIAMServiceAccount,
 		"roles/logging.logWriter",
 		"roles/monitoring.editor",
-		"roles/cloudtrace.agent")
+		"roles/cloudtrace.agent",
+	)
+}
+
+// waitServiceAccountsCreated waits until the given service accounts have been
+// created.
+// NOTE: this function doesn't actually create any service accounts.
+func waitServiceAccountsCreated(ctx context.Context, config CloudConfig, accounts ...string) error {
+	// Get the current IAM bindings for the project.
+	bindings, err := getProjectIAMBindings(ctx, config)
+	if err != nil {
+		return err
+	}
+
+	waitAccount := func(acct string) error {
+		if roles := bindings[acct]; roles != nil {
+			return nil
+		}
+
+		// Wait up to a minute for the service account to be created.
+		waitCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		fmt.Fprintf(os.Stderr, "Waiting for the service account %q to be created...", acct)
+		for r := retry.Begin(); r.Continue(waitCtx); {
+			if bindings, err = getProjectIAMBindings(ctx, config); err != nil {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				return err
+			}
+			if roles := bindings[acct]; roles != nil {
+				fmt.Fprintf(os.Stderr, "Done\n")
+				return nil
+			}
+		}
+		fmt.Fprintf(os.Stderr, "Timeout\n")
+		return ctx.Err()
+	}
+
+	// Wait for all accounts to be created.
+	for _, acct := range accounts {
+		if err := waitAccount(acct); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // ensureIAMServiceAccount creates a GCP IAM service account with the given name
