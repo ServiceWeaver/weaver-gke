@@ -377,6 +377,11 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, "", err
 	}
 
+	// Create a custom GCP role for minting SSL certificates.
+	if err := createSSLRole(ctx, config); err != nil {
+		return nil, "", err
+	}
+
 	// Ensure that the default compute service account has all the necessary
 	// permissions.
 	if err := ensureComputePermissions(ctx, config, bindings); err != nil {
@@ -484,6 +489,8 @@ func ensureComputePermissions(ctx context.Context, config CloudConfig, bindings 
 		"roles/artifactregistry.reader",
 		"roles/logging.logWriter",
 		"roles/monitoring.editor",
+		"roles/cloudtrace.agent",
+		fmt.Sprintf("projects/%s/roles/%s", config.Project, sslRole),
 	} {
 		if err := ensureProjectIAMBinding(config, role, member, bindings); err != nil {
 			return err
@@ -495,17 +502,11 @@ func ensureComputePermissions(ctx context.Context, config CloudConfig, bindings 
 // ensureIAMServiceAccounts ensures that the the GCP IAM service accounts that
 // will be associated with the per-cluster Kubernetes service accounts.
 func ensureIAMServiceAccounts(ctx context.Context, config CloudConfig, bindings iamBindings) error {
-	// Create a custom GCP role for minting SSL certificates.
-	sslRole, err := createSSLRole(ctx, config)
-	if err != nil {
-		return err
-	}
-
 	// Setup the service account for the controller.
 	if err := ensureIAMServiceAccount(ctx, config, bindings, controllerIAMServiceAccount,
 		"roles/logging.logWriter",
 		"roles/monitoring.editor",
-		sslRole); err != nil {
+		fmt.Sprintf("projects/%s/roles/%s", config.Project, sslRole)); err != nil {
 		return err
 	}
 
@@ -884,8 +885,8 @@ func ensureTrustConfig(ctx context.Context, cluster *ClusterInfo) error {
 
 // createSSLRole creates a custom GCP role that stores permissions necessary
 // for minting SSL certificates.
-func createSSLRole(ctx context.Context, config CloudConfig) (string, error) {
-	if err := patchProjectCustomRole(ctx, config, patchOptions{}, sslRole, &iam.Role{
+func createSSLRole(ctx context.Context, config CloudConfig) error {
+	return patchProjectCustomRole(ctx, config, patchOptions{}, sslRole, &iam.Role{
 		Description: "Custom role that grants Service Weaver service SSL-minting permissions.",
 		Stage:       "GA",
 		IncludedPermissions: []string{
@@ -894,10 +895,7 @@ func createSSLRole(ctx context.Context, config CloudConfig) (string, error) {
 			"compute.sslCertificates.delete",
 			"compute.sslCertificates.list",
 		},
-	}); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("projects/%s/roles/%s", config.Project, sslRole), nil
+	})
 }
 
 // ensureConfigCluster sets up a Service Weaver configuration cluster, returning the
