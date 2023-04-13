@@ -25,6 +25,10 @@ import (
 	monitoring "cloud.google.com/go/monitoring/apiv3"
 	monitoringv2 "cloud.google.com/go/monitoring/apiv3/v2"
 	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
+	"github.com/ServiceWeaver/weaver/runtime/metrics"
+	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"google.golang.org/api/iterator"
 	"google.golang.org/genproto/googleapis/api/distribution"
@@ -34,10 +38,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/prototext"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
-	"github.com/ServiceWeaver/weaver/runtime/metrics"
-	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/ServiceWeaver/weaver/runtime/retry"
 )
 
 // metricExporter exports metrics to Google Cloud.
@@ -301,6 +301,25 @@ func NewMetricQuerent(config CloudConfig) *MetricQuerent {
 	return &MetricQuerent{config: config}
 }
 
+// Exists returns true iff the metric with the given name exists.
+func (mq *MetricQuerent) Exists(ctx context.Context, metric string) (bool, error) {
+	client, err := monitoringv2.NewMetricClient(ctx, mq.config.ClientOptions()...)
+	if err != nil {
+		return false, err
+	}
+	defer client.Close()
+
+	_, err = client.GetMetricDescriptor(ctx, &monitoringpb.GetMetricDescriptorRequest{
+		Name: fmt.Sprintf("projects/%s/metricDescriptors/%s", mq.config.Project, metric),
+	})
+	if isNotFound(err) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // QueryTimeSeries runs the given MQL [1] query and returns the resulting
 // time series.
 //
@@ -384,7 +403,7 @@ retry:
 
 var metricQueryTmpl = template.Must(template.New("query").Parse(`
 fetch k8s_container
-| metric 'custom.googleapis.com/{{.Metric}}'
+| metric '{{.Metric}}'
 | filter (resource.location == '{{.Location}}')
 | align delta(1m)
 | within 1m
@@ -400,6 +419,7 @@ fetch k8s_container
 //
 // REQUIRES: The metric is a Service Weaver metric of type COUNTER.
 func getMetricCounts(ctx context.Context, config CloudConfig, region string, metric string, labelsGroupBy ...string) ([]distributor.MetricCount, error) {
+	metric = fmt.Sprintf("custom.googleapis.com/%s", metric)
 	var query strings.Builder
 	if err := metricQueryTmpl.Execute(&query, struct {
 		Metric, Location string
@@ -411,7 +431,18 @@ func getMetricCounts(ctx context.Context, config CloudConfig, region string, met
 	}); err != nil {
 		return nil, err
 	}
-	tss, err := NewMetricQuerent(config).QueryTimeSeries(ctx, query.String())
+
+	// Check if the metric exists.
+	querent := NewMetricQuerent(config)
+	if ok, err := querent.Exists(ctx, metric); err != nil {
+		return nil, err
+	} else if !ok {
+		// Metric doesn't exist: return an empty grouping.
+		return nil, nil
+	}
+
+	// Query the metric for its counts.
+	tss, err := querent.QueryTimeSeries(ctx, query.String())
 	if err != nil {
 		return nil, err
 	}
