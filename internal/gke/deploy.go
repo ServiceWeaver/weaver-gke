@@ -1109,11 +1109,8 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 				Enabled: false,
 			},
 		},
-		// Disabling logging and monitoring services ensures that no logging
-		// or monitoring pods get scheduled on kubernetes nodes, saving
-		// resources. (NOTE: Service Weaver handles logging and monitoring on behalf
-		// of the application.)
-		LoggingService: "none",
+		// NOTE: Leave logging enabled during development.
+		LoggingService: "logging.googleapis.com/kubernetes",
 		// NOTE: GKE cluster autoscaler requires monitoring to be enabled.
 		MonitoringService: "monitoring.googleapis.com/kubernetes",
 		NodePools: []*containerpb.NodePool{
