@@ -154,6 +154,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return fmt.Sprintf(str, config.ProjectNumber)
 	}
 	if err := waitServiceAccountsCreated(ctx, config,
+		sub("serviceAccount:%s-compute@developer.gserviceaccount.com"),
 		sub("serviceAccount:service-%s@gcp-sa-artifactregistry.iam.gserviceaccount.com"),
 		sub("serviceAccount:%s@cloudbuild.gserviceaccount.com"),
 		sub("serviceAccount:service-%s@gcp-sa-cloudbuild.iam.gserviceaccount.com"),
@@ -376,6 +377,12 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, "", err
 	}
 
+	// Ensure that the default compute service account has all the necessary
+	// permissions.
+	if err := ensureComputePermissions(ctx, config, bindings); err != nil {
+		return nil, "", err
+	}
+
 	// Setup Service Weaver IAM service accounts.
 	if err := ensureIAMServiceAccounts(ctx, config, bindings); err != nil {
 		return nil, "", err
@@ -467,6 +474,22 @@ func grantGatewayIAMPermissions(config CloudConfig, bindings iamBindings) error 
 		"serviceAccount:service-%s@gcp-sa-multiclusteringress.iam.gserviceaccount.com", config.ProjectNumber)
 	const role = "roles/container.admin"
 	return ensureProjectIAMBinding(config, role, member, bindings)
+}
+
+// ensureComputePermissions ensures that the default compute service account
+// has the appropriate permissions.
+func ensureComputePermissions(ctx context.Context, config CloudConfig, bindings iamBindings) error {
+	member := fmt.Sprintf("serviceAccount:%s-compute@developer.gserviceaccount.com", config.ProjectNumber)
+	for _, role := range []string{
+		"roles/artifactregistry.reader",
+		"roles/logging.logWriter",
+		"roles/monitoring.editor",
+	} {
+		if err := ensureProjectIAMBinding(config, role, member, bindings); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureIAMServiceAccounts ensures that the the GCP IAM service accounts that
@@ -577,17 +600,25 @@ func ensureIAMServiceAccount(ctx context.Context, config CloudConfig, bindings i
 // ensureProjectIAMBinding ensures that the IAM binding member -> role exists
 // in the IAM bindings for the given project.
 func ensureProjectIAMBinding(config CloudConfig, role, member string, bindings iamBindings) error {
-	if _, ok := bindings[member][role]; ok {
+	roles := bindings[member]
+	if roles == nil {
+		roles = map[string]struct{}{}
+		bindings[member] = roles
+	}
+	if _, ok := roles[role]; ok {
 		// Role already bound to the member.
 		return nil
 	}
 
-	// Add the binding.
+	// Add the member -> role binding.
 	_, err := runGcloud(
 		config,
 		fmt.Sprintf("Binding role %q to member %q", role, member),
 		cmdOptions{}, "projects", "add-iam-policy-binding",
 		config.Project, "--member", member, "--role", role, "--condition=None")
+	if err == nil {
+		roles[role] = struct{}{}
+	}
 	return err
 }
 
@@ -1098,7 +1129,9 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 					// NOTE(spetrovic): Allow full access scopes, as
 					// recommended by:
 					// https://cloud.google.com/compute/docs/access/service-accounts
-					OauthScopes: []string{"https://www.googleapis.com/auth/cloud-platform"},
+					OauthScopes: []string{
+						"https://www.googleapis.com/auth/cloud-platform",
+					},
 					WorkloadMetadataConfig: &containerpb.WorkloadMetadataConfig{
 						// Setting mode to GCE_METADATA ensures that no GKE
 						// metadata pods are scheduled on kubernetes nodes,
