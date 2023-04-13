@@ -32,6 +32,7 @@ import (
 	"github.com/golang/protobuf/ptypes/timestamp"
 	"google.golang.org/api/iterator"
 	"google.golang.org/genproto/googleapis/api/distribution"
+	"google.golang.org/genproto/googleapis/api/label"
 	metricpb "google.golang.org/genproto/googleapis/api/metric"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
 	mpb "google.golang.org/genproto/googleapis/monitoring/v3"
@@ -133,6 +134,13 @@ func (m *metricExporter) createMetricDescriptor(ctx context.Context, snap *metri
 		kind = metricpb.MetricDescriptor_CUMULATIVE
 		valueType = metricpb.MetricDescriptor_DISTRIBUTION
 	}
+	labels := make([]*label.LabelDescriptor, 0, len(snap.Labels))
+	for l := range snap.Labels {
+		labels = append(labels, &label.LabelDescriptor{
+			Key:       l,
+			ValueType: label.LabelDescriptor_STRING,
+		})
+	}
 
 	// Create and register a custom metric descriptor.
 	desc := &metricpb.MetricDescriptor{
@@ -140,6 +148,7 @@ func (m *metricExporter) createMetricDescriptor(ctx context.Context, snap *metri
 		Type:        path.Join("custom.googleapis.com", snap.Name),
 		MetricKind:  kind,
 		ValueType:   valueType,
+		Labels:      labels,
 		Description: snap.Help,
 		DisplayName: snap.Name,
 	}
