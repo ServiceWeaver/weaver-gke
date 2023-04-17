@@ -131,6 +131,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		"artifactregistry.googleapis.com",
 		"cloudbuild.googleapis.com",
 		"cloudresourcemanager.googleapis.com",
+		"cloudtrace.googleapis.com",
 		"container.googleapis.com",
 		"dns.googleapis.com",
 		"gkehub.googleapis.com",
@@ -1074,7 +1075,8 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 		},
 		InitialClusterVersion: "latest",
 		Autoscaling: &containerpb.ClusterAutoscaling{
-			AutoscalingProfile: containerpb.ClusterAutoscaling_OPTIMIZE_UTILIZATION,
+			EnableNodeAutoprovisioning: false,
+			AutoscalingProfile:         containerpb.ClusterAutoscaling_OPTIMIZE_UTILIZATION,
 		},
 		AddonsConfig: &containerpb.AddonsConfig{
 			HttpLoadBalancing: &containerpb.HttpLoadBalancing{
@@ -1836,6 +1838,14 @@ func ensureNannyVerticalPodAutoscaler(ctx context.Context, cluster *ClusterInfo,
 			UpdatePolicy: &vautoscalingv1.PodUpdatePolicy{
 				UpdateMode:  ptrOf(vautoscalingv1.UpdateModeAuto),
 				MinReplicas: ptrOf(int32(1)),
+			},
+			ResourcePolicy: &vautoscalingv1.PodResourcePolicy{
+				ContainerPolicies: []vautoscalingv1.ContainerResourcePolicy{
+					{
+						ContainerName:       vautoscalingv1.DefaultContainerResourcePolicy,
+						ControlledResources: ptrOf([]apiv1.ResourceName{"ResourceMemory"}),
+					},
+				},
 			},
 		},
 	})
