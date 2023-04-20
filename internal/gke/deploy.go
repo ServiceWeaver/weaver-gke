@@ -148,6 +148,15 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, nil, err
 	}
 
+	// Setup the Service Weaver artifacts repository that will host container images.
+	if err := patchRepository(ctx, config, patchOptions{}, &artifactregistrypb.Repository{
+		Name: fmt.Sprintf("projects/%s/locations/%s/repositories/%s",
+			config.Project, buildLocation, dockerRepoName),
+		Format: artifactregistrypb.Repository_DOCKER,
+	}); err != nil {
+		return nil, nil, err
+	}
+
 	// Wait until the robot accounts corresponding to the enabled cloud services
 	// have been created. This creation can sometimes lags behind and cause
 	// failures for further setup steps.
@@ -165,15 +174,6 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		sub("serviceAccount:service-%s@gcp-sa-gkehub.iam.gserviceaccount.com"),
 		sub("serviceAccount:service-%s@gcp-sa-mcsd.iam.gserviceaccount.com"),
 	); err != nil {
-		return nil, nil, err
-	}
-
-	// Setup the Service Weaver artifacts repository that will host container images.
-	if err := patchRepository(ctx, config, patchOptions{}, &artifactregistrypb.Repository{
-		Name: fmt.Sprintf("projects/%s/locations/%s/repositories/%s",
-			config.Project, buildLocation, dockerRepoName),
-		Format: artifactregistrypb.Repository_DOCKER,
-	}); err != nil {
 		return nil, nil, err
 	}
 
@@ -550,8 +550,8 @@ func waitServiceAccountsCreated(ctx context.Context, config CloudConfig, account
 			return nil
 		}
 
-		// Wait up to a minute for the service account to be created.
-		waitCtx, cancel := context.WithTimeout(ctx, time.Minute)
+		// Wait for the service account to be created.
+		waitCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		fmt.Fprintf(os.Stderr, "Waiting for the service account %q to be created...", acct)
 		for r := retry.Begin(); r.Continue(waitCtx); {
