@@ -34,6 +34,7 @@ import (
 	"cloud.google.com/go/container/apiv1/containerpb"
 	"cloud.google.com/go/iam/apiv1/iampb"
 	privateca "cloud.google.com/go/security/privateca/apiv1"
+	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
@@ -1216,7 +1217,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 		},
 		Spec: backendconfigv1.BackendConfigSpec{
 			HealthCheck: &backendconfigv1.HealthCheckConfig{
-				RequestPath: ptrOf("/healthz"),
+				RequestPath: ptrOf(weaver.HealthzURL),
 			},
 		},
 	}); err != nil {

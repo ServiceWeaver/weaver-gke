@@ -112,7 +112,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		// start a nanny. If a nanny is already running, we will fail to bind
 		// to the nanny address.
 		logger := makeLogger("")
-		logger.Error("nanny listen", err, "address", addr)
+		logger.Error("nanny listen", "err", err, "address", addr)
 		return fmt.Errorf("nanny cannot listen on %q: %w", addr, err)
 	}
 
@@ -256,7 +256,7 @@ func RunProxy(ctx context.Context, port int) error {
 	addr := fmt.Sprintf(":%d", port)
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
-		logger.Error("proxy listen", err, "address", addr)
+		logger.Error("proxy listen", "err", err, "address", addr)
 		return err
 	}
 

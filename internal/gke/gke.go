@@ -29,6 +29,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver/runtime"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slog"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
@@ -200,7 +201,7 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg 
 		return err
 	}
 
-	if group == "main" {
+	if group == runtime.Main {
 		// Allocate a temporary spare CPU capacity so that the application
 		// version starts faster.
 		//
@@ -215,7 +216,7 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg 
 		spareDuration := 5 * time.Minute
 		if err := ensureTemporarySpareCapacity(ctx, cluster, logger, cfg, spareCpu, spareDuration); err != nil {
 			// Swallow the error as it isn't catastrophic.
-			logger.Error("Cannot allocate temporary spare capacity", err)
+			logger.Error("Cannot allocate temporary spare capacity", "err", err)
 		}
 	}
 
@@ -532,7 +533,7 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *sl
 		return fmt.Errorf("internal error: error encoding listener %+v: %w", lis, err)
 	}
 	svcName := name{cluster.Region, dep.App.Name, lis.Name, dep.Id[:8]}.DNSLabel()
-	targetName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSSubdomain()
+	targetName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	if err := patchService(ctx, cluster, patchOptions{logger: logger}, &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      svcName,
@@ -791,14 +792,13 @@ func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog
 		}
 		if spec.isGlobal {
 			// TODO(spetrovic): Figure out the easiest way to return 404s
-			// for the /healthz URL path, and then uncomment the code below.
-			// healthzPath := "/healthz"
+			// for the weaver.HealthzURL URL path, and then uncomment the code below.
 			// rules = append(rules, gatewayv1beta1.HTTPRouteRule{
 			// 	// Make /healthz inaccessible for external traffic.
 			// 	Matches: []gatewayv1beta1.HTTPRouteMatch{
 			// 		{
 			// 			Path: &gatewayv1beta1.HTTPPathMatch{
-			// 				Value: &healthzPath,
+			// 				Value: ptrOf(weaver.HealthzURL),
 			// 			},
 			// 		},
 			// 	},

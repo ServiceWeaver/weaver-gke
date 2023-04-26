@@ -115,7 +115,7 @@ func NewBabysitter(
 		DeploymentId: cfg.Deployment.Id,
 		Id:           podName,
 		Sections:     cfg.Deployment.App.Sections,
-		RunMain:      replicaSet == "main",
+		RunMain:      replicaSet == runtime.Main,
 	}
 	e, err := envelope.NewEnvelope(ctx, info, cfg.Deployment.App)
 	if err != nil {
@@ -175,7 +175,7 @@ func (b *Babysitter) Run() error {
 	if b.lis != nil {
 		go func() {
 			if err := b.runHTTP(); err != nil {
-				b.logger.Error("Error starting the HTTP server", err)
+				b.logger.Error("Error starting the HTTP server", "err", err)
 			}
 		}()
 	}
@@ -227,14 +227,14 @@ func (b *Babysitter) exportMetrics() {
 			snaps := metrics.Snapshot() // babysitter metrics
 			em, err := b.envelope.GetMetrics()
 			if err != nil {
-				b.logger.Error("cannot get envelope metrics", err)
+				b.logger.Error("cannot get envelope metrics", "err", err)
 				continue
 			}
 			snaps = append(snaps, em...)
 
 			// Export.
 			if err := b.metricExporter(snaps); err != nil {
-				b.logger.Error("cannot export metrics", err)
+				b.logger.Error("cannot export metrics", "err", err)
 			}
 
 		case <-b.ctx.Done():
@@ -266,7 +266,7 @@ func (b *Babysitter) reportLoad() error {
 			ticker.Reset(pick())
 			load, err := b.envelope.GetLoad()
 			if err != nil {
-				b.logger.Error("Get weavelet load", err)
+				b.logger.Error("Get weavelet load", "err", err)
 				continue
 			}
 			if err := b.manager.ReportLoad(b.ctx, &nanny.LoadReport{
@@ -276,7 +276,7 @@ func (b *Babysitter) reportLoad() error {
 				WeaveletAddr: b.envelope.WeaveletInfo().DialAddr,
 				Config:       b.cfg,
 			}); err != nil {
-				b.logger.Error("ReportLoad", err)
+				b.logger.Error("ReportLoad", "err", err)
 			}
 		case <-b.ctx.Done():
 			return b.ctx.Err()
@@ -326,11 +326,11 @@ func (b *Babysitter) watchRoutingInfo(component string) {
 	for r := retry.Begin(); r.Continue(b.ctx); {
 		routing, newVersion, err := b.getRoutingInfo(component, version)
 		if err != nil {
-			b.logger.Error("cannot get routing info; will retry", err, "component", component)
+			b.logger.Error("cannot get routing info; will retry", "err", err, "component", component)
 			continue
 		}
 		if err := b.envelope.UpdateRoutingInfo(routing); err != nil {
-			b.logger.Error("cannot update routing info; will retry", err, "component", component)
+			b.logger.Error("cannot update routing info; will retry", "err", err, "component", component)
 			continue
 		}
 		version = newVersion
@@ -377,12 +377,12 @@ func (b *Babysitter) watchComponents() {
 	for r := retry.Begin(); r.Continue(b.ctx); {
 		components, newVersion, err := b.getComponentsToStart(version)
 		if err != nil {
-			b.logger.Error("cannot get components to start; will retry", err)
+			b.logger.Error("cannot get components to start; will retry", "err", err)
 			continue
 		}
 		version = newVersion
 		if err := b.envelope.UpdateComponents(components); err != nil {
-			b.logger.Error("cannot update components to start; will retry", err)
+			b.logger.Error("cannot update components to start; will retry", "err", err)
 			continue
 		}
 		r.Reset()
@@ -417,6 +417,16 @@ func (b *Babysitter) ExportListener(ctx context.Context, req *protos.ExportListe
 		Listener:   &nanny.Listener{Name: req.Listener, Addr: req.Address},
 		Config:     b.cfg,
 	})
+}
+
+// VerifyClientCertificate implements the envelope.EnvelopeHandler interface.
+func (b *Babysitter) VerifyClientCertificate(context.Context, *protos.VerifyClientCertificateRequest) (*protos.VerifyClientCertificateReply, error) {
+	panic(fmt.Errorf("unused"))
+}
+
+// VerifyServerCertificate implements the envelope.EnvelopeHandler interface.
+func (b *Babysitter) VerifyServerCertificate(context.Context, *protos.VerifyServerCertificateRequest) (*protos.VerifyServerCertificateReply, error) {
+	panic(fmt.Errorf("unused"))
 }
 
 // HandleLogEntry implements the envelope.EnvelopeHandler interface.

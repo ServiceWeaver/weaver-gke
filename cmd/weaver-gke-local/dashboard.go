@@ -45,7 +45,7 @@ var dashboardSpec = tool.DashboardSpec{
 
 		// Start a separate Perfetto server, which has to run on
 		// a specific port.
-		db, err := perfetto.Open(ctx)
+		db, err := perfetto.Open(ctx, "gke-local")
 		if err != nil {
 			return err
 		}

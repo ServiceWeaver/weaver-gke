@@ -484,6 +484,9 @@ func (a *Assigner) getRoutingInfo(req *nanny.GetRoutingRequest) (*nanny.GetRouti
 	}
 
 	// Reply.
+	//
+	// TODO(mwhittaker): Right now, Local is never set to true. All
+	// communication is done via RPC. Fix that.
 	return &nanny.GetRoutingReply{
 		Version: newVersion.Opaque,
 		Routing: &protos.RoutingInfo{
@@ -874,11 +877,11 @@ func (a *Assigner) anneal() error {
 		case <-assignmentsTicker.C:
 			assignmentsTicker.Reset(pick())
 			if err := a.advanceAssignments(a.ctx); err != nil {
-				a.logger.Error("anneal assignments", err)
+				a.logger.Error("anneal assignments", "err", err)
 			}
 		case <-checkersTicker.C:
 			if err := a.annealCheckers(a.ctx); err != nil {
-				a.logger.Error("anneal checkers", err)
+				a.logger.Error("anneal checkers", "err", err)
 			}
 		case <-a.ctx.Done():
 			return a.ctx.Err()
@@ -1109,7 +1112,7 @@ func (a *Assigner) healthCheck(ctx context.Context, rid *ReplicaSetId, replica *
 			if status == protos.HealthStatus_UNHEALTHY && shouldCheckIfExists {
 				exists, err := a.replicaExists(ctx, podName)
 				if err != nil {
-					a.logger.Error("cannot check if replica Pod exists", err, "pod", podName)
+					a.logger.Error("cannot check if replica Pod exists", "err", err, "pod", podName)
 				} else if !exists {
 					status = protos.HealthStatus_TERMINATED
 				}

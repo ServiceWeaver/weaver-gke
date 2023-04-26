@@ -42,7 +42,7 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	logSaver := ls.Add
 
 	// Setup trace recording.
-	traceDB, err := perfetto.Open(ctx)
+	traceDB, err := perfetto.Open(ctx, "gke-local")
 	if err != nil {
 		return nil, fmt.Errorf("cannot open Perfetto database: %w", err)
 	}

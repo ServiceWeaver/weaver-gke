@@ -29,6 +29,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
@@ -138,7 +139,7 @@ func (m *manager) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRe
 		}
 	}
 	if err := errors.Join(errs...); err != nil {
-		m.logger.Error("Error starting", err, "versions", versionStrs, "app", req.AppName)
+		m.logger.Error("Error starting", "err", err, "versions", versionStrs, "app", req.AppName)
 		return err
 	}
 	m.logger.Info("Success starting", "versions", versionStrs, "app", req.AppName, "err", errs)
@@ -152,7 +153,7 @@ func (m *manager) deploy(ctx context.Context, cfg *config.GKEConfig) error {
 
 	// Activate the main component.
 	return m.ActivateComponent(ctx, &nanny.ActivateComponentRequest{
-		Component: "main",
+		Component: runtime.Main,
 		Routed:    false,
 		Config:    cfg,
 	})

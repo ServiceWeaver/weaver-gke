@@ -100,7 +100,7 @@ func (e *promCollector) Collect(ch chan<- prometheus.Metric) {
 		labels["serviceweaver_version"] = e.version
 	}
 	if err := e.db.Query(context.Background(), now.Add(-freshness), now, "" /*name*/, labels, processMetric); err != nil {
-		e.logger.Error("Cannot query metrics database: ", err)
+		e.logger.Error("Cannot query metrics database: ", "err", err)
 	}
 }
 

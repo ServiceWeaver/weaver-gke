@@ -48,7 +48,7 @@ import (
 // Run creates a brand new gke-local execution environment that places every
 // component in its own colocation group and executes the provided function on
 // the root component of the new application.
-func Run(t testing.TB, f func(weaver.Instance)) {
+func Run[T weaver.MainInstance](t testing.TB, f func(T)) {
 	// There are three distinct types of processes in a manager test: (1) the
 	// unit test process, (2) the main Service Weaver process, and (3) every
 	// other Service Weaver process.
@@ -78,7 +78,10 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 		// If this is the main Service Weaver process, weaver.Init will return
 		// and f will execute. If this is a different Service Weaver process,
 		// weaver.Init blocks.
-		f(weaver.Init(context.Background()))
+		weaver.Run(context.Background(), func(_ context.Context, root T) error {
+			f(root)
+			return nil
+		})
 
 		// TODO(spetrovic): This is the main process. In theory, this process
 		// shouldn't be terminating, as we now require that Service Weaver
@@ -143,7 +146,7 @@ func Run(t testing.TB, f func(weaver.Instance)) {
 		ManagerAddr: addr,
 		Deployment:  dep,
 	}
-	b, err := babysitter.NewBabysitter(ctx, cfg, "main", "pod", true, &manager.HttpClient{Addr: addr}, logSaver, nil, nil)
+	b, err := babysitter.NewBabysitter(ctx, cfg, runtime.Main, "pod", true, &manager.HttpClient{Addr: addr}, logSaver, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

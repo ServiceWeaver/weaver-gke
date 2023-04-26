@@ -63,7 +63,7 @@ func (m kubeModifier) Run(ctx context.Context, name string) error {
 			}
 			m.logger.Error(
 				"Error reading "+m.desc,
-				err,
+				"err", err,
 				"name", name,
 				"cluster", m.cluster.Name,
 				"region", m.cluster.Region)
@@ -85,7 +85,7 @@ func (m kubeModifier) Run(ctx context.Context, name string) error {
 				return err
 			}
 			m.logger.Error("Error writing "+m.desc,
-				err,
+				"err", err,
 				"name", name,
 				"cluster", m.cluster.Name,
 				"region", m.cluster.Region)

@@ -21,19 +21,22 @@ import (
 )
 
 func TestPass(t *testing.T) {
-	Run(t, func(weaver.Instance) {})
+	type main struct{ weaver.Implements[weaver.Main] }
+	Run(t, func(*main) {})
 }
 
 func TestError(t *testing.T) {
 	t.Skip("Uncomment this line to watch this test fail.")
-	Run(t, func(weaver.Instance) {
+	type main struct{ weaver.Implements[weaver.Main] }
+	Run(t, func(*main) {
 		t.Error("error")
 	})
 }
 
 func TestFatal(t *testing.T) {
 	t.Skip("Uncomment this line to watch this test fail.")
-	Run(t, func(weaver.Instance) {
+	type main struct{ weaver.Implements[weaver.Main] }
+	Run(t, func(*main) {
 		t.Fatal("fatal")
 	})
 }

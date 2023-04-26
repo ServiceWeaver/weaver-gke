@@ -31,20 +31,11 @@ type source interface {
 
 type sourceImpl struct {
 	weaver.Implements[source]
-	dst destination
-}
-
-func (s *sourceImpl) Init(_ context.Context) error {
-	dst, err := weaver.Get[destination](s)
-	if err != nil {
-		return err
-	}
-	s.dst = dst
-	return nil
+	dst weaver.Ref[destination]
 }
 
 func (s *sourceImpl) Emit(ctx context.Context, file, msg string) error {
-	return s.dst.Record(ctx, file, msg)
+	return s.dst.Get().Record(ctx, file, msg)
 }
 
 type destination interface {
