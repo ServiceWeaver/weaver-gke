@@ -121,7 +121,7 @@ func (c *controller) handleRollout(ctx context.Context, req *RolloutRequest) err
 	name := req.Config.Deployment.App.Name
 	c.logger.Info("Registering for rollout", "version", id, "application", name)
 	if err := c.rollout(ctx, req); err != nil {
-		c.logger.Error("Cannot register for rollout", err, "version", id, "application", name)
+		c.logger.Error("Cannot register for rollout", "err", err, "version", id, "application", name)
 		return err
 	}
 	c.logger.Info("Successfully registering for rollout", "version", id, "application", name)
@@ -132,7 +132,7 @@ func (c *controller) handleRollout(ctx context.Context, req *RolloutRequest) err
 func (c *controller) handleKill(ctx context.Context, req *KillRequest) error {
 	c.logger.Info("Killing", "application", req.App)
 	if err := c.kill(ctx, req); err != nil {
-		c.logger.Error("Cannot kill", err, "application", req.App)
+		c.logger.Error("Cannot kill", "err", err, "application", req.App)
 		return err
 	}
 	c.logger.Info("Successfully killed", "application", req.App)
@@ -171,13 +171,13 @@ func (c *controller) handleRunProfiling(ctx context.Context, req *nanny.GetProfi
 	c.logger.Info("Profiling", "version", req.VersionId, "application", req.AppName)
 	prof, err := c.runProfiling(ctx, versionState, req)
 	if prof == nil {
-		c.logger.Error("Cannot profile", err, "version", req.VersionId, "application", req.AppName)
+		c.logger.Error("Cannot profile", "err", err, "version", req.VersionId, "application", req.AppName)
 		return nil, err
 	}
 	if len(prof.Data) == 0 {
 		c.logger.Info("Empty profile", "version", req.VersionId, "application", req.AppName)
 	} else if err != nil {
-		c.logger.Error("Partial profile", err, "version", req.VersionId, "application", req.AppName)
+		c.logger.Error("Partial profile", "err", err, "version", req.VersionId, "application", req.AppName)
 	} else {
 		c.logger.Info("Successfully profiled", "version", req.VersionId, "application", req.AppName)
 	}
@@ -272,7 +272,7 @@ func (c *controller) rollout(ctx context.Context, req *RolloutRequest) error {
 	// Try to launch the new version immediately. If it fails, ignore the
 	// error. The annealing loop will retry.
 	if err := c.maySendDistributionRequests(ctx, app); err != nil {
-		c.logger.Error("maySendDistributionRequests", err, "app", app)
+		c.logger.Error("maySendDistributionRequests", "err", err, "app", app)
 	}
 	return nil
 }
@@ -304,10 +304,10 @@ func (c *controller) kill(ctx context.Context, req *KillRequest) error {
 	// immediately. If anything fails, ignore the error. The annealing loop
 	// will retry.
 	if err := c.maySendCleanupRequests(ctx, req.App); err != nil {
-		c.logger.Error("maySendCleanupRequests", err, "app", req.App)
+		c.logger.Error("maySendCleanupRequests", "err", err, "app", req.App)
 	}
 	if err := c.fetchTrafficAssignments(ctx); err != nil {
-		c.logger.Error("fetchTrafficAssignments", err, "app", req.App)
+		c.logger.Error("fetchTrafficAssignments", "err", err, "app", req.App)
 	}
 	// TODO(mwhittaker): Call applyTrafficAssignment?
 	return nil
@@ -317,10 +317,10 @@ func (c *controller) status(ctx context.Context, req *StatusRequest) (*Status, e
 	// Try to freshen our state and traffic assignment. If these commands fail,
 	// we'll return a slightly stale status.
 	if err := c.manageState(ctx); err != nil {
-		c.logger.Error("manageState", err)
+		c.logger.Error("manageState", "err", err)
 	}
 	if err := c.fetchTrafficAssignments(ctx); err != nil {
-		c.logger.Error("fetchTrafficAssignments", err)
+		c.logger.Error("fetchTrafficAssignments", "err", err)
 	}
 
 	state, _, err := c.loadState(ctx)
@@ -525,7 +525,7 @@ func (c *controller) runProfiling(ctx context.Context, v *AppVersionState, req *
 		}
 		addr, err := c.getDistributorAddr(ctx, loc)
 		if err != nil {
-			c.logger.Error("cannot profile", err, "location", loc)
+			c.logger.Error("cannot profile", "err", err, "location", loc)
 			continue
 		}
 		addrs = append(addrs, addr)

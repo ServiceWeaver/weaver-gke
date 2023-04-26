@@ -27,17 +27,15 @@ import (
 )
 
 func TestOneComponent(t *testing.T) {
-	Run(t, func(root weaver.Instance) {
-		ctx := context.Background()
-		dst, err := weaver.Get[destination](root)
-		if err != nil {
-			t.Fatal(err)
-		}
-
+	type main struct {
+		weaver.Implements[weaver.Main]
+		dst weaver.Ref[destination]
+	}
+	Run(t, func(root *main) {
 		// Get the PID of the dst component. Check whether root and dst are
 		// running in the same process.
 		cPid := os.Getpid()
-		dstPid, _ := dst.Getpid(ctx)
+		dstPid, _ := root.dst.Get().Getpid(context.Background())
 		sameProcess := cPid == dstPid
 		if sameProcess {
 			t.Fatal("the root and the dst components should run in different processes")
@@ -46,28 +44,24 @@ func TestOneComponent(t *testing.T) {
 }
 
 func TestTwoComponents(t *testing.T) {
-	Run(t, func(root weaver.Instance) {
+	type main struct {
+		weaver.Implements[weaver.Main]
+		src weaver.Ref[source]
+		dst weaver.Ref[destination]
+	}
+	Run(t, func(root *main) {
 		// Add a list of items to a component (dst) from another component
 		// (src). Verify that dst updates the state accordingly.
 		ctx := context.Background()
 		file := filepath.Join(t.TempDir(), fmt.Sprintf("simple_%s", uuid.New().String()))
-		src, err := weaver.Get[source](root)
-		if err != nil {
-			t.Fatal(err)
-		}
-		dst, err := weaver.Get[destination](root)
-		if err != nil {
-			t.Fatal(err)
-		}
-
 		want := []string{"a", "b", "c", "d", "e"}
 		for _, in := range want {
-			if err := src.Emit(ctx, file, in); err != nil {
+			if err := root.src.Get().Emit(ctx, file, in); err != nil {
 				t.Fatal(err)
 			}
 		}
 
-		got, err := dst.GetAll(ctx, file)
+		got, err := root.dst.Get().GetAll(ctx, file)
 		if err != nil {
 			t.Fatal(err)
 		}

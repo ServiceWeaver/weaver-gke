@@ -148,7 +148,7 @@ func (p *proxy) director(r *http.Request) {
 		// this easy. We instead have to jump through some hoops and redirect
 		// the request to our own /proxy/404 endpoint, which will generate the
 		// error response.
-		p.logger.Error("proxy.director", errors.New("unknown host"), "host", r.Host)
+		p.logger.Error("proxy.director", "err", errors.New("unknown host"), "host", r.Host)
 		r.URL.Scheme = "http"
 		r.Host = Host
 		r.URL.Host = p.addr

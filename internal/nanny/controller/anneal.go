@@ -52,15 +52,15 @@ func (c *controller) anneal(ctx context.Context, fetchAssignmentsInterval time.D
 		select {
 		case <-tickerFetchAssignments.C:
 			if err := c.fetchTrafficAssignments(ctx); err != nil {
-				c.logger.Error("error fetching traffic assignments", err)
+				c.logger.Error("error fetching traffic assignments", "err", err)
 			}
 		case <-tickerApplyAssignment.C:
 			if err := c.applyTrafficAssignment(ctx); err != nil {
-				c.logger.Error("error applying traffic assignments", err)
+				c.logger.Error("error applying traffic assignments", "err", err)
 			}
 		case <-tickerManageApps.C:
 			if err := c.manageState(ctx); err != nil {
-				c.logger.Error("error managing applications", err)
+				c.logger.Error("error managing applications", "err", err)
 			}
 		case <-ctx.Done():
 			return

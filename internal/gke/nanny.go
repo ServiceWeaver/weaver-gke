@@ -120,7 +120,7 @@ func exportNannyMetrics(ctx context.Context, exporter *metricExporter, logger *s
 		case <-ticker.C:
 			snaps := metrics.Snapshot()
 			if err := exporter.Export(ctx, snaps); err != nil {
-				logger.Error("exporting nanny metrics", err)
+				logger.Error("exporting nanny metrics", "err", err)
 			}
 
 		case <-ctx.Done():

@@ -30,6 +30,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
@@ -115,7 +116,7 @@ func TestDeploy(t *testing.T) {
 		t.Fatalf("couldn't deploy %v: %v", cfg, err)
 	}
 
-	if event := nextEvent(events); event != "startReplicaSet main" {
+	if event := nextEvent(events); event != "startReplicaSet "+runtime.Main {
 		t.Fatalf("main not started: got %q", event)
 	}
 

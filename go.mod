@@ -12,7 +12,7 @@ require (
 	cloud.google.com/go/monitoring v1.12.0
 	cloud.google.com/go/security v1.10.0
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.11.0
-	github.com/ServiceWeaver/weaver v0.5.0
+	github.com/ServiceWeaver/weaver v0.7.1
 	github.com/golang/protobuf v1.5.2
 	github.com/google/cel-go v0.13.0
 	github.com/google/go-cmp v0.5.9
@@ -26,7 +26,7 @@ require (
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.12.0
 	go.opentelemetry.io/otel/sdk v1.12.0
 	go.opentelemetry.io/otel/trace v1.13.0
-	golang.org/x/exp v0.0.0-20230206171751-46f607a40771
+	golang.org/x/exp v0.0.0-20230321023759-10a507213a29
 	golang.org/x/oauth2 v0.4.0
 	google.golang.org/api v0.109.0
 	google.golang.org/genproto v0.0.0-20230202175211-008b39050e57

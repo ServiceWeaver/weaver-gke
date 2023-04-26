@@ -71,14 +71,14 @@ func (d *Distributor) anneal(ctx context.Context) {
 		select {
 		case <-manageAppsTicker.C:
 			if err := d.ManageAppStates(ctx); err != nil {
-				d.logger.Error("managing applications", err)
+				d.logger.Error("managing applications", "err", err)
 				continue
 			}
 			// Compute the traffic assignments right away, to make sure
 			// app state changes have an immediate effect.
 			deadline, err := d.ComputeTrafficAssignments(ctx, time.Now())
 			if err != nil {
-				d.logger.Error("computing traffic assignments", err)
+				d.logger.Error("computing traffic assignments", "err", err)
 				continue
 			}
 			if delta := time.Until(deadline); delta < d.computeTrafficInterval {
@@ -86,14 +86,14 @@ func (d *Distributor) anneal(ctx context.Context) {
 			}
 		case <-detectAppliedTrafficTicker.C:
 			if err := d.detectAppliedTraffic(ctx, d.detectAppliedTrafficInterval); err != nil {
-				d.logger.Error("error detecting applied traffic", err)
+				d.logger.Error("error detecting applied traffic", "err", err)
 				continue
 			}
 		case <-computeTrafficTicker.C:
 			computeTrafficTicker.Reset(d.computeTrafficInterval)
 			deadline, err := d.ComputeTrafficAssignments(ctx, time.Now())
 			if err != nil {
-				d.logger.Error("computing traffic assignments", err)
+				d.logger.Error("computing traffic assignments", "err", err)
 			}
 			if delta := time.Until(deadline); delta < d.computeTrafficInterval {
 				computeTrafficTicker.Reset(ensurePositive(delta))
@@ -106,11 +106,11 @@ func (d *Distributor) anneal(ctx context.Context) {
 			}
 			assignment, err := d.getTrafficAssignment(ctx, false /*public*/)
 			if err != nil {
-				d.logger.Error("applying traffic", err)
+				d.logger.Error("applying traffic", "err", err)
 				continue
 			}
 			if err := d.applyTraffic(ctx, assignment); err != nil {
-				d.logger.Error("applying traffic", err)
+				d.logger.Error("applying traffic", "err", err)
 				continue
 			}
 		case <-ctx.Done():

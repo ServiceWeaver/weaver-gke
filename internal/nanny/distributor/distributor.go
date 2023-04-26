@@ -196,7 +196,7 @@ func (d *Distributor) handleDistribute(ctx context.Context, req *nanny.Applicati
 
 	d.logger.Info("Registering for distribution", "versions", versions, "application", req.AppName)
 	if err := d.Distribute(ctx, req); err != nil {
-		d.logger.Error("Cannot registering for distribution", err, "versions", versions, "application", req.AppName)
+		d.logger.Error("Cannot registering for distribution", "err", err, "versions", versions, "application", req.AppName)
 		return err
 	}
 	d.logger.Info("Successfully registered for distribution", "versions", versions, "application", req.AppName)
@@ -207,7 +207,7 @@ func (d *Distributor) handleDistribute(ctx context.Context, req *nanny.Applicati
 func (d *Distributor) handleCleanup(ctx context.Context, req *nanny.ApplicationCleanupRequest) error {
 	d.logger.Info("Registering for cleanup", "versions", req.Versions, "application", req.AppName)
 	if err := d.Cleanup(ctx, req); err != nil {
-		d.logger.Error("Cannot register for cleanup", err, "versions", req.Versions, "application", req.AppName)
+		d.logger.Error("Cannot register for cleanup", "err", err, "versions", req.Versions, "application", req.AppName)
 		return err
 	}
 	d.logger.Info("Successfully registered for cleanup", "versions", req.Versions, "application", req.AppName)
@@ -219,13 +219,13 @@ func (d *Distributor) handleRunProfiling(ctx context.Context, req *nanny.GetProf
 	d.logger.Info("Profiling", "version", req.VersionId, "application", req.AppName)
 	prof, err := d.RunProfiling(ctx, req)
 	if prof == nil {
-		d.logger.Error("Cannot profile", err, "version", req.VersionId, "application", req.AppName)
+		d.logger.Error("Cannot profile", "err", err, "version", req.VersionId, "application", req.AppName)
 		return nil, err
 	}
 	if len(prof.Data) == 0 {
 		d.logger.Info("Empty profile", "version", req.VersionId, "application", req.AppName)
 	} else if err != nil {
-		d.logger.Error("Partial profile", err, "version", req.VersionId, "application", req.AppName)
+		d.logger.Error("Partial profile", "err", err, "version", req.VersionId, "application", req.AppName)
 	} else {
 		d.logger.Info("Successfully profiled", "version", req.VersionId, "application", req.AppName)
 	}
@@ -248,13 +248,13 @@ func (d *Distributor) Distribute(ctx context.Context, req *nanny.ApplicationDist
 	// immediately. If anything fails, ignore the error. The annealing loop
 	// will retry.
 	if err := d.mayDeployApp(ctx, req.AppName); err != nil {
-		d.logger.Error("mayDeployApp", err, "app", req.AppName)
+		d.logger.Error("mayDeployApp", "err", err, "app", req.AppName)
 	}
 	if err := d.getListenerState(ctx, req.AppName); err != nil {
-		d.logger.Error("getListenerState", err, "app", req.AppName)
+		d.logger.Error("getListenerState", "err", err, "app", req.AppName)
 	}
 	if _, err := d.ComputeTrafficAssignments(ctx, time.Now()); err != nil {
-		d.logger.Error("ComputeTrafficAssignmentsForApp", err, "app", req.AppName)
+		d.logger.Error("ComputeTrafficAssignmentsForApp", "err", err, "app", req.AppName)
 	}
 	return nil
 }
@@ -353,10 +353,10 @@ func (d *Distributor) Cleanup(ctx context.Context, req *nanny.ApplicationCleanup
 	// immediately. If anything fails, ignore the error.  The annealing loop
 	// will retry.
 	if err := d.mayCleanupApp(ctx, req.AppName); err != nil {
-		d.logger.Error("mayCleanupApp", err, "app", req.AppName)
+		d.logger.Error("mayCleanupApp", "err", err, "app", req.AppName)
 	}
 	if _, err := d.ComputeTrafficAssignments(ctx, time.Now()); err != nil {
-		d.logger.Error("ComputeTrafficAssignmentsForApp", err, "app", req.AppName)
+		d.logger.Error("ComputeTrafficAssignmentsForApp", "err", err, "app", req.AppName)
 	}
 	return nil
 }
@@ -416,7 +416,7 @@ func (d *Distributor) GetApplicationState(ctx context.Context, req *nanny.Applic
 	// Try to freshen our state. If this fails, we'll return a slightly stale
 	// state.
 	if err := d.ManageAppStates(ctx); err != nil {
-		d.logger.Error("ManageAppStates", err)
+		d.logger.Error("ManageAppStates", "err", err)
 	}
 
 	state, version, err := d.loadAppState(ctx, req.AppName)
@@ -476,7 +476,7 @@ func (d *Distributor) getTrafficAssignment(ctx context.Context, public bool) (*n
 	// Try to freshen our traffic assignment. If this fails, we'll return a
 	// slightly stale traffic assignment.
 	if _, err := d.ComputeTrafficAssignments(ctx, time.Now()); err != nil {
-		d.logger.Error("ComputeTrafficAssignments", err)
+		d.logger.Error("ComputeTrafficAssignments", "err", err)
 	}
 
 	state, _, err := d.loadState(ctx)
