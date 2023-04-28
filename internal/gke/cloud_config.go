@@ -97,11 +97,19 @@ func SetupCloudConfig(project, account string) (CloudConfig, error) {
 
 // checkSDK checks that Google Cloud SDK is installed.
 func checkSDK() error {
-	_, err := runCmd("", cmdOptions{}, "gcloud", "--version")
+	version, err := runCmd("", cmdOptions{}, "gcloud", "version", "--format=value(core)")
 	if err != nil {
 		return errors.New(`gcloud not installed.
 Follow these installation instructions:
 	https://cloud.google.com/sdk/docs/install`)
+	}
+
+	// Check the version.
+	const minVersion = "2023.04.25"
+	if version < minVersion {
+		return fmt.Errorf(
+			`unsupported gcloud version %q. Please run "gcloud components 
+update" to update to at least version %q`, version, minVersion)
 	}
 	return nil
 }
