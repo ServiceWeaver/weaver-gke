@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/bench"
+	"github.com/ServiceWeaver/weaver-gke/internal/gke"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
@@ -42,6 +43,7 @@ func StoreCmd(spec *StoreSpec) *tool.Command {
   {{.Tool}} store watch <key>
   {{.Tool}} store delete <key>...
   {{.Tool}} store list
+  {{.Tool}} store purge
   {{.Tool}} store bench
 
 Flags:
@@ -94,6 +96,7 @@ func (s *StoreSpec) storeFn(ctx context.Context, args []string) error {
 		"watch":  {1, 1, func(args []string) error { return watch(ctx, store, args[0]) }},
 		"list":   {0, 0, func(args []string) error { return list(ctx, store) }},
 		"delete": {1, -1, func(args []string) error { return deleteKeys(ctx, store, args) }},
+		"purge":  {0, 0, func(args []string) error { return purge(ctx, store) }},
 		"bench":  {0, 0, func(args []string) error { return benchmark(ctx, s.Store) }},
 	}
 
@@ -177,6 +180,14 @@ func list(ctx context.Context, s store.Store) error {
 		fmt.Println(key)
 	}
 	return nil
+}
+
+func purge(ctx context.Context, s store.Store) error {
+	kubestore, ok := s.(*gke.KubeStore)
+	if !ok {
+		return fmt.Errorf("purge not implemented")
+	}
+	return kubestore.Purge(ctx)
 }
 
 func benchmark(ctx context.Context, makeStore func(context.Context) (store.Store, error)) error {

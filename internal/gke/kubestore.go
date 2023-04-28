@@ -19,15 +19,15 @@ import (
 	"crypto/sha256"
 	"fmt"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
 	typedv1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"github.com/ServiceWeaver/weaver-gke/internal/store"
 )
 
-// kubeStore is a Kubernetes ConfigMap backed implementation of a Store.
+// KubeStore is a Kubernetes ConfigMap backed implementation of a Store.
 //
 // # Overview
 //
@@ -55,7 +55,7 @@ import (
 //
 // # Versions
 //
-// kubeStore implements `store.Version`s using ConfigMap resource versions. We
+// KubeStore implements `store.Version`s using ConfigMap resource versions. We
 // omitted the ResourceVersion field in the ConfigMap above to keep things
 // simple, but in reality, Kubernetes assigns the ConfigMap a resource version.
 // That looks something like this:
@@ -72,15 +72,16 @@ import (
 //	}
 //
 // Here, the ConfigMap's resource version is "111111111". If we call
-// kubeStore.Get(ctx, "a key", nil), we get a store.Version{Opaque:
+// KubeStore.Get(ctx, "a key", nil), we get a store.Version{Opaque:
 // "111111111"}.
 //
 // # Listing
 //
 // A Kubernetes cluster will have many ConfigMaps besides those managed by a
-// kubeStore. In order to differentiate a kubeStore managed ConfigMap from some
-// other ConfigMap, the kubeStore also labels every key-value pair with the
-// label "serviceweaver/store=true". So, the ConfigMap above looks something like this:
+// KubeStore. In order to differentiate a KubeStore managed ConfigMap from some
+// other ConfigMap, the KubeStore also labels every key-value pair with the
+// label "serviceweaver/store=true". So, the ConfigMap above looks something
+// like this:
 //
 //	ConfigMap{
 //	    ObjectMeta: metav1.ObjectMeta{
@@ -94,13 +95,13 @@ import (
 //	    },
 //	}
 //
-// kubeStore also uses this label to implement the List method, fetching every
+// KubeStore also uses this label to implement the List method, fetching every
 // ConfigMap that has the "serviceweaver/store=true" label.
 //
 // # Kubernetes Consistency
 //
 // Note that it is a little unclear what level of consistency ConfigMaps
-// provide, but we think that the operations we use to implement kubeStore are
+// provide, but we think that the operations we use to implement KubeStore are
 // all linearizable. [2] discusses how resource versions can be used to
 // implement optimistic concurrency control and suggests that versioned writes
 // are linearizable. [3] says that gets with an unset resource version return
@@ -113,7 +114,7 @@ import (
 //
 // There is a possibility that we misunderstood Kubernetes' documentation or
 // the Kubernetes implementation does not properly implement its promised
-// consistency guarantees, but the implementation of kubeStore is written under
+// consistency guarantees, but the implementation of KubeStore is written under
 // the assumption that all of the underlying ConfigMap operations it calls are
 // linearizable.
 //
@@ -121,7 +122,7 @@ import (
 // [2]: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
 // [3]: https://kubernetes.io/docs/reference/using-api/api-concepts/#the-resourceversion-parameter
 // [4]: https://github.com/kubernetes/enhancements/blob/0e4d5df19d396511fe41ed0860b0ab9b96f46a2d/keps/sig-api-machinery/2340-Consistent-reads-from-cache/README.md
-type kubeStore struct {
+type KubeStore struct {
 	// Kubernetes' client-go documentation does not directly state that a
 	// client is thread-safe, but discussions online [1, 2] indicate that it
 	// is and that many Kubernetes libraries use clients from multiple
@@ -133,12 +134,12 @@ type kubeStore struct {
 }
 
 // Check that KubeStore implements the Store interface.
-var _ store.Store = &kubeStore{}
+var _ store.Store = &KubeStore{}
 
 // newKubeStore returns a new KubeStore that stores its data as ConfigMaps
 // accesible via the provided ConfigMapInterface.
 func newKubeStore(client typedv1.ConfigMapInterface) store.Store {
-	return &kubeStore{client}
+	return &KubeStore{client}
 }
 
 // tooBigError is the error returned when a user tries to Put a key-value pair
@@ -219,7 +220,7 @@ func handleEvents(ctx context.Context, c <-chan watch.Event, version *store.Vers
 	}
 }
 
-func (f *kubeStore) Put(ctx context.Context, key, value string, version *store.Version) (*store.Version, error) {
+func (f *KubeStore) Put(ctx context.Context, key, value string, version *store.Version) (*store.Version, error) {
 	// As explained in [1], ConfigMaps cannot be too big.
 	//
 	// > A ConfigMap is not designed to hold large chunks of data. The data
@@ -305,7 +306,7 @@ func (f *kubeStore) Put(ctx context.Context, key, value string, version *store.V
 	return extractVersion(latest), nil
 }
 
-func (f *kubeStore) Get(ctx context.Context, key string, version *store.Version) (string, *store.Version, error) {
+func (f *KubeStore) Get(ctx context.Context, key string, version *store.Version) (string, *store.Version, error) {
 	// Case (1): the provided version is nil. We perform a simple, non-blocking
 	// get (i.e. an unversioned Get). We don't need to perform any watching.
 	if version == nil {
@@ -400,7 +401,7 @@ func (f *kubeStore) Get(ctx context.Context, key string, version *store.Version)
 	return string(latest.BinaryData["value"]), latestVersion, nil
 }
 
-func (f *kubeStore) Delete(ctx context.Context, key string) error {
+func (f *KubeStore) Delete(ctx context.Context, key string) error {
 	// Note that f.client.Delete will fail if the ConfigMap doesn't exist. We
 	// intentionally swallow this error.
 	//
@@ -414,7 +415,7 @@ func (f *kubeStore) Delete(ctx context.Context, key string) error {
 	return err
 }
 
-func (f *kubeStore) List(ctx context.Context) ([]string, error) {
+func (f *KubeStore) List(ctx context.Context) ([]string, error) {
 	// Note that performing a List with an unset ResourceVersion is
 	// linearizable. From [1]:
 	//
@@ -437,4 +438,12 @@ func (f *kubeStore) List(ctx context.Context) ([]string, error) {
 		keys = append(keys, string(key))
 	}
 	return keys, nil
+}
+
+// Purge deletes everything from the store. Unlike operations like [Put] and
+// [Get], Purge is not guaranteed to be linearizable.
+func (f *KubeStore) Purge(ctx context.Context) error {
+	deleteOptions := metav1.DeleteOptions{}
+	listOptions := metav1.ListOptions{LabelSelector: "serviceweaver/store=true"}
+	return f.client.DeleteCollection(ctx, deleteOptions, listOptions)
 }
