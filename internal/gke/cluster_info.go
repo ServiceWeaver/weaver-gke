@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -221,6 +222,47 @@ func fillClusterInfo(ctx context.Context, cluster, region string, cc CloudConfig
 		dynamicClient:                dynamicClient,
 		apiRESTClient:                apiRESTClient,
 	}, nil
+}
+
+// GetClusterInfos returns information about all GKE clusters running in a
+// given cloud project.
+// REQUIRES: The caller is running on the user machine.
+func GetClusterInfos(ctx context.Context, config CloudConfig) ([]*ClusterInfo, error) {
+	// Run `gcloud clusters list --format "value(name, location)"` to get the
+	// name and location of every cluster in the project.
+	out, err := runGcloud(config, "", cmdOptions{},
+		"container", "clusters", "list", "--format", "json(name, location)")
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the output, which looks something like this:
+	//
+	// [
+	//   {
+	//     "location": "us-central1",
+	//     "name": "serviceweaver-config"
+	//   },
+	//   {
+	//     "location": "us-west1",
+	//     "name": "serviceweaver"
+	//   }
+	// ]
+	type record struct{ Location, Name string }
+	var records []record
+	if err := json.Unmarshal([]byte(out), &records); err != nil {
+		return nil, fmt.Errorf("parse gcloud container clusters list output: %w", err)
+	}
+
+	clusters := make([]*ClusterInfo, len(records))
+	for i, record := range records {
+		cluster, err := GetClusterInfo(ctx, config, record.Name, record.Location)
+		if err != nil {
+			return nil, fmt.Errorf("GetClusterInfo(%q, %q): %w", record.Name, record.Location, err)
+		}
+		clusters[i] = cluster
+	}
+	return clusters, nil
 }
 
 // getMultiRegion returns the multi-region that corresponds to the given GCP
