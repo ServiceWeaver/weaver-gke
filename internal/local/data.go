@@ -1,4 +1,4 @@
-// Copyright 2022 Google LLC
+// Copyright 2023 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,18 +15,22 @@
 package local
 
 import (
-	"os"
 	"path/filepath"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver/runtime"
 )
 
-// Store returns a store that persists data in the given directory. If the
-// directory does not exist, it is created.
-func Store(region string) (store.Store, error) {
-	storeDir := filepath.Join(DataDir, region)
-	if err := os.MkdirAll(storeDir, 0700); err != nil {
-		return nil, err
+var (
+	// The directories and files where "weaver gke-local" stores data.
+	DataDir      = filepath.Join(must(runtime.DataDir()), "gke-local")
+	LogDir       = filepath.Join(DataDir, "logs")
+	MetricsFile  = filepath.Join(DataDir, "metrics.db")
+	perfettoFile = filepath.Join(DataDir, "perfetto.db")
+)
+
+func must[T any](x T, err error) T {
+	if err != nil {
+		panic(err)
 	}
-	return store.NewSQLStore(filepath.Join(storeDir, "store.db"))
+	return x
 }
