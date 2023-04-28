@@ -1487,8 +1487,9 @@ func registerWithFleet(ctx context.Context, config CloudConfig, cluster *Cluster
 	_, err := runGcloud(config,
 		fmt.Sprintf("Registering cluster %q in %q with the project fleet",
 			cluster.Name, cluster.Region),
-		cmdOptions{}, "container", "fleet", "memberships",
-		"register", mName, "--gke-cluster", cName, "--enable-workload-identity",
+		cmdOptions{}, "container", "fleet", "memberships", "register", mName,
+		"--location", "global", "--gke-cluster", cName,
+		"--enable-workload-identity",
 	)
 	return err
 }
