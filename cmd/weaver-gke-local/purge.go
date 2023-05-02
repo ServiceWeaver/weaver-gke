@@ -1,4 +1,4 @@
-// Copyright 2022 Google LLC
+// Copyright 2023 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,21 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package main
 
 import (
-	"os"
-	"path/filepath"
-
-	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver-gke/internal/local"
+	"github.com/ServiceWeaver/weaver/runtime/tool"
 )
 
-// Store returns a store that persists data in the given directory. If the
-// directory does not exist, it is created.
-func Store(region string) (store.Store, error) {
-	storeDir := filepath.Join(DataDir, region)
-	if err := os.MkdirAll(storeDir, 0700); err != nil {
-		return nil, err
-	}
-	return store.NewSQLStore(filepath.Join(storeDir, "store.db"))
+var purgeSpec = tool.PurgeSpec{
+	Tool:  "weaver gke-local",
+	Kill:  "weaver-gke-local (dashboard|deploy|logs|profile|store|proxy|controller|distributor)",
+	Paths: []string{local.DataDir},
 }
