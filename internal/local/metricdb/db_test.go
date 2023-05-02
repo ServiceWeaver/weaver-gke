@@ -69,7 +69,7 @@ func hm(id uint64, name string, bounds []float64, counts []uint64, labels ...str
 func TestDB(t *testing.T) {
 	ctx := context.Background()
 	fname := filepath.Join(t.TempDir(), "metricdb.db_test.db")
-	db, err := metricdb.OpenFile(ctx, fname)
+	db, err := metricdb.Open(ctx, fname)
 	if err != nil {
 		t.Fatal(err)
 	}

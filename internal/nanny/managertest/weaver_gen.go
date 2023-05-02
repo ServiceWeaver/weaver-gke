@@ -18,7 +18,7 @@ func init() {
 	codegen.Register(codegen.Registration{
 		Name:  "github.com/ServiceWeaver/weaver-gke/internal/nanny/managertest/destination",
 		Iface: reflect.TypeOf((*destination)(nil)).Elem(),
-		New:   func() any { return &destinationImpl{} },
+		Impl:  reflect.TypeOf(destinationImpl{}),
 		LocalStubFn: func(impl any, tracer trace.Tracer) any {
 			return destination_local_stub{impl: impl.(destination), tracer: tracer}
 		},
@@ -32,7 +32,7 @@ func init() {
 	codegen.Register(codegen.Registration{
 		Name:        "github.com/ServiceWeaver/weaver-gke/internal/nanny/managertest/source",
 		Iface:       reflect.TypeOf((*source)(nil)).Elem(),
-		New:         func() any { return &sourceImpl{} },
+		Impl:        reflect.TypeOf(sourceImpl{}),
 		LocalStubFn: func(impl any, tracer trace.Tracer) any { return source_local_stub{impl: impl.(source), tracer: tracer} },
 		ClientStubFn: func(stub codegen.Stub, caller string) any {
 			return source_client_stub{stub: stub, emitMetrics: codegen.MethodMetricsFor(codegen.MethodLabels{Caller: caller, Component: "github.com/ServiceWeaver/weaver-gke/internal/nanny/managertest/source", Method: "Emit"})}
