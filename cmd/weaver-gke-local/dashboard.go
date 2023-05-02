@@ -37,7 +37,7 @@ var dashboardSpec = tool.DashboardSpec{
 		logger := logging.StderrLogger(logging.Options{})
 
 		// Add the Prometheus handler.
-		metricDB, err := metricdb.Open(ctx, local.MetricsFile)
+		metricDB, err := metricdb.Open(ctx)
 		if err != nil {
 			return err
 		}

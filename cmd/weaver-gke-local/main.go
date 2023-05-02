@@ -28,7 +28,6 @@ func main() {
 		"profile":   gketool.ProfileCmd(&profileSpec),
 		"dashboard": gketool.DashboardCmd(&dashboardSpec),
 		"version":   tool.VersionCmd("weaver gke-local"),
-		"purge":     tool.PurgeCmd(&purgeSpec),
 
 		// Hidden commands.
 		"store":       gketool.StoreCmd(&storeSpec),

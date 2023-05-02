@@ -47,13 +47,30 @@ type T struct {
 	cachedDefs map[uint64]struct{}
 }
 
-// Open opens the metric database stored in the provided file, creating it if
-// necessary.
-func Open(ctx context.Context, fname string) (*T, error) {
-	if err := os.MkdirAll(filepath.Dir(fname), 0700); err != nil {
+// Open opens the default metric database on the local machine, creating
+// it if necessary.
+func Open(ctx context.Context) (*T, error) {
+	dataDir := os.Getenv("XDG_DATA_HOME")
+	if dataDir == "" {
+		// Default to ~/.local/share
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, err
+		}
+		dataDir = filepath.Join(home, ".local", "share")
+	}
+	dataDir = filepath.Join(dataDir, "serviceweaver")
+	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, err
 	}
+	fname := filepath.Join(dataDir, "gke_local_metrics.db")
+	return OpenFile(ctx, fname)
+}
 
+// OpenFile opens the metric database stored in the provided file, creating
+// it if necessary.
+// Useful for tests where using the default database isn't desirable.
+func OpenFile(ctx context.Context, fname string) (*T, error) {
 	// The DB may be opened by multiple writers. Turn on appropriate
 	// concurrency control options. See:
 	//   https://www.sqlite.org/pragma.html#pragma_locking_mode

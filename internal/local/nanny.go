@@ -36,6 +36,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal"
@@ -57,6 +58,9 @@ import (
 
 // URL on the controller where the metrics are exported in the Prometheus format.
 const PrometheusURL = "/metrics"
+
+// LogDir is where weaver-gke-local deployed applications store their logs.
+var LogDir = filepath.Join(logging.DefaultLogDir, "weaver-gke-local")
 
 // Nanny returns the nanny address, along with the HTTP client that can be
 // used to reach it.
@@ -125,7 +129,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
 
-	metricDB, err := metricdb.Open(ctx, MetricsFile)
+	metricDB, err := metricdb.Open(ctx)
 	if err != nil {
 		return err
 	}

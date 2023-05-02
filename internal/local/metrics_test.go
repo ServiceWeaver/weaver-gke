@@ -54,7 +54,7 @@ func m(id uint64, name string, val float64, labels ...string) *metrics.MetricSna
 func TestGetMetricCounts(t *testing.T) {
 	ctx := context.Background()
 	fname := filepath.Join(t.TempDir(), "local.metrics_test.db")
-	db, err := metricdb.Open(ctx, fname)
+	db, err := metricdb.OpenFile(ctx, fname)
 	if err != nil {
 		t.Fatal(err)
 	}
