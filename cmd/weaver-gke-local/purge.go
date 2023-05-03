@@ -22,5 +22,5 @@ import (
 var purgeSpec = tool.PurgeSpec{
 	Tool:  "weaver gke-local",
 	Kill:  "weaver-gke-local (dashboard|deploy|logs|profile|store|proxy|controller|distributor)",
-	Paths: []string{local.DataDir},
+	Paths: []string{local.LogDir, local.DataDir},
 }

@@ -22,8 +22,8 @@ import (
 
 var (
 	// The directories and files where "weaver gke-local" stores data.
+	LogDir       = filepath.Join(runtime.LogsDir(), "gke-local")
 	DataDir      = filepath.Join(must(runtime.DataDir()), "gke-local")
-	LogDir       = filepath.Join(DataDir, "logs")
 	MetricsFile  = filepath.Join(DataDir, "metrics.db")
 	perfettoFile = filepath.Join(DataDir, "perfetto.db")
 )
