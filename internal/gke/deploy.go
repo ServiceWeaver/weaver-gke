@@ -74,8 +74,9 @@ const (
 	// Name of the Service Weaver subnetwork used by regional gateways.
 	subnetName = "serviceweaver"
 
-	// Name of the SSL custom role used by varous cloud service accounts.
-	sslRole = "serviceweaver_ssl"
+	// Names of custom roles used by varous cloud service accounts.
+	sslRole       = "serviceweaver_ssl"
+	iamPolicyRole = "serviceweaver_iampolicy"
 
 	// Managed DNS zone for the Service Weaver's internal domain name.
 	managedDNSZoneName = "serviceweaver-internal"
@@ -90,7 +91,7 @@ const (
 	controllerKubeServiceAccount  = "controller"
 	distributorKubeServiceAccount = "distributor"
 	managerKubeServiceAccount     = "manager"
-	applicationKubeServiceAccount = "application"
+	spareKubeServiceAccount       = "spare"
 
 	// Various settings for the Service Weaver root Certificate Authority.
 	rootCAName         = "serviceweaver-root"
@@ -379,8 +380,11 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, "", err
 	}
 
-	// Create a custom GCP role for minting SSL certificates.
+	// Create custom GCP roles.
 	if err := createSSLRole(ctx, config); err != nil {
+		return nil, "", err
+	}
+	if err := createServiceAccountsIAMPolicyRole(ctx, config); err != nil {
 		return nil, "", err
 	}
 
@@ -395,13 +399,15 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, "", err
 	}
 
-	// Setup the root Certificate Authority.
-	if err := ensureRootCA(ctx, config); err != nil {
-		return nil, "", err
+	// Setup the root Certificate Authority, if MTLS is used.
+	if cfg.UseMtls {
+		if err := ensureRootCA(ctx, config); err != nil {
+			return nil, "", err
+		}
 	}
 
 	// Ensure the Service Weaver configuration cluster is setup.
-	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, ConfigClusterName, ConfigClusterRegion, bindings)
+	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, cfg, ConfigClusterName, ConfigClusterRegion, bindings)
 	if err != nil {
 		return nil, "", err
 	}
@@ -409,7 +415,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	// Ensure that a cluster is started in each deployment region and that
 	// a distributor and a manager are running in each cluster.
 	for _, region := range cfg.Regions {
-		cluster, gatewayIP, err := ensureApplicationCluster(ctx, config, applicationClusterName, region)
+		cluster, gatewayIP, err := ensureApplicationCluster(ctx, config, cfg, applicationClusterName, region)
 		if err != nil {
 			return nil, "", err
 		}
@@ -508,7 +514,8 @@ func ensureIAMServiceAccounts(ctx context.Context, config CloudConfig, bindings 
 	if err := ensureIAMServiceAccount(ctx, config, bindings, controllerIAMServiceAccount,
 		"roles/logging.logWriter",
 		"roles/monitoring.editor",
-		fmt.Sprintf("projects/%s/roles/%s", config.Project, sslRole)); err != nil {
+		fmt.Sprintf("projects/%s/roles/%s", config.Project, sslRole),
+	); err != nil {
 		return err
 	}
 
@@ -529,11 +536,21 @@ func ensureIAMServiceAccounts(ctx context.Context, config CloudConfig, bindings 
 	}
 
 	// Setup the service account for the application.
-	return ensureIAMServiceAccount(ctx, config, bindings, applicationIAMServiceAccount,
+	if err := ensureIAMServiceAccount(ctx, config, bindings, applicationIAMServiceAccount,
 		"roles/logging.logWriter",
 		"roles/monitoring.editor",
 		"roles/cloudtrace.agent",
-	)
+	); err != nil {
+		return err
+	}
+
+	// Allow the manager to change iam permissions for the application service
+	// account. This is necessary to allow the manager to mint new kubernetes
+	// service accounts, and give those kubernetes service accounts permissions
+	// stored in the application service account.
+	role := fmt.Sprintf("projects/%s/roles/%s", config.Project, iamPolicyRole)
+	member := fmt.Sprintf("serviceAccount:%s", serviceAccountEmail(managerIAMServiceAccount, config))
+	return ensureServiceAccountIAMBinding(ctx, config, nil /*logger*/, applicationIAMServiceAccount, role, member)
 }
 
 // waitServiceAccountsCreated waits until the given service accounts have been
@@ -623,58 +640,6 @@ func ensureProjectIAMBinding(config CloudConfig, role, member string, bindings i
 		roles[role] = struct{}{}
 	}
 	return err
-}
-
-// ensureServiceAccountIAMBinding ensures that the binding member -> role
-// exists in the IAM bindings for the given service account.
-func ensureServiceAccountIAMBinding(ctx context.Context, config CloudConfig, account, role, member string) error {
-	email := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", account, config.Project)
-	bindings, err := getServiceAccountIAMBindings(ctx, config, email)
-	if err != nil {
-		return err
-	}
-
-	if _, ok := bindings[member][role]; ok {
-		// Role already bound to the member.
-		return nil
-	}
-
-	// Add the binding.
-	_, err = runGcloud(
-		config,
-		fmt.Sprintf("Binding role %q to member %q in service account %q", role, member, account),
-		cmdOptions{},
-		"iam", "service-accounts", "add-iam-policy-binding", email,
-		"--role", role, "--member", member, "--condition=None")
-	return err
-}
-
-// getServiceAccountIAMBindings returns the GCP IAM bindings for the service
-// account with the given email.
-func getServiceAccountIAMBindings(ctx context.Context, config CloudConfig, email string) (iamBindings, error) {
-	iamService, err := iam.NewService(ctx, config.ClientOptions()...)
-	if err != nil {
-		return nil, err
-	}
-	service := iam.NewProjectsService(iamService).ServiceAccounts
-	call := service.GetIamPolicy(path.Join("projects", config.Project, "serviceAccounts", email))
-	call.Context(ctx)
-	policy, err := call.Do()
-	if err != nil {
-		return nil, err
-	}
-	bindings := iamBindings{}
-	for _, b := range policy.Bindings {
-		for _, member := range b.Members {
-			roles, ok := bindings[member]
-			if !ok {
-				bindings[member] = map[string]struct{}{b.Role: {}}
-				continue
-			}
-			roles[b.Role] = struct{}{}
-		}
-	}
-	return bindings, nil
 }
 
 // ensureRootCA ensures that a root Certificate Authority has been created.
@@ -885,7 +850,7 @@ func ensureTrustConfig(ctx context.Context, cluster *ClusterInfo) error {
 	return patchTrustConfig(ctx, cluster, patchOptions{}, b.String())
 }
 
-// createSSLRole creates a custom GCP role that stores permissions necessary
+// createSSLRole creates a custom GCP role that contains permissions necessary
 // for minting SSL certificates.
 func createSSLRole(ctx context.Context, config CloudConfig) error {
 	return patchProjectCustomRole(ctx, config, patchOptions{}, sslRole, &iam.Role{
@@ -900,32 +865,45 @@ func createSSLRole(ctx context.Context, config CloudConfig) error {
 	})
 }
 
+// createServiceAccountsIAMPolicyRole creates a custom GCP role that contains
+// permissions necessary for updating IAM policies for existing IAM service
+// accounts.
+func createServiceAccountsIAMPolicyRole(ctx context.Context, config CloudConfig) error {
+	return patchProjectCustomRole(ctx, config, patchOptions{}, iamPolicyRole, &iam.Role{
+		Description: "Custom role that grants Service Weaver service-account IAM policy getting/setting permissions.",
+		Stage:       "GA",
+		IncludedPermissions: []string{
+			"iam.serviceAccounts.getIamPolicy",
+			"iam.serviceAccounts.setIamPolicy",
+		},
+	})
+}
+
 // ensureConfigCluster sets up a Service Weaver configuration cluster, returning the
 // cluster information and the IP address of the gateway that routes ingress
 // traffic to all Service Weaver applications.
-func ensureConfigCluster(ctx context.Context, config CloudConfig, name, region string, bindings iamBindings) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, name, region)
+func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string, bindings iamBindings) (*ClusterInfo, string, error) {
+	cluster, err := ensureManagedCluster(ctx, config, cfg, name, region)
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ensureKubeServiceAccount(ctx, cluster, controllerKubeServiceAccount, controllerIAMServiceAccount,
-		[]rbacv1.PolicyRule{
-			{
-				APIGroups: []string{""}, // Core APIs.
-				Resources: []string{"configmaps"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"net.gke.io"}, // Networking APIs.
-				Resources: []string{"serviceimports"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
-				Resources: []string{"gateways", "httproutes"},
-				Verbs:     []string{"*"},
-			},
-		}); err != nil {
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, controllerKubeServiceAccount, controllerIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
+		{
+			APIGroups: []string{""}, // Core APIs.
+			Resources: []string{"configmaps"},
+			Verbs:     []string{"*"},
+		},
+		{
+			APIGroups: []string{"net.gke.io"}, // Networking APIs.
+			Resources: []string{"serviceimports"},
+			Verbs:     []string{"*"},
+		},
+		{
+			APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
+			Resources: []string{"gateways", "httproutes"},
+			Verbs:     []string{"*"},
+		},
+	}); err != nil {
 		return nil, "", err
 	}
 
@@ -958,56 +936,60 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, name, region s
 // and running in the given region and is set up to host Service Weaver applications.
 // It returns the cluster information and the IP address of the gateway that
 // routes internal traffic to Service Weaver applications in the cluster.
-func ensureApplicationCluster(ctx context.Context, config CloudConfig, name, region string) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, name, region)
+func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string) (*ClusterInfo, string, error) {
+	cluster, err := ensureManagedCluster(ctx, config, cfg, name, region)
 	if err != nil {
 		return nil, "", err
 	}
 
 	// Setup the distributor/manager/application service accounts.
-	if err := ensureKubeServiceAccount(ctx, cluster, distributorKubeServiceAccount, distributorIAMServiceAccount,
-		[]rbacv1.PolicyRule{
-			{
-				APIGroups: []string{""}, // Core APIs.
-				Resources: []string{"services", "configmaps"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
-				Resources: []string{"gateways", "httproutes"},
-				Verbs:     []string{"*"},
-			},
-		}); err != nil {
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, distributorKubeServiceAccount, distributorIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
+		{
+			APIGroups: []string{""}, // Core APIs.
+			Resources: []string{"services", "configmaps"},
+			Verbs:     []string{"*"},
+		},
+		{
+			APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
+			Resources: []string{"gateways", "httproutes"},
+			Verbs:     []string{"*"},
+		},
+	}); err != nil {
 		return nil, "", err
 	}
-	if err := ensureKubeServiceAccount(ctx, cluster, managerKubeServiceAccount, managerIAMServiceAccount,
-		[]rbacv1.PolicyRule{
-			{
-				APIGroups: []string{""}, // Core APIs.
-				Resources: []string{"pods", "services", "configmaps"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"apps"}, // Application APIs.
-				Resources: []string{"deployments"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"batch"}, // Batch APIs.
-				Resources: []string{"jobs"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"autoscaling.gke.io"}, // Autoscaling APIs.
-				Resources: []string{"multidimpodautoscalers"},
-				Verbs:     []string{"*"},
-			},
-			{
-				APIGroups: []string{"net.gke.io"}, // Networking APIs.
-				Resources: []string{"serviceexports"},
-				Verbs:     []string{"*"},
-			},
-		}); err != nil {
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, managerKubeServiceAccount, managerIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
+		{
+			APIGroups: []string{""}, // Core APIs.
+			Resources: []string{
+				"pods", "services", "configmaps", "serviceaccounts"},
+			Verbs: []string{"*"},
+		},
+		{
+			APIGroups: []string{"apps"}, // Application APIs.
+			Resources: []string{"deployments"},
+			Verbs:     []string{"*"},
+		},
+		{
+			APIGroups: []string{"batch"}, // Batch APIs.
+			Resources: []string{"jobs"},
+			Verbs:     []string{"*"},
+		},
+		{
+			APIGroups: []string{"autoscaling.gke.io"}, // Autoscaling APIs.
+			Resources: []string{"multidimpodautoscalers"},
+			Verbs:     []string{"*"},
+		},
+		{
+			APIGroups: []string{"net.gke.io"}, // Networking APIs.
+			Resources: []string{"serviceexports"},
+			Verbs:     []string{"*"},
+		},
+	}); err != nil {
+		return nil, "", err
+	}
+
+	// Setup the service account used for spare capacity.
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, spareKubeServiceAccount, "" /*iamAccount*/, nil /*labels*/, nil /*policyRules*/); err != nil {
 		return nil, "", err
 	}
 
@@ -1034,9 +1016,6 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, name, reg
 			"performance may suffer.\n", cluster.Name, cluster.Region)
 	}
 
-	if err := ensureKubeServiceAccount(ctx, cluster, applicationKubeServiceAccount, applicationIAMServiceAccount, []rbacv1.PolicyRule{}); err != nil {
-		return nil, "", err
-	}
 	gatewayIP, err := ensureRegionalInternalGateway(ctx, cluster)
 	if err != nil {
 		return nil, "", err
@@ -1049,7 +1028,7 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, name, reg
 
 // ensureManagedCluster ensures that a Service Weaver managed cluster is available
 // and running in the given region.
-func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region string) (*ClusterInfo, error) {
+func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string) (*ClusterInfo, error) {
 	exists, err := hasCluster(ctx, config, name, region)
 	if err != nil {
 		return nil, err
@@ -1131,10 +1110,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 						"https://www.googleapis.com/auth/cloud-platform",
 					},
 					WorkloadMetadataConfig: &containerpb.WorkloadMetadataConfig{
-						// Setting mode to GCE_METADATA ensures that no GKE
-						// metadata pods are scheduled on kubernetes nodes,
-						// saving resources.
-						Mode: containerpb.WorkloadMetadataConfig_GCE_METADATA,
+						Mode: containerpb.WorkloadMetadataConfig_GKE_METADATA,
 					},
 				},
 				// NOTE: consider using auto-provisioning, which creates new
@@ -1177,9 +1153,12 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 		return nil, err
 	}
 
-	// Setup the subordinate Certificate Authority in the cluster region.
-	if err := ensureSubordinateCA(ctx, config, region); err != nil {
-		return nil, err
+	// Setup the subordinate Certificate Authority in the cluster region, if
+	// MTLS is used.
+	if cfg.UseMtls {
+		if err := ensureSubordinateCA(ctx, config, region); err != nil {
+			return nil, err
+		}
 	}
 
 	// Setup the workload certificate config in the cluster.
@@ -1372,7 +1351,7 @@ func ensurePermanentSpareCapacity(ctx context.Context, cluster *ClusterInfo, cpu
 							},
 						},
 					},
-					ServiceAccountName: applicationKubeServiceAccount,
+					ServiceAccountName: spareKubeServiceAccount,
 				},
 			},
 		},
@@ -1414,58 +1393,6 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 		Type:    "A",
 		Rrdatas: []string{gatewayIP},
 		Ttl:     300, // seconds
-	})
-}
-
-func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, account, iamAccount string, policyRules []rbacv1.PolicyRule) error {
-	// Allow the kubernetes service account to access the IAM service account.
-	const accountRole = "roles/iam.workloadIdentityUser"
-	accountMember := fmt.Sprintf("serviceAccount:%s.svc.id.goog[%s/%s]", cluster.CloudConfig.Project, namespaceName, account)
-	if err := ensureServiceAccountIAMBinding(ctx, cluster.CloudConfig, iamAccount, accountRole, accountMember); err != nil {
-		return err
-	}
-
-	// Create a Kubernetes service account and bind it to the GCP IAM service
-	// account.
-	if err := patchKubeServiceAccount(ctx, cluster, patchOptions{}, &apiv1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      account,
-			Namespace: namespaceName,
-			Annotations: map[string]string{
-				"iam.gke.io/gcp-service-account": fmt.Sprintf("%s@%s.iam.gserviceaccount.com", iamAccount, cluster.CloudConfig.Project),
-			},
-		},
-	}); err != nil {
-		return err
-	}
-
-	// Create a Kubernetes cluster role.
-	if err := patchClusterRole(ctx, cluster, patchOptions{}, &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: account,
-		},
-		Rules: policyRules,
-	}); err != nil {
-		return err
-	}
-
-	// Bind the Kubernetes cluster role to the Kubernetes service account.
-	return patchRoleBinding(ctx, cluster, patchOptions{}, &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      account,
-			Namespace: namespaceName,
-		},
-		Subjects: []rbacv1.Subject{
-			{
-				Kind:      "User",
-				Name:      fmt.Sprintf("system:serviceaccount:%s:%s", namespaceName, account),
-				Namespace: namespaceName,
-			},
-		},
-		RoleRef: rbacv1.RoleRef{
-			Kind: "ClusterRole",
-			Name: account,
-		},
 	})
 }
 
@@ -1533,12 +1460,14 @@ func waitForServiceExportsResource(ctx context.Context, cluster *ClusterInfo) er
 	}
 	fmt.Fprintf(os.Stderr,
 		"Waiting for serviceexports resource to become available in "+
-			"cluster %q in %q\n", cluster.Name, cluster.Region)
+			"cluster %q in %q... ", cluster.Name, cluster.Region)
 	for r := retry.Begin(); r.Continue(ctx); {
 		if ready() {
+			fmt.Fprintln(os.Stderr, "Done")
 			return nil
 		}
 	}
+	fmt.Fprintln(os.Stderr, " Timed out")
 	return fmt.Errorf(
 		"timed out waiting for serviceexports resource to become available "+
 			"in cluster %q in %q", cluster.Name, cluster.Region)

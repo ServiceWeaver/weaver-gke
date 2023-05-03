@@ -16,6 +16,8 @@ package gke
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"os"
 
@@ -26,6 +28,19 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"go.opentelemetry.io/otel/sdk/trace"
+)
+
+const (
+	// Local directory that contains the certificates for this Pod.
+	// NOTE: This directory will only exist if the MTLS protocol has been
+	// enabled for the deployment.
+	certsLocalDir = "/var/run/secrets/workload-spiffe-credentials"
+
+	// Local Files that store the Certificate Authority certificate, the Pod
+	// certificate, and the Pod certificate's matching private key.
+	caCertFile  = certsLocalDir + "/ca_certificates.pem"
+	podCertFile = certsLocalDir + "/certificates.pem"
+	podKeyFile  = certsLocalDir + "/private_key.pem"
 )
 
 // RunBabysitter creates and runs a GKE babysitter.
@@ -84,6 +99,30 @@ func RunBabysitter(ctx context.Context) error {
 		}
 	}
 
+	// Load certificates, if MTLS was enabled for the deployment.
+	var caCert *x509.Certificate
+	var selfCertPEM, selfKeyPEM []byte
+	if cfg.UseMtls {
+		caCertPEM, err := loadPEM(caCertFile)
+		if err != nil {
+			return err
+		}
+		caCertDER, _ := pem.Decode(caCertPEM)
+		if caCertDER == nil || caCertDER.Type != "CERTIFICATE" {
+			return fmt.Errorf("cannot decode the PEM block containing the CA certificate")
+		}
+		if caCert, err = x509.ParseCertificate(caCertDER.Bytes); err != nil {
+			return fmt.Errorf("cannot parse the CA certificate: %w", err)
+		}
+
+		if selfCertPEM, err = loadPEM(podCertFile); err != nil {
+			return err
+		}
+		if selfKeyPEM, err = loadPEM(podKeyFile); err != nil {
+			return err
+		}
+	}
+
 	// Babysitter logs are written to the same log store as the application logs.
 	logClient, err := newCloudLoggingClient(ctx, meta)
 	if err != nil {
@@ -114,7 +153,7 @@ func RunBabysitter(ctx context.Context) error {
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	b, err := babysitter.NewBabysitter(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, m, logSaver, traceSaver, metricSaver)
+	b, err := babysitter.NewBabysitter(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, caCert, selfCertPEM, selfKeyPEM, m, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}
@@ -135,4 +174,15 @@ func gkeConfigFromEnv() (*config.GKEConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func loadPEM(fname string) ([]byte, error) {
+	data, err := os.ReadFile(fname)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty PEM block in file %s", fname)
+	}
+	return data, nil
 }

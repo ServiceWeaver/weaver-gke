@@ -66,5 +66,7 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 	}
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, m, logSaver, traceSaver, metricExporter)
+
+	// TODO(spetrovic): Add mTLS support.
+	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, nil /*caCert*/, nil /*selfCertPEM*/, nil /*selfKeyPEM*/, m, logSaver, traceSaver, metricExporter)
 }

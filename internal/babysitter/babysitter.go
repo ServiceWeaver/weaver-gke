@@ -16,6 +16,8 @@ package babysitter
 
 import (
 	"context"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -53,6 +55,7 @@ type Babysitter struct {
 	podName        string
 	envelope       *envelope.Envelope
 	lis            net.Listener // listener to serve /healthz and /run_profiling
+	caCertPool     *x509.CertPool
 	manager        clients.ManagerClient
 	logger         *slog.Logger
 	logSaver       func(*protos.LogEntry)
@@ -73,6 +76,9 @@ func NewBabysitter(
 	replicaSet string,
 	podName string,
 	useLocalhost bool,
+	caCert *x509.Certificate,
+	selfCertPEM []byte,
+	selfKeyPEM []byte,
 	manager clients.ManagerClient,
 	logSaver func(*protos.LogEntry),
 	traceSaver func(spans []trace.ReadOnlySpan) error,
@@ -101,6 +107,13 @@ func NewBabysitter(
 		Write: logSaver,
 	})
 
+	// Initialize the CA certificate pool.
+	var caCertPool *x509.CertPool
+	if caCert != nil {
+		caCertPool = x509.NewCertPool()
+		caCertPool.AddCert(caCert)
+	}
+
 	// Create the envelope.
 	//
 	// We use the PodName as a unique weavelet id for the following reasons:
@@ -111,24 +124,16 @@ func NewBabysitter(
 	//     active by asking the Kubernetes API if the Pod with a given name
 	//     exists.
 	info := &protos.EnvelopeInfo{
-		App:          cfg.Deployment.App.Name,
-		DeploymentId: cfg.Deployment.Id,
-		Id:           podName,
-		Sections:     cfg.Deployment.App.Sections,
-		RunMain:      replicaSet == runtime.Main,
+		App:           cfg.Deployment.App.Name,
+		DeploymentId:  cfg.Deployment.Id,
+		Id:            podName,
+		Sections:      cfg.Deployment.App.Sections,
+		RunMain:       replicaSet == runtime.Main,
+		SelfCertChain: selfCertPEM,
+		SelfKey:       selfKeyPEM,
 	}
 	e, err := envelope.NewEnvelope(ctx, info, cfg.Deployment.App)
 	if err != nil {
-		return nil, err
-	}
-
-	// Make sure the version of the deployer matches the version of the
-	// compiled binary.
-	//
-	// TODO: Check for compatibility early on, before deploying.
-	// TODO: Propagate this error and crash the app.
-	wlet := e.WeaveletInfo()
-	if err := checkVersion(wlet.Version); err != nil {
 		return nil, err
 	}
 
@@ -140,6 +145,7 @@ func NewBabysitter(
 		podName:        podName,
 		envelope:       e,
 		lis:            lis,
+		caCertPool:     caCertPool,
 		manager:        manager,
 		logger:         logger,
 		logSaver:       logSaver,
@@ -148,25 +154,6 @@ func NewBabysitter(
 	}
 
 	return b, nil
-}
-
-// checkVersion checks that the deployer API version the deployer was built
-// with is compatible with the deployer API version the app was built with,
-// erroring out if they are not compatible.
-func checkVersion(appVersion *protos.SemVer) error {
-	if appVersion == nil {
-		return fmt.Errorf("version mismatch: nil app version")
-	}
-	if appVersion.Major != runtime.Major ||
-		appVersion.Minor != runtime.Minor ||
-		appVersion.Patch != runtime.Patch {
-		return fmt.Errorf(
-			"version mismatch: deployer version %d.%d.%d is incompatible with app version %d.%d.%d.",
-			runtime.Major, runtime.Minor, runtime.Patch,
-			appVersion.Major, appVersion.Minor, appVersion.Patch,
-		)
-	}
-	return nil
 }
 
 // Run runs the babysitter. This call will block until the context passed to
@@ -420,13 +407,77 @@ func (b *Babysitter) ExportListener(ctx context.Context, req *protos.ExportListe
 }
 
 // VerifyClientCertificate implements the envelope.EnvelopeHandler interface.
-func (b *Babysitter) VerifyClientCertificate(context.Context, *protos.VerifyClientCertificateRequest) (*protos.VerifyClientCertificateReply, error) {
-	panic(fmt.Errorf("unused"))
+func (b *Babysitter) VerifyClientCertificate(_ context.Context, req *protos.VerifyClientCertificateRequest) (*protos.VerifyClientCertificateReply, error) {
+	_, err := b.verifyCertificate(req.CertChain)
+	if err != nil {
+		return nil, err
+	}
+
+	// For now, return all components.
+	// TODO(spetrovic): Use the call graph to return the set of components
+	// that the client group is allowed to invoke methods on.
+	return &protos.VerifyClientCertificateReply{
+		Components: b.envelope.WeaveletInfo().Components,
+	}, nil
 }
 
 // VerifyServerCertificate implements the envelope.EnvelopeHandler interface.
-func (b *Babysitter) VerifyServerCertificate(context.Context, *protos.VerifyServerCertificateRequest) (*protos.VerifyServerCertificateReply, error) {
-	panic(fmt.Errorf("unused"))
+func (b *Babysitter) VerifyServerCertificate(_ context.Context, req *protos.VerifyServerCertificateRequest) (*protos.VerifyServerCertificateReply, error) {
+	// TODO(spetrovic): Add this support.
+	panic("unimplemented")
+}
+
+// verifyCertificate verifies the given certificate chain, returning the
+// Kubernetes service account encoded in the chain.
+func (b *Babysitter) verifyCertificate(certChain [][]byte) (string, error) {
+	if b.caCertPool == nil {
+		return "", fmt.Errorf("internal error: cannot verify peer certificate without a non-empty CA cert")
+	}
+	if len(certChain) == 0 {
+		return "", errors.New("empty peer certificate")
+	}
+	var leaf *x509.Certificate
+	intermediates := x509.NewCertPool()
+	for i, certDER := range certChain {
+		cert, err := x509.ParseCertificate(certDER)
+		if err != nil {
+			return "", fmt.Errorf("bad peer certificate: %w", err)
+		}
+		if i == 0 {
+			leaf = cert
+		} else {
+			intermediates.AddCert(cert)
+		}
+	}
+	opts := x509.VerifyOptions{
+		Roots:         b.caCertPool,
+		Intermediates: intermediates,
+		CurrentTime:   time.Now(),
+	}
+	verifiedChains, err := leaf.Verify(opts)
+	if err != nil {
+		return "", fmt.Errorf("couldn't verify peer certificate chain: %w", err)
+	}
+	if len(verifiedChains) != 1 {
+		return "", fmt.Errorf("expected a single peer verified chain, got %d", len(verifiedChains))
+	}
+	if len(verifiedChains[0]) < 1 { // should never happen
+		return "", fmt.Errorf("empty peer verified chain")
+	}
+	verifiedLeaf := verifiedChains[0][0]
+	if len(verifiedLeaf.URIs) != 1 {
+		return "", fmt.Errorf("expected a single peer URI, got %d", len(leaf.URIs))
+	}
+
+	uri := verifiedLeaf.URIs[0]
+	if uri.Scheme != "spiffe://" || uri.Host == "" || uri.Path == "" {
+		return "", fmt.Errorf(`invalid peer identity URI, want "spiffe://<host>/<service_account>", got %q`, uri)
+	}
+	expectedHost := fmt.Sprintf("%s.svc.id.goog", b.cfg.Project)
+	if uri.Host != expectedHost {
+		return "", fmt.Errorf("invalid host in peer identity, want %q, got %q", expectedHost, uri.Host)
+	}
+	return uri.Path, nil
 }
 
 // HandleLogEntry implements the envelope.EnvelopeHandler interface.

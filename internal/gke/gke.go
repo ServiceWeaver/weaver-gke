@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"math"
 	"net"
+	"os"
+	"path"
 	"strconv"
 	"strings"
 	"text/template"
@@ -30,13 +32,17 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime"
+	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slog"
+	"google.golang.org/api/iam/v1"
 	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
 	gproto "google.golang.org/protobuf/proto"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
+	apiv1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -196,12 +202,24 @@ func podExists(ctx context.Context, cluster *ClusterInfo, name string) (bool, er
 }
 
 // deploy deploys the Kubernetes ReplicaSet in the given cluster.
-func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, group string) error {
-	if err := ensureReplicaSet(ctx, cluster, logger, cfg, group); err != nil {
+func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
+	dep := cfg.Deployment
+
+	// Create a service account for the replica set and bind it to the
+	// application IAM service account.
+	saName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSSubdomain()
+	labels := map[string]string{
+		appNameKey:      dep.App.Name,
+		deploymentIDKey: dep.Id,
+	}
+	if err := ensureKubeServiceAccount(ctx, cluster, logger, saName, applicationIAMServiceAccount, labels, nil /*policyRules*/); err != nil {
+		return err
+	}
+	if err := ensureReplicaSet(ctx, cluster, logger, cfg, replicaSet); err != nil {
 		return err
 	}
 
-	if group == runtime.Main {
+	if replicaSet == runtime.Main {
 		// Allocate a temporary spare CPU capacity so that the application
 		// version starts faster.
 		//
@@ -221,7 +239,7 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg 
 	}
 
 	// Setup an autoscaler for the ReplicaSet.
-	return ensureReplicaSetAutoscaler(ctx, cluster, logger, cfg, group)
+	return ensureReplicaSetAutoscaler(ctx, cluster, logger, cfg, replicaSet)
 }
 
 // stop stops any resources (e.g., Deployments, Jobs) that belong to the
@@ -296,7 +314,7 @@ type collectionDeleter interface {
 
 // kill kills any resources (e.g., Deployments, Jobs) that belong to the
 // provided application version.
-func kill(ctx context.Context, cluster *ClusterInfo, app, version string) error {
+func kill(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, version string) error {
 	for _, deleter := range []collectionDeleter{
 		cluster.dynamicClient.Resource(schema.GroupVersionResource{
 			Group:    "autoscaling.gke.io",
@@ -317,7 +335,8 @@ func kill(ctx context.Context, cluster *ClusterInfo, app, version string) error 
 	if err := cluster.Clientset.BatchV1().Jobs(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
 		return err
 	}
-	return nil
+
+	return deleteReplicaSetServiceAccounts(ctx, cluster, logger, app, version)
 }
 
 func killHelper(ctx context.Context, cluster *ClusterInfo, version string, deleter collectionDeleter) error {
@@ -334,10 +353,18 @@ func Store(cluster *ClusterInfo) store.Store {
 
 func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
 	dep := cfg.Deployment
-	name := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
+	n := name{dep.App.Name, replicaSet, dep.Id[:8]}
+	name := n.DNSLabel()
+	saName := n.DNSSubdomain()
 	container, err := appContainer(name, cluster, cfg, replicaSet)
 	if err != nil {
 		return err
+	}
+	var annotations map[string]string
+	if cfg.UseMtls {
+		annotations = map[string]string{
+			"security.cloud.google.com/use-workload-certificates": "",
+		}
 	}
 	return patchDeployment(ctx, cluster, patchOptions{logger: logger}, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
@@ -360,14 +387,12 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 					Labels: map[string]string{
 						"app": name,
 					},
-					Annotations: map[string]string{
-						"security.cloud.google.com/use-workload-certificates": "",
-					},
+					Annotations: annotations,
 				},
 				Spec: v1.PodSpec{
 					PriorityClassName:  applicationPriorityClassName,
 					Containers:         []v1.Container{container},
-					ServiceAccountName: applicationKubeServiceAccount,
+					ServiceAccountName: saName,
 				},
 			},
 		},
@@ -949,6 +974,250 @@ func computeTrafficBackends(isGlobal bool, cluster *ClusterInfo, allocations []*
 	return backends, nil
 }
 
+// ensureKubeServiceAccount ensures that a service account with the given
+// name has been created with the given policy rules, and has been associated
+// with a given IAM service account, if one was specified.
+func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, account, iamAccount string, labels map[string]string, policyRules []rbacv1.PolicyRule) error {
+	if iamAccount != "" {
+		// Allow the kubernetes service account to access the IAM service
+		// account.
+		const accountRole = "roles/iam.workloadIdentityUser"
+		accountMember := fmt.Sprintf("serviceAccount:%s.svc.id.goog[%s/%s]", cluster.CloudConfig.Project, namespaceName, account)
+		if err := ensureServiceAccountIAMBinding(ctx, cluster.CloudConfig, nil /*logger*/, iamAccount, accountRole, accountMember); err != nil {
+			return err
+		}
+	}
+
+	// Create a Kubernetes service account.
+	var annotations map[string]string
+	if iamAccount != "" {
+		// Bind the Kubernetes service account to the GCP IAM service account.
+		annotations = map[string]string{
+			"iam.gke.io/gcp-service-account": serviceAccountEmail(iamAccount, cluster.CloudConfig),
+		}
+	}
+	if err := patchKubeServiceAccount(ctx, cluster, patchOptions{logger: logger}, &apiv1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        account,
+			Namespace:   namespaceName,
+			Labels:      labels,
+			Annotations: annotations,
+		},
+	}); err != nil {
+		return err
+	}
+
+	if policyRules == nil {
+		// No Kubernetes permissions: we're done.
+		return nil
+	}
+
+	// Create a Kubernetes cluster role with the given permissions.
+	if err := patchClusterRole(ctx, cluster, patchOptions{}, &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: account,
+		},
+		Rules: policyRules,
+	}); err != nil {
+		return err
+	}
+
+	// Bind the Kubernetes cluster role to the Kubernetes service account.
+	return patchRoleBinding(ctx, cluster, patchOptions{}, &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      account,
+			Namespace: namespaceName,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "User",
+				Name:      fmt.Sprintf("system:serviceaccount:%s:%s", namespaceName, account),
+				Namespace: namespaceName,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind: "ClusterRole",
+			Name: account,
+		},
+	})
+}
+
+// ensureServiceAccountIAMBinding ensures that the binding member -> role
+// exists in the IAM bindings for the given service account.
+func ensureServiceAccountIAMBinding(ctx context.Context, config CloudConfig, logger *slog.Logger, account, role, member string) error {
+	iamService, err := iam.NewService(ctx, config.ClientOptions()...)
+	if err != nil {
+		return err
+	}
+	service := iam.NewProjectsService(iamService).ServiceAccounts
+	for r := retry.Begin(); r.Continue(ctx); {
+		if err := tryEnsureServiceAccountIAMBindings(ctx, config, service, account, role, member); err == nil {
+			return nil
+		} else {
+			// Log the error.
+			const msg = "Error ensuring service account binding. Will retry."
+			args := []any{"err", err, "account", account, "role", role, "member", member}
+			if logger != nil {
+				logger.Debug(msg, args...)
+			} else {
+				fmt.Fprintln(os.Stderr, msg, args)
+			}
+		}
+	}
+	return ctx.Err()
+}
+
+func tryEnsureServiceAccountIAMBindings(ctx context.Context, config CloudConfig, service *iam.ProjectsServiceAccountsService, account, role, member string) error {
+	accountResource := path.Join("projects", config.Project, "serviceAccounts", serviceAccountEmail(account, config))
+
+	// Get the current policy for the given service account.
+	getCall := service.GetIamPolicy(accountResource)
+	getCall.Context(ctx)
+	policy, err := getCall.Do()
+	if err != nil {
+		return err
+	}
+
+	// Find the binding with the required role.
+	var binding *iam.Binding
+	for _, b := range policy.Bindings {
+		if b.Role == role {
+			binding = b
+			break
+		}
+	}
+	if binding == nil {
+		binding = &iam.Binding{Role: role}
+		policy.Bindings = append(policy.Bindings, binding)
+	}
+
+	// See if the member already exists in the binding.
+	for _, m := range binding.Members {
+		if m == member {
+			// Already exists: we're done.
+			return nil
+		}
+	}
+
+	// Add the new member and update the policy.
+	binding.Members = append(binding.Members, member)
+	setCall := service.SetIamPolicy(accountResource, &iam.SetIamPolicyRequest{
+		Policy: policy,
+	})
+	setCall.Context(ctx)
+	_, err = setCall.Do()
+	return err
+}
+
+// deleteReplicaSetServiceAccounts deletes all of the service accounts
+// associated with the given application version.
+func deleteReplicaSetServiceAccounts(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, version string) error {
+	// Find all kubernetes service accounts for the given app version.
+	selector := labels.SelectorFromSet(labels.Set{deploymentIDKey: version})
+	listOpts := metav1.ListOptions{LabelSelector: selector.String()}
+	client := cluster.Clientset.CoreV1().ServiceAccounts(namespaceName)
+	accountsList, err := client.List(ctx, listOpts)
+	if err != nil {
+		return err
+	}
+	if len(accountsList.Items) == 0 {
+		// No service accounts: we're done.
+		return nil
+	}
+
+	// Remove kubernetes service accounts from the IAM bindings for the
+	// application IAM service account.
+	const accountRole = "roles/iam.workloadIdentityUser"
+	members := make([]string, len(accountsList.Items))
+	for i, sa := range accountsList.Items {
+		members[i] = fmt.Sprintf("serviceAccount:%s.svc.id.goog[%s/%s]", cluster.CloudConfig.Project, namespaceName, sa.Name)
+	}
+	if err := deleteServiceAccountIAMBindings(ctx, cluster.CloudConfig, logger, applicationIAMServiceAccount, accountRole, members); err != nil {
+		return err
+	}
+
+	// Delete the kubernetes service accounts.
+	return client.DeleteCollection(ctx, metav1.DeleteOptions{}, listOpts)
+}
+
+// deleteServiceAccountIAMBindings ensures that the bindings member -> role
+// are deleted from the IAM bindings for the given service account.
+func deleteServiceAccountIAMBindings(ctx context.Context, config CloudConfig, logger *slog.Logger, account, role string, members []string) error {
+	iamService, err := iam.NewService(ctx, config.ClientOptions()...)
+	if err != nil {
+		return err
+	}
+	service := iam.NewProjectsService(iamService).ServiceAccounts
+	for r := retry.Begin(); r.Continue(ctx); {
+		if err := tryDeleteServiceAccountIAMBindings(ctx, config, service, account, role, members); err == nil {
+			return nil
+		} else {
+			// Log the error.
+			const msg = "Error deleting service account bindings. Will retry."
+			args := []any{"err", err, "account", account, "role", role, "members", members}
+			if logger != nil {
+				logger.Debug(msg, args...)
+			} else {
+				fmt.Fprintln(os.Stderr, msg, args)
+			}
+		}
+	}
+	return ctx.Err()
+}
+
+func tryDeleteServiceAccountIAMBindings(ctx context.Context, config CloudConfig, service *iam.ProjectsServiceAccountsService, account, role string, members []string) error {
+	email := fmt.Sprintf("%s@%s.iam.gserviceaccount.com", account, config.Project)
+
+	// Get the current policy for the given service account.
+	getCall := service.GetIamPolicy(path.Join("projects", config.Project, "serviceAccounts", email))
+	getCall.Context(ctx)
+	policy, err := getCall.Do()
+	if err != nil {
+		return err
+	}
+
+	// Find the binding with the required role, if it exists.
+	var binding *iam.Binding
+	for _, b := range policy.Bindings {
+		if b.Role == role {
+			binding = b
+			break
+		}
+	}
+	if binding == nil {
+		// No binding exists for the role: we're done.
+		return nil
+	}
+
+	// Remove members from the binding.
+	var modif bool
+	for _, member := range members {
+		for i, bm := range binding.Members {
+			if bm == member {
+				// Swap with last element and shorten the slice.
+				endIdx := len(binding.Members) - 1
+				binding.Members[i] = binding.Members[endIdx]
+				binding.Members = binding.Members[:endIdx]
+				modif = true
+				break
+			}
+		}
+	}
+
+	if !modif {
+		// Nothing was changed: we're done.
+		return nil
+	}
+
+	// Update the policy.
+	setCall := service.SetIamPolicy(path.Join("projects", config.Project, "serviceAccounts", email), &iam.SetIamPolicyRequest{
+		Policy: policy,
+	})
+	setCall.Context(ctx)
+	_, err = setCall.Do()
+	return err
+}
+
 // ensureSSLCertificate ensures that a Google-managed SSL certificate for the
 // given application hostname has been created.
 func ensureSSLCertificate(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, host string) (string, error) {
@@ -1016,11 +1285,17 @@ func ensureTemporarySpareCapacity(ctx context.Context, cluster *ClusterInfo, log
 							},
 						},
 					},
-					ServiceAccountName: applicationKubeServiceAccount,
+					ServiceAccountName: spareKubeServiceAccount,
 				},
 			},
 		},
 	})
+}
+
+// serviceAccountEmail returns the email for the IAM service account created
+// and managed by ServiceWeaver.
+func serviceAccountEmail(iamAccount string, config CloudConfig) string {
+	return fmt.Sprintf("%s@%s.iam.gserviceaccount.com", iamAccount, config.Project)
 }
 
 func protoValueEncode(msg gproto.Message) (string, error) {
