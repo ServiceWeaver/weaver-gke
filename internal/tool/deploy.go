@@ -190,9 +190,19 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 
 	// We just deployed this application, so we can filter out any entries
 	// older than 5 minutes. Also hide system logs.
+	//
+	// TODO(mwhittaker): The query below is a hack to show version mismatch
+	// errors. Without it, a deployment silently fails, and the user doesn't
+	// even know something failed. In the longer term, we should do two things.
+	//
+	// (1) Embed the deployer API version in the binary, similar to how we're
+	// embedding the call graph, and have the deployer check the version before
+	// deploying it.
+	//
+	// (2) Show some system errors to the user in a more principled way. If
+	// something is going wrong, the user probably wants to know.
 	cutoff := time.Now().Add(-5 * time.Minute)
-	query += fmt.Sprintf(" && time >= timestamp(%q)", cutoff.Format(time.RFC3339))
-	query += ` && !("serviceweaver/system" in attrs)`
+	query = fmt.Sprintf(`time >= timestamp(%q) && ((version == %q && !("serviceweaver/system" in attrs)) || msg.contains("Error starting"))`, cutoff.Format(time.RFC3339), logging.Shorten(deployment.Id))
 
 	source, err := d.Source(ctx, cfg)
 	if err != nil {
