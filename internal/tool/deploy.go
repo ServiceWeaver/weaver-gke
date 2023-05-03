@@ -36,6 +36,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
+	"github.com/ServiceWeaver/weaver/runtime/version"
 	"github.com/google/uuid"
 )
 
@@ -160,6 +161,19 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 	if info.IsDir() {
 		return fmt.Errorf("want binary, found directory at path %q", app.Binary)
 	}
+	major, minor, patch, err := version.ReadVersion(app.Binary)
+	if err != nil {
+		return fmt.Errorf("read binary version: %w", err)
+	}
+	if major != version.Major || minor != version.Minor || patch != version.Patch {
+		return fmt.Errorf(
+			"version mismatch: deployer version %d.%d.%d is incompatible with app version %d.%d.%d",
+			version.Major, version.Minor, version.Patch,
+			major, minor, patch,
+		)
+	}
+	// TODO(mwhittaker): Check that the controller is running the same version
+	// as the tool? Have the controller check the binary version as well?
 
 	if err := d.startRollout(ctx, cfg); err != nil {
 		return err
