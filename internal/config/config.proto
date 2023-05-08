@@ -61,6 +61,19 @@ message GKEConfig {
   }
   repeated PublicListener public_listener = 4;
 
+  // If true, enables the intra-component mTLS protocol. In particular:
+  //   1. All intra-component communication will be authenticated, ensuring
+  //      that the caller and callee components' identities can be verified.
+  //   2. All intra-component communication will be authorized, ensuring that
+  //      the caller -> callee relationship matches the call graph encoded
+  //      in the program.
+  //   3. All intra-component traffic will be encrypted, ensuring that a third
+  //      party cannot snoop on the network packets.
+  //
+  // Note that enabling mTLS will likely increase the CPU usage of your
+  // application.
+  bool use_mtls = 8;
+
   // Address of the manager local to a Service Weaver process. This field is typically
   // filled by the manager, before starting a Service Weaver process.
   string manager_addr = 5;

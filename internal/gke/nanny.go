@@ -224,7 +224,7 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 			},
 			func(_ context.Context, app string, versions []string) error {
 				for _, version := range versions {
-					if err := kill(ctx, cluster, app, version); err != nil {
+					if err := kill(ctx, cluster, logger, app, version); err != nil {
 						return fmt.Errorf("kill %q: %w", version, err)
 					}
 				}
