@@ -13,6 +13,7 @@ import (
 	"reflect"
 	"time"
 )
+var _ codegen.LatestVersion = codegen.Version[[0][10]struct{}]("You used 'weaver generate' codegen version 0.10.0, but you built your code with an incompatible weaver module version. Try upgrading 'weaver generate' and re-running it.")
 
 func init() {
 	codegen.Register(codegen.Registration{
@@ -28,6 +29,7 @@ func init() {
 		ServerStubFn: func(impl any, addLoad func(uint64, float64)) codegen.Server {
 			return destination_server_stub{impl: impl.(destination), addLoad: addLoad}
 		},
+		RefData: "",
 	})
 	codegen.Register(codegen.Registration{
 		Name:        "github.com/ServiceWeaver/weaver-gke/internal/nanny/managertest/source",
@@ -40,6 +42,7 @@ func init() {
 		ServerStubFn: func(impl any, addLoad func(uint64, float64)) codegen.Server {
 			return source_server_stub{impl: impl.(source), addLoad: addLoad}
 		},
+		RefData: "⟦1d4e08a0:wEaVeReDgE:github.com/ServiceWeaver/weaver-gke/internal/nanny/managertest/source→github.com/ServiceWeaver/weaver-gke/internal/nanny/managertest/destination⟧\n",
 	})
 }
 

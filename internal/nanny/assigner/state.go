@@ -17,11 +17,9 @@ package assigner
 import (
 	"context"
 	"errors"
-	"fmt"
 	"path"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -75,14 +73,7 @@ func (a *Assigner) applyAppState(ctx context.Context, app string, apply func(*Ap
 
 // replicaSetInfoKey returns the key into which we persist the ReplicaSetInfo.
 func replicaSetInfoKey(rid *ReplicaSetId) string {
-	// TODO(mwhittaker): Remove the requirement that all deployment ids are
-	// uuids. We may want to, for example, use more human readable deployment
-	// ids. This also makes it easier to write tests.
-	id, err := uuid.Parse(rid.Id)
-	if err != nil {
-		panic(fmt.Sprintf("invalid deployment id %q: %v", rid.Id, err))
-	}
-	return store.ReplicaSetKey(rid.App, id, rid.Name, "replica_set_info")
+	return store.ReplicaSetKey(rid.App, rid.Id, rid.Name, "replica_set_info")
 }
 
 // loadReplicaSetInfo loads a Kubernetes ReplicaSet's info from the store.

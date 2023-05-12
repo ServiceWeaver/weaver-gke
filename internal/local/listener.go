@@ -22,7 +22,6 @@ import (
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/google/uuid"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -45,8 +44,8 @@ func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, l
 	}
 
 	dep := cfg.Deployment
-	key := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), "listeners")
-	histKey := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), store.HistoryKey)
+	key := store.DeploymentKey(dep.App.Name, dep.Id, "listeners")
+	histKey := store.DeploymentKey(dep.App.Name, dep.Id, store.HistoryKey)
 	err := store.AddToSet(ctx, s, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.
@@ -67,7 +66,7 @@ func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, l
 // that this is intentional, as we don't worry about processes deaths.
 func getListeners(ctx context.Context, s store.Store, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
 	dep := cfg.Deployment
-	key := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), "listeners")
+	key := store.DeploymentKey(dep.App.Name, dep.Id, "listeners")
 	var state ListenState
 	if _, err := store.GetProto(ctx, s, key, &state, nil); err != nil {
 		return nil, err

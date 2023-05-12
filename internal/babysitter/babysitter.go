@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -408,23 +409,29 @@ func (b *Babysitter) ExportListener(ctx context.Context, req *protos.ExportListe
 
 // VerifyClientCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) VerifyClientCertificate(_ context.Context, req *protos.VerifyClientCertificateRequest) (*protos.VerifyClientCertificateReply, error) {
-	_, err := b.verifyCertificate(req.CertChain)
+	identity, err := b.verifyCertificate(req.CertChain)
 	if err != nil {
 		return nil, err
 	}
-
-	// For now, return all components.
-	// TODO(spetrovic): Use the call graph to return the set of components
-	// that the client group is allowed to invoke methods on.
-	return &protos.VerifyClientCertificateReply{
-		Components: b.envelope.WeaveletInfo().Components,
-	}, nil
+	allowlist := b.cfg.IdentityAllowlist[identity]
+	return &protos.VerifyClientCertificateReply{Components: allowlist.Component}, nil
 }
 
 // VerifyServerCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) VerifyServerCertificate(_ context.Context, req *protos.VerifyServerCertificateRequest) (*protos.VerifyServerCertificateReply, error) {
-	// TODO(spetrovic): Add this support.
-	panic("unimplemented")
+	actual, err := b.verifyCertificate(req.CertChain)
+	if err != nil {
+		return nil, err
+	}
+
+	expected, ok := b.cfg.ComponentIdentity[req.TargetComponent]
+	if !ok {
+		return nil, fmt.Errorf("unknown identity for component %q", req.TargetComponent)
+	}
+	if expected != actual {
+		return nil, fmt.Errorf("invalid server identity for target component %s: want %q, got %q", req.TargetComponent, expected, actual)
+	}
+	return &protos.VerifyServerCertificateReply{}, nil
 }
 
 // verifyCertificate verifies the given certificate chain, returning the
@@ -470,14 +477,14 @@ func (b *Babysitter) verifyCertificate(certChain [][]byte) (string, error) {
 	}
 
 	uri := verifiedLeaf.URIs[0]
-	if uri.Scheme != "spiffe://" || uri.Host == "" || uri.Path == "" {
+	if uri.Scheme != "spiffe" || uri.Host == "" || uri.Path == "" {
 		return "", fmt.Errorf(`invalid peer identity URI, want "spiffe://<host>/<service_account>", got %q`, uri)
 	}
 	expectedHost := fmt.Sprintf("%s.svc.id.goog", b.cfg.Project)
 	if uri.Host != expectedHost {
 		return "", fmt.Errorf("invalid host in peer identity, want %q, got %q", expectedHost, uri.Host)
 	}
-	return uri.Path, nil
+	return strings.TrimPrefix(uri.Path, "/"), nil
 }
 
 // HandleLogEntry implements the envelope.EnvelopeHandler interface.

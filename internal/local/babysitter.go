@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"time"
 
@@ -31,8 +32,7 @@ import (
 )
 
 // createBabysitter creates a babysitter in a gke-local deployment.
-func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
-	replicaSet string, logDir string) (*babysitter.Babysitter, error) {
+func createBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet string, logDir string, caCert *x509.Certificate, selfCertPEM, selfKeyPEM []byte) (*babysitter.Babysitter, error) {
 	podName := uuid.New().String()
 	ls, err := logging.NewFileStore(logDir)
 	if err != nil {
@@ -67,6 +67,5 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig,
 
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
 
-	// TODO(spetrovic): Add mTLS support.
-	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, nil /*caCert*/, nil /*selfCertPEM*/, nil /*selfKeyPEM*/, m, logSaver, traceSaver, metricExporter)
+	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, caCert, selfCertPEM, selfKeyPEM, m, logSaver, traceSaver, metricExporter)
 }

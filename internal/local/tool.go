@@ -23,8 +23,10 @@ import (
 	"syscall"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver/runtime/bin"
 )
 
 const (
@@ -34,12 +36,15 @@ const (
 	proxyPort      = 8000                 // proxy port
 	controllerPort = 8001                 // controller port
 	portsKey       = "/distributor_ports" // mapping from region to distributor port
+	projectName    = "local"              // fake name for the local GCP "project"
 )
 
 // PrepareRollout returns a new rollout request for the given application
 // version, along with the HTTP client that should be used to reach it.
 // May mutate the passed-in run.
 func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error) {
+	cfg.Project = projectName
+
 	// Ensure all Service Weaver service processes (i.e., controller,
 	// distributor/manager) are running.
 	distributorPorts, err := ensureWeaverServices(ctx, cfg)
@@ -47,6 +52,35 @@ func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.Rol
 		return nil, nil, err
 	}
 
+	// Generate per-component identities and use the call graph to compute
+	// the set of components each identity is allowed to invoke methods on.
+	callGraph, err := bin.ReadComponentGraph(cfg.Deployment.App.Binary)
+	if err != nil {
+		return nil, nil, fmt.Errorf("cannot read the call graph from the application binary: %w", err)
+	}
+	cfg.ComponentIdentity = map[string]string{}
+	cfg.IdentityAllowlist = map[string]*config.GKEConfig_Components{}
+	addIdentity := func(component string) string {
+		// NOTE: we assign each replica set a unique identity, which is the name
+		// of the replica set itself.
+		replicaSet := nanny.ReplicaSetForComponent(component, cfg)
+		cfg.ComponentIdentity[component] = replicaSet
+		return replicaSet
+	}
+	for _, edge := range callGraph {
+		src := edge[0]
+		dst := edge[1]
+		addIdentity(dst)
+		srcIdentity := addIdentity(src)
+		allow := cfg.IdentityAllowlist[srcIdentity]
+		if allow == nil {
+			allow = &config.GKEConfig_Components{}
+			cfg.IdentityAllowlist[srcIdentity] = allow
+		}
+		allow.Component = append(allow.Component, dst)
+	}
+
+	// Prepare the rollout request.
 	req := &controller.RolloutRequest{
 		Config:    cfg,
 		NannyAddr: fmt.Sprintf("http://localhost:%d", controllerPort),

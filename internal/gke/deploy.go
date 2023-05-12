@@ -36,9 +36,11 @@ import (
 	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
+	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/dns/v1"
@@ -345,12 +347,13 @@ func enableMultiClusterServices(config CloudConfig) error {
 	return err
 }
 
-func finalizeConfig(config CloudConfig, cfg *config.GKEConfig) error {
+func finalizeConfig(cloudConfig CloudConfig, gkeConfig *config.GKEConfig) error {
 	// Override the project and account values in the app config.
-	cfg.Project = config.Project
-	cfg.Account = config.Account
+	gkeConfig.Project = cloudConfig.Project
+	gkeConfig.Account = cloudConfig.Account
 
-	if cfg.Deployment.App.RolloutNanos == 0 {
+	// Finalize the rollout duration.
+	if gkeConfig.Deployment.App.RolloutNanos == 0 {
 		scanner := bufio.NewScanner(os.Stdin)
 		fmt.Print(
 			`No rollout duration specified in the config: the app version will be
@@ -364,10 +367,41 @@ rolled out in all locations right away. Are you sure you want to proceed? [Y/n] 
 		}
 	}
 
+	// Generate per-component identities and use the call graph to compute
+	// the set of components each identity is allowed to invoke methods on.
+	callGraph, err := bin.ReadComponentGraph(gkeConfig.Deployment.App.Binary)
+	if err != nil {
+		return fmt.Errorf("cannot read the call graph from the application binary: %w", err)
+	}
+	gkeConfig.ComponentIdentity = map[string]string{}
+	gkeConfig.IdentityAllowlist = map[string]*config.GKEConfig_Components{}
+	addIdentity := func(component string) string {
+		dep := gkeConfig.Deployment
+		replicaSet := nanny.ReplicaSetForComponent(component, gkeConfig)
+		serviceAccount := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
+		identity := path.Join("ns", namespaceName, "sa", serviceAccount)
+		gkeConfig.ComponentIdentity[component] = identity
+		return identity
+	}
+	for _, edge := range callGraph {
+		src := edge[0]
+		dst := edge[1]
+		addIdentity(dst)
+		srcIdentity := addIdentity(src)
+		allow := gkeConfig.IdentityAllowlist[srcIdentity]
+		if allow == nil {
+			allow = &config.GKEConfig_Components{}
+			gkeConfig.IdentityAllowlist[srcIdentity] = allow
+		}
+		allow.Component = append(allow.Component, dst)
+	}
+
 	// Update the application binary path to point to a path inside the
 	// container.
-	cfg.Deployment.App.Binary = fmt.Sprintf("/weaver/%s", filepath.Base(cfg.Deployment.App.Binary))
+	gkeConfig.Deployment.App.Binary = fmt.Sprintf("/weaver/%s", filepath.Base(gkeConfig.Deployment.App.Binary))
+
 	return nil
+
 }
 
 // prepareProject prepares the user project for deploying the given application,
@@ -399,7 +433,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		return nil, "", err
 	}
 
-	// Setup the root Certificate Authority, if MTLS is used.
+	// Setup the root Certificate Authority, if MTLS is enabled.
 	if cfg.UseMtls {
 		if err := ensureRootCA(ctx, config); err != nil {
 			return nil, "", err
@@ -422,7 +456,6 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		if err := ensureInternalDNS(ctx, cluster, gatewayIP); err != nil {
 			return nil, "", err
 		}
-
 	}
 	return configCluster, globalGatewayIP, nil
 }
@@ -942,6 +975,14 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 		return nil, "", err
 	}
 
+	// Setup the subordinate Certificate Authority in the cluster region, if
+	// MTLS is enabled.
+	if cfg.UseMtls {
+		if err := ensureSubordinateCA(ctx, config, region); err != nil {
+			return nil, "", err
+		}
+	}
+
 	// Setup the distributor/manager/application service accounts.
 	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, distributorKubeServiceAccount, distributorIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
 		{
@@ -1151,14 +1192,6 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 	cluster, err := GetClusterInfo(ctx, config, name, region)
 	if err != nil {
 		return nil, err
-	}
-
-	// Setup the subordinate Certificate Authority in the cluster region, if
-	// MTLS is used.
-	if cfg.UseMtls {
-		if err := ensureSubordinateCA(ctx, config, region); err != nil {
-			return nil, err
-		}
 	}
 
 	// Setup the workload certificate config in the cluster.

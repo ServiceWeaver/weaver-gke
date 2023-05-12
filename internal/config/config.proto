@@ -84,4 +84,14 @@ message GKEConfig {
   string container = 6;
 
   runtime.Deployment deployment = 7;
+
+  // Map from component name to the expected component identity.
+  map<string, string> component_identity = 9;
+
+  // Map from a component identity to the list of components the identity
+  // is allowed to invoke methods on.
+  message Components {
+    repeated string component = 1;
+  }
+  map<string, Components> identity_allowlist = 10;
 }

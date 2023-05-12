@@ -81,7 +81,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 
 	// Nanny logs will be written to the same log-store to which we write
 	// gke-local application logs.
-	id := uuid.New()
+	id := uuid.New().String()
 	ls, err := logging.NewFileStore(LogDir)
 	if err != nil {
 		return fmt.Errorf("cannot create log storage: %w", err)
@@ -92,9 +92,9 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		return slog.New(&logging.LogHandler{
 			Opts: logging.Options{
 				App:        "nanny",
-				Deployment: id.String(),
+				Deployment: id,
 				Component:  component,
-				Weavelet:   id.String(),
+				Weavelet:   id,
 				Attrs:      []string{"serviceweaver/system", ""},
 			},
 			Write: ls.Add,
@@ -208,7 +208,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 				return starter.Stop(ctx, appVersions)
 			},
 			func(context.Context, string, []string) error {
-				// Nothing to do.
+				// We don't delete state for the older app versions.
 				return nil
 			},
 		); err != nil {
