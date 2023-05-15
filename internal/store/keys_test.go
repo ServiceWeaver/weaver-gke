@@ -16,15 +16,10 @@ package store
 
 import (
 	"testing"
-
-	"github.com/google/uuid"
 )
 
 func TestKeys(t *testing.T) {
-	id, err := uuid.Parse("11111111-1111-1111-1111-111111111111")
-	if err != nil {
-		t.Fatal(err)
-	}
+	const id = "11111111-1111-1111-1111-111111111111"
 	tests := []struct {
 		name string
 		got  string

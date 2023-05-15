@@ -66,7 +66,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		return err
 	}
 	store := Store(cluster)
-	id := uuid.New()
+	id := uuid.New().String()
 
 	// Parse container metadata.
 	for _, v := range []string{
@@ -96,7 +96,7 @@ func RunNanny(ctx context.Context, opts NannyOptions) error {
 		return logClient.Logger(logging.Options{
 			App:       "nanny",
 			Component: service,
-			Weavelet:  id.String(),
+			Weavelet:  id,
 			Attrs:     []string{"serviceweaver/system", ""},
 		})
 	}
@@ -130,7 +130,7 @@ func exportNannyMetrics(ctx context.Context, exporter *metricExporter, logger *s
 	}
 }
 
-func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.Listener, s store.Store, id uuid.UUID, makeLogger func(service string) *slog.Logger) error {
+func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.Listener, s store.Store, id string, makeLogger func(service string) *slog.Logger) error {
 	babysitterConstructor := func(addr string) clients.BabysitterClient {
 		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
 	}
@@ -256,14 +256,9 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 // port.
 func getListenerPort(ctx context.Context, s store.Store, logger *slog.Logger, cluster *ClusterInfo, cfg *config.GKEConfig, replicaSet string, listener string) (int, error) {
 	dep := cfg.Deployment
-	id, err := uuid.Parse(dep.Id)
-	if err != nil {
-		return -1, fmt.Errorf("invalid deployment version %q: %w", dep.Id, err)
-	}
-
 	key := store.AppKey(dep.App.Name, "ports")
-	histKey := store.DeploymentKey(dep.App.Name, id, store.HistoryKey)
-	err = store.AddToSet(ctx, s, histKey, key)
+	histKey := store.DeploymentKey(dep.App.Name, dep.Id, store.HistoryKey)
+	err := store.AddToSet(ctx, s, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.
 		return -1, fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)

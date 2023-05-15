@@ -19,7 +19,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/ServiceWeaver/weaver/metrics"
 )
 
@@ -52,9 +51,9 @@ var (
 
 // WithMetrics returns the provided store, but with methods augmented to update
 // the appropriate store rtmetrics.
-func WithMetrics(service string, id uuid.UUID, store Store) Store {
+func WithMetrics(service string, id string, store Store) Store {
 	labels := func(op string) storeLabels {
-		return storeLabels{Service: service, Id: id.String(), Op: op}
+		return storeLabels{Service: service, Id: id, Op: op}
 	}
 	putCount := requestCounts.Get(labels("put"))
 	getCount := requestCounts.Get(labels("get"))

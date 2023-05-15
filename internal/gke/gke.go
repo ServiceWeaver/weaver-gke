@@ -207,7 +207,7 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg 
 
 	// Create a service account for the replica set and bind it to the
 	// application IAM service account.
-	saName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSSubdomain()
+	saName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	labels := map[string]string{
 		appNameKey:      dep.App.Name,
 		deploymentIDKey: dep.Id,
@@ -215,6 +215,7 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg 
 	if err := ensureKubeServiceAccount(ctx, cluster, logger, saName, applicationIAMServiceAccount, labels, nil /*policyRules*/); err != nil {
 		return err
 	}
+
 	if err := ensureReplicaSet(ctx, cluster, logger, cfg, replicaSet); err != nil {
 		return err
 	}
@@ -353,9 +354,7 @@ func Store(cluster *ClusterInfo) store.Store {
 
 func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
 	dep := cfg.Deployment
-	n := name{dep.App.Name, replicaSet, dep.Id[:8]}
-	name := n.DNSLabel()
-	saName := n.DNSSubdomain()
+	name := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	container, err := appContainer(name, cluster, cfg, replicaSet)
 	if err != nil {
 		return err
@@ -392,7 +391,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 				Spec: v1.PodSpec{
 					PriorityClassName:  applicationPriorityClassName,
 					Containers:         []v1.Container{container},
-					ServiceAccountName: saName,
+					ServiceAccountName: name,
 				},
 			},
 		},

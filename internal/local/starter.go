@@ -16,6 +16,8 @@ package local
 
 import (
 	"context"
+	"crypto"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"sync"
@@ -23,7 +25,6 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"github.com/google/uuid"
 )
 
 const (
@@ -37,6 +38,11 @@ type Starter struct {
 
 	mu          sync.Mutex
 	babysitters map[string][]bsitter // babysitters, by deployment id
+
+	once      sync.Once
+	caCert    *x509.Certificate
+	caKey     crypto.PrivateKey
+	caCertErr error
 }
 
 type bsitter struct {
@@ -64,11 +70,41 @@ func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSet s
 		return nil
 	}
 
+	var caCert *x509.Certificate
+	if cfg.UseMtls {
+		// Make sure the CA certificate has been created.
+		s.once.Do(func() {
+			s.caCert, s.caKey, s.caCertErr = generateCACert()
+		})
+		if s.caCertErr != nil {
+			return s.caCertErr
+		}
+		caCert = s.caCert
+	}
+
 	// Create and run one babysitter per colocation group replica.
 	babysitters := make([]bsitter, defaultReplication)
+	create := func(ctx context.Context) (*babysitter.Babysitter, error) {
+		var certPEM, keyPEM []byte
+		if cfg.UseMtls {
+			identity, ok := cfg.ComponentIdentity[replicaSet]
+			if !ok { // should never happen
+				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
+			}
+			cert, key, err := generateSignedCert(s.caCert, s.caKey, identity)
+			if err != nil {
+				return nil, fmt.Errorf("cannot generate cert: %w", err)
+			}
+			certPEM, keyPEM, err = pemEncode(cert, key)
+			if err != nil {
+				return nil, fmt.Errorf("cannot PEM-encode cert: %w", err)
+			}
+		}
+		return createBabysitter(ctx, cfg, replicaSet, LogDir, caCert, certPEM, keyPEM)
+	}
 	for i := 0; i < defaultReplication; i++ {
 		ctx, cancel := context.WithCancel(ctx)
-		b, err := createBabysitter(ctx, cfg, replicaSet, LogDir)
+		b, err := create(ctx)
 		if err != nil {
 			// TODO(mwhittaker): Should we stop the previously started
 			// babysitters?
@@ -121,8 +157,8 @@ func (s *Starter) shouldStart(ctx context.Context, cfg *config.GKEConfig, replic
 	// Use the store to coordinate the starting of processes. The process
 	// that ends up creating the key "started_by" is the deployer.
 	dep := cfg.Deployment
-	key := store.ReplicaSetKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), replicaSet, "started_by")
-	histKey := store.DeploymentKey(dep.App.Name, uuid.Must(uuid.Parse(dep.Id)), store.HistoryKey)
+	key := store.ReplicaSetKey(dep.App.Name, dep.Id, replicaSet, "started_by")
+	histKey := store.DeploymentKey(dep.App.Name, dep.Id, store.HistoryKey)
 	err := store.AddToSet(ctx, s.store, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.

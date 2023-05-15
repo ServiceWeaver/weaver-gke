@@ -32,7 +32,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/google/uuid"
 	"golang.org/x/exp/slog"
 )
 
@@ -205,13 +204,8 @@ func (m *manager) stop(req *nanny.ApplicationStopRequest) error {
 
 // gcVersion garbage collects all the store entries for the provided version.
 func (m *manager) gcVersion(_ context.Context, app, version string) error {
-	id, err := uuid.Parse(version)
-	if err != nil {
-		return fmt.Errorf("bad version %v: %w", version, err)
-	}
-
 	// Get all keys recorded under histKey in the store.
-	histKey := store.DeploymentKey(app, id, store.HistoryKey)
+	histKey := store.DeploymentKey(app, version, store.HistoryKey)
 	keys, _, err := store.GetSet(m.ctx, m.store, histKey, nil)
 	if err != nil {
 		return fmt.Errorf("cannot get history for %q: %v", version, err)

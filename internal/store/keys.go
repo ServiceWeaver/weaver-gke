@@ -16,8 +16,6 @@ package store
 
 import (
 	"strings"
-
-	"github.com/google/uuid"
 )
 
 const (
@@ -75,14 +73,14 @@ func AppKey(app string, key string) string {
 
 // DeploymentKey returns keys in the format "/app/collatz/deployment/123/key",
 // where "collatz" is the application name and 123 is the deployment id.
-func DeploymentKey(app string, deploymentID uuid.UUID, key string) string {
-	return join("app", app, "deployment", deploymentID.String(), key)
+func DeploymentKey(app, deploymentID string, key string) string {
+	return join("app", app, "deployment", deploymentID, key)
 }
 
 // ReplicaSetKey returns keys in the format
 // "/app/collatz/deployment/123/replica_set/OddEven/key", where "collatz" is the
 // application name, 123 is the deployment id, and OddEven is the Kubernetes
 // ReplicaSet name.
-func ReplicaSetKey(app string, deploymentID uuid.UUID, replicaSet string, key string) string {
-	return join("app", app, "deployment", deploymentID.String(), "replica_set", replicaSet, key)
+func ReplicaSetKey(app, deploymentID string, replicaSet string, key string) string {
+	return join("app", app, "deployment", deploymentID, "replica_set", replicaSet, key)
 }
