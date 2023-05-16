@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime/debug"
+	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/gke"
@@ -36,7 +38,12 @@ var deploySpec = tool.DeploySpec{
 		}
 		fmt.Fprintf(os.Stderr, "Using account %s in project %s\n",
 			config.Account, config.Project)
-		return gke.PrepareRollout(ctx, config, cfg)
+		toolBinVersion, err := getToolVersion()
+		if err != nil {
+			return nil, nil, fmt.Errorf("error extracting the tool binary version: %w", err)
+		}
+
+		return gke.PrepareRollout(ctx, config, cfg, toolBinVersion)
 	},
 	Source: func(ctx context.Context, cfg *config.GKEConfig) (logging.Source, error) {
 		config, err := gke.SetupCloudConfig(cfg.Project, cfg.Account)
@@ -45,4 +52,22 @@ var deploySpec = tool.DeploySpec{
 		}
 		return gke.LogSource(config)
 	},
+}
+
+// getToolVersion returns the version of the tool binary.
+func getToolVersion() (string, error) {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		// Should never happen.
+		return "", fmt.Errorf("tool binary must be built from a module")
+	}
+	version := info.Main.Version
+	const develToolVersion = "(devel)"
+	if version == develToolVersion {
+		// Locally-compiled tool binary. Return a version that's guaranteed to
+		// be lexicographically greater than any previously returned version
+		// (e.g., v0.10.0).
+		return fmt.Sprintf("vdevel%d", time.Now().Unix()), nil
+	}
+	return info.Main.Version, nil
 }

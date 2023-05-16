@@ -116,7 +116,7 @@ type iamBindings map[string]map[string]struct{}
 // version, along with the HTTP client that should be used to reach it.
 // May mutate the passed-in deployment.
 // REQUIRES: Called by the weaver-gke command.
-func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error) {
+func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, toolVersion string) (*controller.RolloutRequest, *http.Client, error) {
 	dep := cfg.Deployment
 	localBinary := dep.App.Binary // Save before finalizeConfig rewrites it
 
@@ -197,8 +197,8 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	// without issuing multiple builds.
 	appImageURL := fmt.Sprintf("%s-docker.pkg.dev/%s/%s/app:tag%s",
 		buildLocation, config.Project, dockerRepoName, dep.Id[:8])
-	toolImageURL := fmt.Sprintf("%s-docker.pkg.dev/%s/%s/weaver-gke:latest",
-		buildLocation, config.Project, dockerRepoName)
+	toolImageURL := fmt.Sprintf("%s-docker.pkg.dev/%s/%s/weaver-gke:%s",
+		buildLocation, config.Project, dockerRepoName, toolVersion)
 
 	fmt.Fprintln(os.Stderr, "Starting the application container build", appImageURL)
 
@@ -239,7 +239,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	fmt.Fprintln(os.Stderr, "Successfully built container image", appImageURL)
 
 	// Start ServiceWeaver services.
-	if err := ensureWeaverServices(ctx, config, cfg); err != nil {
+	if err := ensureWeaverServices(ctx, config, cfg, toolImageURL); err != nil {
 		return nil, nil, err
 	}
 
@@ -1262,7 +1262,7 @@ func scaleDownSystemServices(ctx context.Context, cluster *ClusterInfo) error {
 			continue
 		}
 		dep.Spec.Replicas = ptrOf(int32(0))
-		if err := patchDeployment(ctx, cluster, patchOptions{}, dep); err != nil && !errors.IsNotFound(err) {
+		if err := patchDeployment(ctx, cluster, patchOptions{}, nil /*shouldUpdate*/, dep); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -1329,7 +1329,7 @@ func ensurePermanentSpareCapacity(ctx context.Context, cluster *ClusterInfo, cpu
 		"memory": memoryUnit,
 		"cpu":    cpuUnit,
 	}
-	return patchDeployment(ctx, cluster, patchOptions{}, &appsv1.Deployment{
+	return patchDeployment(ctx, cluster, patchOptions{}, nil /*shouldUpdate*/, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespaceName,
@@ -1636,8 +1636,8 @@ func ensureRegionalInternalGateway(ctx context.Context, cluster *ClusterInfo) (s
 
 // ensureWeaverServices ensures that Service Weaver services (i.e., controller and
 // all needed distributors and managers) are running.
-func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.GKEConfig) error {
-	if err := ensureController(ctx, config); err != nil {
+func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, toolImageURL string) error {
+	if err := ensureController(ctx, config, toolImageURL); err != nil {
 		return err
 	}
 	for _, region := range cfg.Regions {
@@ -1645,10 +1645,10 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 		if err != nil {
 			return err
 		}
-		if err := ensureDistributor(ctx, cluster); err != nil {
+		if err := ensureDistributor(ctx, cluster, toolImageURL); err != nil {
 			return err
 		}
-		if err := ensureManager(ctx, cluster); err != nil {
+		if err := ensureManager(ctx, cluster, toolImageURL); err != nil {
 			return err
 		}
 	}
@@ -1656,13 +1656,13 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 }
 
 // ensureController ensures that a controller is running in the config cluster.
-func ensureController(ctx context.Context, config CloudConfig) error {
+func ensureController(ctx context.Context, config CloudConfig, toolImageURL string) error {
 	cluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
 	if err != nil {
 		return err
 	}
 	const name = "controller"
-	if err := ensureNannyDeployment(ctx, cluster, name, controllerKubeServiceAccount); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, controllerKubeServiceAccount, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1672,9 +1672,9 @@ func ensureController(ctx context.Context, config CloudConfig) error {
 }
 
 // ensureDistributor ensures that a distributor is running in the given cluster.
-func ensureDistributor(ctx context.Context, cluster *ClusterInfo) error {
+func ensureDistributor(ctx context.Context, cluster *ClusterInfo, toolImageURL string) error {
 	const name = "distributor"
-	if err := ensureNannyDeployment(ctx, cluster, name, distributorKubeServiceAccount); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, distributorKubeServiceAccount, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1684,9 +1684,9 @@ func ensureDistributor(ctx context.Context, cluster *ClusterInfo) error {
 }
 
 // ensureManager ensures that a manager is running in the given cluster.
-func ensureManager(ctx context.Context, cluster *ClusterInfo) error {
+func ensureManager(ctx context.Context, cluster *ClusterInfo, toolImageURL string) error {
 	const name = "manager"
-	if err := ensureNannyDeployment(ctx, cluster, name, managerKubeServiceAccount); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, managerKubeServiceAccount, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1697,7 +1697,7 @@ func ensureManager(ctx context.Context, cluster *ClusterInfo) error {
 
 // ensureNannyDeployment ensures that a nanny deployment with the given name
 // and service account is running in the given cluster.
-func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serviceAccount string) error {
+func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serviceAccount, toolImageURL string) error {
 	meta := ContainerMetadata{
 		Project:       cluster.CloudConfig.Project,
 		ClusterName:   cluster.Name,
@@ -1710,10 +1710,31 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 	if err != nil {
 		return err
 	}
-	toolImageURL := fmt.Sprintf("%s-docker.pkg.dev/%s/%s/weaver-gke:latest",
-		buildLocation, cluster.CloudConfig.Project, dockerRepoName)
-
-	return patchDeployment(ctx, cluster, patchOptions{}, &appsv1.Deployment{
+	// Only update the nanny if the new tag is greater than the running tag.
+	getTag := func(url string) (string, error) {
+		parts := strings.Split(url, ":")
+		if len(parts) != 2 {
+			return "", fmt.Errorf("invalid container image url %q", url)
+		}
+		return parts[1], nil
+	}
+	shouldUpdate := func(old *appsv1.Deployment) (bool, error) {
+		oldContainers := old.Spec.Template.Spec.Containers
+		if len(oldContainers) != 1 {
+			return false, fmt.Errorf("invalid number of containers, want 1, got %d", len(oldContainers))
+		}
+		oldImage := oldContainers[0].Image
+		oldTag, err := getTag(oldImage)
+		if err != nil {
+			return false, err
+		}
+		newTag, err := getTag(toolImageURL)
+		if err != nil {
+			return false, err
+		}
+		return oldTag < newTag, nil
+	}
+	return patchDeployment(ctx, cluster, patchOptions{}, shouldUpdate, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespaceName,
@@ -1757,6 +1778,13 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 						},
 					},
 					ServiceAccountName: serviceAccount,
+				},
+			},
+			Strategy: appsv1.DeploymentStrategy{
+				Type: appsv1.RollingUpdateDeploymentStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDeployment{
+					MaxSurge:       ptrOf(intstr.FromString("25%")),
+					MaxUnavailable: ptrOf(intstr.FromString("25%")),
 				},
 			},
 		},

@@ -66,6 +66,10 @@ type kubePatcher struct {
 	// the resource doesn't already have a value.
 	create func(context.Context) error
 
+	// A function that determines if the given old resource value should be
+	// updated.
+	shouldUpdate func(old metav1.Object) (bool, error)
+
 	// A function that updates the existing resource value.  Only called
 	// if the resource already has a value.
 	update func(context.Context) error
@@ -118,6 +122,15 @@ func (p kubePatcher) Run(ctx context.Context, obj metav1.Object) error {
 		oldUid, ok := oldObj.GetLabels()[uidLabelKey]
 		if ok && oldUid == uid { // No change
 			return nil
+		}
+		if p.shouldUpdate != nil {
+			if ok, err := p.shouldUpdate(oldObj); err != nil {
+				print("Error determining if %s %q should be updated in cluster %s in region %s: %v. Bailing out\n", p.desc, name, p.cluster.Name, p.cluster.Region, err)
+				return err
+			} else if !ok { // don't update
+				return nil
+			}
+			// Do the update.
 		}
 		obj.SetResourceVersion(oldObj.GetResourceVersion())
 		print("Updating %s %q in cluster %s in region %s... ",
@@ -188,7 +201,9 @@ func patchNamespace(ctx context.Context, cluster *ClusterInfo, opts patchOptions
 }
 
 // patchDeployment updates the kubernetes Deployment with the new configuration.
-func patchDeployment(ctx context.Context, cluster *ClusterInfo, opts patchOptions, dep *appsv1.Deployment) error {
+// shouldUpdate, if non-nil, is called with the existing Deployment value to
+// determine if it should be updated.
+func patchDeployment(ctx context.Context, cluster *ClusterInfo, opts patchOptions, shouldUpdate func(*appsv1.Deployment) (bool, error), dep *appsv1.Deployment) error {
 	cli := cluster.Clientset.AppsV1().Deployments(getNamespace(dep.ObjectMeta))
 	return kubePatcher{
 		cluster: cluster,
@@ -200,6 +215,12 @@ func patchDeployment(ctx context.Context, cluster *ClusterInfo, opts patchOption
 		create: func(ctx context.Context) error {
 			_, err := cli.Create(ctx, dep, metav1.CreateOptions{})
 			return err
+		},
+		shouldUpdate: func(old metav1.Object) (bool, error) {
+			if shouldUpdate == nil {
+				return true, nil
+			}
+			return shouldUpdate(old.(*appsv1.Deployment))
 		},
 		update: func(ctx context.Context) error {
 			_, err := cli.Update(ctx, dep, metav1.UpdateOptions{})
