@@ -1050,17 +1050,18 @@ func ensureServiceAccountIAMBinding(ctx context.Context, config CloudConfig, log
 	}
 	service := iam.NewProjectsService(iamService).ServiceAccounts
 	for r := retry.Begin(); r.Continue(ctx); {
-		if err := tryEnsureServiceAccountIAMBindings(ctx, config, service, account, role, member); err == nil {
+		err := tryEnsureServiceAccountIAMBindings(ctx, config, service, account, role, member)
+		if err == nil {
 			return nil
+		}
+
+		// Log the error.
+		const msg = "Error ensuring service account binding. Will retry."
+		args := []any{"err", err, "account", account, "role", role, "member", member}
+		if logger != nil {
+			logger.Debug(msg, args...)
 		} else {
-			// Log the error.
-			const msg = "Error ensuring service account binding. Will retry."
-			args := []any{"err", err, "account", account, "role", role, "member", member}
-			if logger != nil {
-				logger.Debug(msg, args...)
-			} else {
-				fmt.Fprintln(os.Stderr, msg, args)
-			}
+			fmt.Fprintln(os.Stderr, msg, args)
 		}
 	}
 	return ctx.Err()
