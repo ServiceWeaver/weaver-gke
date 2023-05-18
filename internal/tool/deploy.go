@@ -110,7 +110,7 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		Account        string
 		Regions        []string
 		PublicListener []struct{ Name, Hostname string } `toml:"public_listener"`
-		UseMTLS        bool                              `toml:"use_mtls"`
+		MTLS           bool                              `toml:"mtls"`
 	}
 	parsed := &gkeConfigSchema{}
 	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app.Sections, parsed); err != nil {
@@ -127,7 +127,7 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 			App: app,
 			Id:  depID.String(),
 		},
-		UseMtls: parsed.UseMTLS,
+		Mtls: parsed.MTLS,
 	}
 	for i, lis := range parsed.PublicListener {
 		if lis.Hostname == "" {

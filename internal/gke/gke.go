@@ -360,7 +360,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 		return err
 	}
 	var annotations map[string]string
-	if cfg.UseMtls {
+	if cfg.Mtls {
 		annotations = map[string]string{
 			"security.cloud.google.com/use-workload-certificates": "",
 		}

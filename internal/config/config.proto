@@ -72,7 +72,7 @@ message GKEConfig {
   //
   // Note that enabling mTLS will likely increase the CPU usage of your
   // application.
-  bool use_mtls = 8;
+  bool mtls = 8;
 
   // Address of the manager local to a Service Weaver process. This field is typically
   // filled by the manager, before starting a Service Weaver process.
