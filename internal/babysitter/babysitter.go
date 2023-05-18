@@ -56,8 +56,9 @@ type Babysitter struct {
 	podName        string
 	envelope       *envelope.Envelope
 	lis            net.Listener // listener to serve /healthz and /run_profiling
-	caCertPool     *x509.CertPool
 	manager        clients.ManagerClient
+	caCertPool     *x509.CertPool
+	selfCertGetter func() ([]byte, []byte, error)
 	logger         *slog.Logger
 	logSaver       func(*protos.LogEntry)
 	traceSaver     func(spans []trace.ReadOnlySpan) error
@@ -77,13 +78,13 @@ func NewBabysitter(
 	replicaSet string,
 	podName string,
 	useLocalhost bool,
-	caCert *x509.Certificate,
-	selfCertPEM []byte,
-	selfKeyPEM []byte,
 	manager clients.ManagerClient,
+	caCert *x509.Certificate,
+	selfCertGetter func() ([]byte, []byte, error),
 	logSaver func(*protos.LogEntry),
 	traceSaver func(spans []trace.ReadOnlySpan) error,
-	metricExporter func(metrics []*metrics.MetricSnapshot) error) (*Babysitter, error) {
+	metricExporter func(metrics []*metrics.MetricSnapshot) error,
+) (*Babysitter, error) {
 	// Get a dialable address to serve http requests at the babysitter (e.g.,
 	// health checks, profiling information).
 	//
@@ -125,13 +126,12 @@ func NewBabysitter(
 	//     active by asking the Kubernetes API if the Pod with a given name
 	//     exists.
 	info := &protos.EnvelopeInfo{
-		App:           cfg.Deployment.App.Name,
-		DeploymentId:  cfg.Deployment.Id,
-		Id:            podName,
-		Sections:      cfg.Deployment.App.Sections,
-		RunMain:       replicaSet == runtime.Main,
-		SelfCertChain: selfCertPEM,
-		SelfKey:       selfKeyPEM,
+		App:          cfg.Deployment.App.Name,
+		DeploymentId: cfg.Deployment.Id,
+		Id:           podName,
+		Sections:     cfg.Deployment.App.Sections,
+		RunMain:      replicaSet == runtime.Main,
+		Mtls:         cfg.Mtls,
 	}
 	e, err := envelope.NewEnvelope(ctx, info, cfg.Deployment.App)
 	if err != nil {
@@ -146,8 +146,9 @@ func NewBabysitter(
 		podName:        podName,
 		envelope:       e,
 		lis:            lis,
-		caCertPool:     caCertPool,
 		manager:        manager,
+		caCertPool:     caCertPool,
+		selfCertGetter: selfCertGetter,
 		logger:         logger,
 		logSaver:       logSaver,
 		traceSaver:     traceSaver,
@@ -405,6 +406,17 @@ func (b *Babysitter) ExportListener(ctx context.Context, req *protos.ExportListe
 		Listener:   &nanny.Listener{Name: req.Listener, Addr: req.Address},
 		Config:     b.cfg,
 	})
+}
+
+func (b *Babysitter) GetSelfCertificate(context.Context, *protos.GetSelfCertificateRequest) (*protos.GetSelfCertificateReply, error) {
+	certPEM, keyPEM, err := b.selfCertGetter()
+	if err != nil {
+		return nil, err
+	}
+	return &protos.GetSelfCertificateReply{
+		Cert: certPEM,
+		Key:  keyPEM,
+	}, nil
 }
 
 // VerifyClientCertificate implements the envelope.EnvelopeHandler interface.

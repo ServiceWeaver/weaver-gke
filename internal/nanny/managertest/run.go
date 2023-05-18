@@ -146,7 +146,7 @@ func Run[T weaver.InstanceOf[weaver.Main]](t testing.TB, f func(T)) {
 		ManagerAddr: addr,
 		Deployment:  dep,
 	}
-	b, err := babysitter.NewBabysitter(ctx, cfg, runtime.Main, "pod", true /*useLocalhost*/, nil /*caCert*/, nil /*selfCertPEM*/, nil /*selfKeyPEM*/, &manager.HttpClient{Addr: addr}, logSaver, nil /*traceSaver*/, nil /*metricExporter*/)
+	b, err := babysitter.NewBabysitter(ctx, cfg, runtime.Main, "pod", true /*useLocalhost*/, &manager.HttpClient{Addr: addr}, nil /*selfCertGetter*/, nil /*caCertGetter*/, logSaver, nil /*traceSaver*/, nil /*metricExporter*/)
 	if err != nil {
 		t.Fatal(err)
 	}

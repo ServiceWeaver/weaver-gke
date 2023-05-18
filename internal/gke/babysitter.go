@@ -99,10 +99,9 @@ func RunBabysitter(ctx context.Context) error {
 		}
 	}
 
-	// Load certificates, if MTLS was enabled for the deployment.
+	// Load the CA certificate, if MTLS was enabled for the deployment.
 	var caCert *x509.Certificate
-	var selfCertPEM, selfKeyPEM []byte
-	if cfg.UseMtls {
+	if cfg.Mtls {
 		caCertPEM, err := loadPEM(caCertFile)
 		if err != nil {
 			return err
@@ -113,13 +112,6 @@ func RunBabysitter(ctx context.Context) error {
 		}
 		if caCert, err = x509.ParseCertificate(caCertDER.Bytes); err != nil {
 			return fmt.Errorf("cannot parse the CA certificate: %w", err)
-		}
-
-		if selfCertPEM, err = loadPEM(podCertFile); err != nil {
-			return err
-		}
-		if selfKeyPEM, err = loadPEM(podKeyFile); err != nil {
-			return err
 		}
 	}
 
@@ -152,8 +144,22 @@ func RunBabysitter(ctx context.Context) error {
 		return metricsExporter.Export(ctx, metrics)
 	}
 
+	// NOTE: all certificates are re-loaded from file each time since they
+	// are updated periodically by the private CA service.
+	selfCertGetter := func() ([]byte, []byte, error) {
+		selfCertPEM, err := loadPEM(podCertFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		selfKeyPEM, err := loadPEM(podKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		return selfCertPEM, selfKeyPEM, nil
+	}
+
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	b, err := babysitter.NewBabysitter(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, caCert, selfCertPEM, selfKeyPEM, m, logSaver, traceSaver, metricSaver)
+	b, err := babysitter.NewBabysitter(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, m, caCert, selfCertGetter, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}

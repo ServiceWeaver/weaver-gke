@@ -64,8 +64,9 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet str
 		}
 		return nil
 	}
-
+	selfCertGetter := func() ([]byte, []byte, error) {
+		return selfCertPEM, selfKeyPEM, nil
+	}
 	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-
-	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, caCert, selfCertPEM, selfKeyPEM, m, logSaver, traceSaver, metricExporter)
+	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, m, caCert, selfCertGetter, logSaver, traceSaver, metricExporter)
 }

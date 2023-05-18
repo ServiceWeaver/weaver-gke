@@ -71,7 +71,7 @@ func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSet s
 	}
 
 	var caCert *x509.Certificate
-	if cfg.UseMtls {
+	if cfg.Mtls {
 		// Make sure the CA certificate has been created.
 		s.once.Do(func() {
 			s.caCert, s.caKey, s.caCertErr = generateCACert()
@@ -86,7 +86,7 @@ func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSet s
 	babysitters := make([]bsitter, defaultReplication)
 	create := func(ctx context.Context) (*babysitter.Babysitter, error) {
 		var certPEM, keyPEM []byte
-		if cfg.UseMtls {
+		if cfg.Mtls {
 			identity, ok := cfg.ComponentIdentity[replicaSet]
 			if !ok { // should never happen
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
