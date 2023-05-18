@@ -60,7 +60,7 @@ func startTestProxy(t *testing.T) (string, chan *proxy.RouteRequest) {
 		t.Fatalf("cannot create proxy network listener: %v", err)
 	}
 	go func() {
-		logger := logging.NewTestLogger(t)
+		logger := logging.NewTestSlogger(t, testing.Verbose())
 		mux := http.NewServeMux()
 		handleRoute := func(ctx context.Context, req *proxy.RouteRequest) error {
 			rs <- req

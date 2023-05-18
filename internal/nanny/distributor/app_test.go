@@ -638,7 +638,7 @@ func TestUpdate(t *testing.T) {
 				distributor, err := Start(ctx,
 					http.NewServeMux(), // unused
 					store.NewFakeStore(),
-					logging.NewTestLogger(t),
+					logging.NewTestSlogger(t, testing.Verbose()),
 					&mockManagerClient{nil, nil, nil, nil},
 					testRegion,
 					nil, // babysitterConstructor

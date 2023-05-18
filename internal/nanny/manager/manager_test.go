@@ -63,7 +63,7 @@ func startServer(t *testing.T) (*httptest.Server, chan string) {
 	if err := Start(ctx,
 		mux,
 		store.NewFakeStore(),
-		logging.NewTestLogger(t),
+		logging.NewTestSlogger(t, testing.Verbose()),
 		"", // dialAddr
 		func(addr string) clients.BabysitterClient {
 			return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}

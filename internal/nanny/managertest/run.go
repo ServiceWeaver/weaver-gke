@@ -48,7 +48,7 @@ import (
 // Run creates a brand new gke-local execution environment that places every
 // component in its own colocation group and executes the provided function on
 // the root component of the new application.
-func Run[T weaver.MainInstance](t testing.TB, f func(T)) {
+func Run[T weaver.InstanceOf[weaver.Main]](t testing.TB, f func(T)) {
 	// There are three distinct types of processes in a manager test: (1) the
 	// unit test process, (2) the main Service Weaver process, and (3) every
 	// other Service Weaver process.
@@ -96,7 +96,7 @@ func Run[T weaver.MainInstance](t testing.TB, f func(T)) {
 	store := store.NewFakeStore()
 	depid := uuid.New().String()
 	starter := local.NewStarter(store)
-	logger := logging.NewTestLogger(t)
+	logger := logging.NewTestSlogger(t, testing.Verbose())
 	pp := logging.NewPrettyPrinter(colors.Enabled())
 	var logMu sync.Mutex
 	var stopLogging bool

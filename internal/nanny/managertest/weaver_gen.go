@@ -13,7 +13,7 @@ import (
 	"reflect"
 	"time"
 )
-var _ codegen.LatestVersion = codegen.Version[[0][10]struct{}]("You used 'weaver generate' codegen version 0.10.0, but you built your code with an incompatible weaver module version. Try upgrading 'weaver generate' and re-running it.")
+var _ codegen.LatestVersion = codegen.Version[[0][11]struct{}]("You used 'weaver generate' codegen version 0.11.0, but you built your code with an incompatible weaver module version. Try upgrading 'weaver generate' and re-running it.")
 
 func init() {
 	codegen.Register(codegen.Registration{
@@ -46,12 +46,23 @@ func init() {
 	})
 }
 
+// weaver.Instance checks.
+var _ weaver.InstanceOf[destination] = (*destinationImpl)(nil)
+var _ weaver.InstanceOf[source] = (*sourceImpl)(nil)
+
+// weaver.Router checks.
+var _ weaver.Unrouted = (*destinationImpl)(nil)
+var _ weaver.Unrouted = (*sourceImpl)(nil)
+
 // Local stub implementations.
 
 type destination_local_stub struct {
 	impl   destination
 	tracer trace.Tracer
 }
+
+// Check that destination_local_stub implements the destination interface.
+var _ destination = (*destination_local_stub)(nil)
 
 func (s destination_local_stub) GetAll(ctx context.Context, a0 string) (r0 []string, err error) {
 	span := trace.SpanFromContext(ctx)
@@ -109,6 +120,9 @@ type source_local_stub struct {
 	tracer trace.Tracer
 }
 
+// Check that source_local_stub implements the source interface.
+var _ source = (*source_local_stub)(nil)
+
 func (s source_local_stub) Emit(ctx context.Context, a0 string, a1 string) (err error) {
 	span := trace.SpanFromContext(ctx)
 	if span.SpanContext().IsValid() {
@@ -134,6 +148,9 @@ type destination_client_stub struct {
 	getpidMetrics *codegen.MethodMetrics
 	recordMetrics *codegen.MethodMetrics
 }
+
+// Check that destination_client_stub implements the destination interface.
+var _ destination = (*destination_client_stub)(nil)
 
 func (s destination_client_stub) GetAll(ctx context.Context, a0 string) (r0 []string, err error) {
 	// Update metrics.
@@ -304,6 +321,9 @@ type source_client_stub struct {
 	emitMetrics *codegen.MethodMetrics
 }
 
+// Check that source_client_stub implements the source interface.
+var _ source = (*source_client_stub)(nil)
+
 func (s source_client_stub) Emit(ctx context.Context, a0 string, a1 string) (err error) {
 	// Update metrics.
 	start := time.Now()
@@ -369,7 +389,10 @@ type destination_server_stub struct {
 	addLoad func(key uint64, load float64)
 }
 
-// GetStubFn implements the stub.Server interface.
+// Check that destination_server_stub implements the codegen.Server interface.
+var _ codegen.Server = (*destination_server_stub)(nil)
+
+// GetStubFn implements the codegen.Server interface.
 func (s destination_server_stub) GetStubFn(method string) func(ctx context.Context, args []byte) ([]byte, error) {
 	switch method {
 	case "GetAll":
@@ -459,7 +482,10 @@ type source_server_stub struct {
 	addLoad func(key uint64, load float64)
 }
 
-// GetStubFn implements the stub.Server interface.
+// Check that source_server_stub implements the codegen.Server interface.
+var _ codegen.Server = (*source_server_stub)(nil)
+
+// GetStubFn implements the codegen.Server interface.
 func (s source_server_stub) GetStubFn(method string) func(ctx context.Context, args []byte) ([]byte, error) {
 	switch method {
 	case "Emit":
