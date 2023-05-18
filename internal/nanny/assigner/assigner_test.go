@@ -717,7 +717,7 @@ func TestAssigner(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
-			assigner := NewAssigner(ctx, store.NewFakeStore(), logging.NewTestLogger(t),
+			assigner := NewAssigner(ctx, store.NewFakeStore(), logging.NewTestSlogger(t, testing.Verbose()),
 				EqualDistributionAlgorithm, func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
 				func(context.Context, string) (bool, error) { return true, nil })
 			for i, operation := range c.operations {
@@ -1046,7 +1046,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			store := store.NewFakeStore()
 			var assigners [n]*Assigner
 			for i := 0; i < n; i++ {
-				assigners[i] = NewAssigner(ctx, store, logging.NewTestLogger(t), EqualDistributionAlgorithm,
+				assigners[i] = NewAssigner(ctx, store, logging.NewTestSlogger(t, testing.Verbose()), EqualDistributionAlgorithm,
 					func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
 					func(context.Context, string) (bool, error) { return true, nil })
 			}
@@ -1097,7 +1097,7 @@ func TestConcurrentAssigners(t *testing.T) {
 
 func TestUnregisterReplicaSets(t *testing.T) {
 	ctx := context.Background()
-	assigner := NewAssigner(ctx, store.NewFakeStore(), logging.NewTestLogger(t),
+	assigner := NewAssigner(ctx, store.NewFakeStore(), logging.NewTestSlogger(t, testing.Verbose()),
 		EqualDistributionAlgorithm, func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
 		func(context.Context, string) (bool, error) { return true, nil })
 

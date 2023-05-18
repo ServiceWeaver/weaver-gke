@@ -97,7 +97,7 @@ func TestDistributeAndCleanup(t *testing.T) {
 	distributor, err := Start(ctx,
 		http.NewServeMux(),
 		store,
-		logging.NewTestLogger(t),
+		logging.NewTestSlogger(t, testing.Verbose()),
 		manager,
 		testRegion,
 		nil, // babysitterConstructor
@@ -437,7 +437,7 @@ func TestCleanupMissing(t *testing.T) {
 	distributor, err := Start(ctx,
 		http.NewServeMux(),
 		store,
-		logging.NewTestLogger(t),
+		logging.NewTestSlogger(t, testing.Verbose()),
 		&mockManagerClient{fmt.Errorf("unimplemented"), nil, nil, nil},
 		testRegion,
 		nil, // babysitterConstructor
@@ -507,7 +507,7 @@ func TestAnneal(t *testing.T) {
 	distributor, err := Start(ctx,
 		http.NewServeMux(),
 		store,
-		logging.NewTestLogger(t),
+		logging.NewTestSlogger(t, testing.Verbose()),
 		manager,
 		testRegion,
 		nil, // babysitterConstructor
@@ -1134,7 +1134,7 @@ func TestGetDistributorState(t *testing.T) {
 			distributor, err := Start(ctx,
 				mux,
 				store.NewFakeStore(),
-				logging.NewTestLogger(t),
+				logging.NewTestSlogger(t, testing.Verbose()),
 				&mockManagerClient{nil, nil, nil, replicaSets},
 				testRegion,
 				nil, // babysitterConstructor
@@ -1362,7 +1362,7 @@ func TestRunProfiling(t *testing.T) {
 			d, err := Start(ctx,
 				http.NewServeMux(),
 				store.NewFakeStore(),
-				logging.NewTestLogger(t),
+				logging.NewTestSlogger(t, testing.Verbose()),
 				manager,
 				testRegion,
 				babysitterConstructor,

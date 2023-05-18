@@ -1249,7 +1249,7 @@ func startController(ctx context.Context, t *testing.T, distributor func(addr st
 	return Start(ctx,
 		http.NewServeMux(),
 		store.NewFakeStore(),
-		logging.NewTestLogger(t),
+		logging.NewTestSlogger(t, testing.Verbose()),
 		5*time.Second, // actuationDelay
 		distributor,
 		0,   // fetchAssignmentsInterval
@@ -1262,7 +1262,7 @@ func startDistributor(ctx context.Context, t *testing.T, loc string, getListener
 	return distributor.Start(ctx,
 		http.NewServeMux(),
 		store.NewFakeStore(),
-		logging.NewTestLogger(t),
+		logging.NewTestSlogger(t, testing.Verbose()),
 		&mockManagerClient{nil, nil, nil},
 		loc,
 		nil, // babysitterConstructor
