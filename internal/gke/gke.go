@@ -289,7 +289,7 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 	}
 	for _, deployment := range deployments.Items {
 		deployment.Spec.Replicas = &numReplicas
-		if err := patchDeployment(ctx, cluster, patchOptions{logger: logger}, &deployment); err != nil && !errors.IsNotFound(err) {
+		if err := patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &deployment); err != nil && !errors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -365,7 +365,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 			"security.cloud.google.com/use-workload-certificates": "",
 		}
 	}
-	return patchDeployment(ctx, cluster, patchOptions{logger: logger}, &appsv1.Deployment{
+	return patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespaceName,
