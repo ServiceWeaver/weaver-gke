@@ -106,38 +106,39 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 	const gkeKey = "github.com/ServiceWeaver/weaver-gke/internal/gke"
 	const shortGKEKey = "gke"
 
+	// Use an intermediate struct, so that we can add TOML tags.
+	type lisOpts struct {
+		PublicHostname string `toml:"public_hostname"`
+	}
 	type gkeConfigSchema struct {
-		Project        string
-		Account        string
-		Regions        []string
-		PublicListener []struct{ Name, Hostname string } `toml:"public_listener"`
-		MTLS           bool                              `toml:"mtls"`
+		Project   string
+		Account   string
+		Regions   []string
+		Listeners map[string]lisOpts
+		MTLS      bool
 	}
 	parsed := &gkeConfigSchema{}
 	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app.Sections, parsed); err != nil {
 		return nil, err
 	}
-
+	var listeners map[string]*config.GKEConfig_ListenerOptions
+	if parsed.Listeners != nil {
+		listeners = map[string]*config.GKEConfig_ListenerOptions{}
+		for k, v := range parsed.Listeners {
+			listeners[k] = &config.GKEConfig_ListenerOptions{PublicHostname: v.PublicHostname}
+		}
+	}
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
-		Project:        parsed.Project,
-		Account:        parsed.Account,
-		Regions:        parsed.Regions,
-		PublicListener: make([]*config.GKEConfig_PublicListener, len(parsed.PublicListener)),
+		Project:   parsed.Project,
+		Account:   parsed.Account,
+		Regions:   parsed.Regions,
+		Listeners: listeners,
 		Deployment: &protos.Deployment{
 			App: app,
 			Id:  depID.String(),
 		},
 		Mtls: parsed.MTLS,
-	}
-	for i, lis := range parsed.PublicListener {
-		if lis.Hostname == "" {
-			return nil, fmt.Errorf("empty hostname for public listener %q", lis.Name)
-		}
-		cfg.PublicListener[i] = &config.GKEConfig_PublicListener{
-			Name:     lis.Name,
-			Hostname: lis.Hostname,
-		}
 	}
 
 	return cfg, nil

@@ -1420,11 +1420,11 @@ func TestRunProfiling(t *testing.T) {
 
 // version represents an app version
 type version struct {
-	appName              string
-	id                   string // version name
-	submissionId         int    // submission id
-	listeners            []*nanny.Listener
-	publicListenerConfig []*config.GKEConfig_PublicListener
+	appName      string
+	id           string // version name
+	submissionId int    // submission id
+	listeners    []*nanny.Listener
+	listenerOpts map[string]*config.GKEConfig_ListenerOptions
 }
 
 // newVersion creates a new app version.
@@ -1433,14 +1433,14 @@ func newVersion(appName, id string, submissionId int, listener ...string) versio
 		appName:      appName,
 		id:           id,
 		submissionId: submissionId,
+		listenerOpts: map[string]*config.GKEConfig_ListenerOptions{},
 	}
 	for _, l := range listener {
 		if strings.Contains(l, ".") { // public listener
 			name := strings.Split(l, ".")[0]
-			v.publicListenerConfig = append(v.publicListenerConfig, &config.GKEConfig_PublicListener{
-				Name:     name,
-				Hostname: l,
-			})
+			v.listenerOpts[name] = &config.GKEConfig_ListenerOptions{
+				PublicHostname: l,
+			}
 			l = name
 		}
 		v.listeners = append(v.listeners, &nanny.Listener{Name: l})
@@ -1460,7 +1460,7 @@ func registerNewAppVersion(d *Distributor, v version) error {
 						},
 						Id: v.id,
 					},
-					PublicListener: v.publicListenerConfig,
+					Listeners: v.listenerOpts,
 				},
 				TargetFn:     &nanny.TargetFn{}, // rolls out immediately
 				SubmissionId: int64(v.submissionId),

@@ -42,24 +42,17 @@ message GKEConfig {
   //   https://cloud.google.com/compute/docs/regions-zones
   repeated string regions = 3;
 
-  // Publicly accessible HTTP listeners for the application.
-  //
-  // Service Weaver applications create HTTP listeners dynamically, i.e., via calls to
-  // Listener(). Only listeners listed here will be configured to receive
-  // ingress traffic; all other listeners will be configured only for
-  // VPC-internal access.
-  message PublicListener {
-    // Name of the listener. Must match the name the listener is created
-    // with in the application binary (i.e., via a call to Listener()).
-    string name = 1;
-
-    // Hostname under which the listener will be accessible.
+  // Options for the application listeners, keyed by listener name.
+  // If a listener isn't specified in the map, default options will be used.
+  message ListenerOptions {
+    // Public hostname for the listener. If empty, the listener is assumed
+    // to be private.
     //
-    // The hostname is used for routing ingress traffic to the listener.
-    // It is an error to leave this field empty.
-    string hostname = 2;
+    // Public listeners will be configured to receive ingress traffic; all other
+    // listeners will be configured only for VPC-internal access.
+    string public_hostname = 1;
   }
-  repeated PublicListener public_listener = 4;
+  map<string, ListenerOptions> listeners = 4;
 
   // If true, enables the intra-component mTLS protocol. In particular:
   //   1. All intra-component communication will be authenticated, ensuring

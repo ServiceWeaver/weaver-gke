@@ -56,12 +56,12 @@ type trafficShare struct {
 
 // versionAppTest represents an app version.
 type versionAppTest struct {
-	id                   uuid.UUID      // version id
-	name                 string         // version name
-	submissionId         int            // submission id
-	targetFn             []fractionSpec // version target function
-	listeners            []*nanny.Listener
-	publicListenerConfig []*config.GKEConfig_PublicListener
+	id           uuid.UUID      // version id
+	name         string         // version name
+	submissionId int            // submission id
+	targetFn     []fractionSpec // version target function
+	listeners    []*nanny.Listener
+	listenerOpts map[string]*config.GKEConfig_ListenerOptions
 }
 
 // fractionSpec represent a traffic fraction assignment and its duration.
@@ -94,14 +94,14 @@ func newAppVersion(name string, submissionId int, listeners []string, targetFn .
 		name:         name,
 		submissionId: submissionId,
 		targetFn:     targetFn,
+		listenerOpts: map[string]*config.GKEConfig_ListenerOptions{},
 	}
 	for _, l := range listeners {
 		if strings.Contains(l, ".") { // public listener
 			name := strings.Split(l, ".")[0]
-			v.publicListenerConfig = append(v.publicListenerConfig, &config.GKEConfig_PublicListener{
-				Name:     name,
-				Hostname: l,
-			})
+			v.listenerOpts[name] = &config.GKEConfig_ListenerOptions{
+				PublicHostname: l,
+			}
 			l = name
 		}
 		v.listeners = append(v.listeners, &nanny.Listener{Name: l})
@@ -709,7 +709,7 @@ func TestUpdate(t *testing.T) {
 									Name: "app",
 								},
 							},
-							PublicListener: v.publicListenerConfig,
+							Listeners: v.listenerOpts,
 						},
 						TargetFn:     targetFn,
 						SubmissionId: int64(v.submissionId),
