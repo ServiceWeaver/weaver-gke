@@ -453,17 +453,9 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 		status.Status = AppVersionStatus_ACTIVE
 	}
 
-	getPublicHostname := func(lis string) string {
-		cfg := versionState.Config
-		for _, public := range cfg.PublicListener {
-			if lis == public.Name {
-				return public.Hostname
-			}
-		}
-		return ""
-	}
 	var groups []*ReplicaSetStatus
 	listeners := map[string]*ListenerStatus{}
+	cfg := versionState.Config
 	for loc, d := range versionState.Distributors {
 		if d.ReplicaSets == nil {
 			continue
@@ -478,8 +470,9 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 			for _, l := range group.Listeners {
 				var hostname string
 				var public bool
-				if hostname = getPublicHostname(l); hostname != "" {
+				if opts := cfg.Listeners[l]; opts != nil && opts.PublicHostname != "" {
 					public = true
+					hostname = opts.PublicHostname
 				} else {
 					public = false
 					hostname = fmt.Sprintf("%s.%s.%s", l, loc, distributor.InternalDNSDomain)

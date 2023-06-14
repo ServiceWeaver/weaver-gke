@@ -375,10 +375,8 @@ func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error 
 // hostname returns the hostname for the given listener, and the boolean value
 // indicating whether the given listener is public.
 func (d *Distributor) hostname(lis string, cfg *config.GKEConfig) (string, bool) {
-	for _, pub := range cfg.PublicListener {
-		if lis == pub.Name {
-			return pub.Hostname, true
-		}
+	if opts := cfg.Listeners[lis]; opts != nil && opts.PublicHostname != "" {
+		return opts.PublicHostname, true
 	}
 	// Private.
 	return fmt.Sprintf("%s.%s.%s", lis, d.region, InternalDNSDomain), false

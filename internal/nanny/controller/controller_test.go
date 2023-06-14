@@ -1278,31 +1278,31 @@ func startDistributor(ctx context.Context, t *testing.T, loc string, getListener
 
 // version represents an app version
 type version struct {
-	locations            []string                   // locations where this version is deployed
-	appName              string                     // application name
-	id                   string                     // version name
-	rollout              string                     // rollout duration hint
-	listeners            map[string]*nanny.Listener // hostname -> listener
-	publicListenerConfig []*config.GKEConfig_PublicListener
+	locations    []string                   // locations where this version is deployed
+	appName      string                     // application name
+	id           string                     // version name
+	rollout      string                     // rollout duration hint
+	listeners    map[string]*nanny.Listener // hostname -> listener
+	listenerOpts map[string]*config.GKEConfig_ListenerOptions
 }
 
 // newVersion creates a new app version.
 func newVersion(locations []string, appName, id string, rollout string, listener ...string) version {
 	v := version{
-		locations: locations,
-		appName:   appName,
-		id:        id,
-		rollout:   rollout,
-		listeners: map[string]*nanny.Listener{},
+		locations:    locations,
+		appName:      appName,
+		id:           id,
+		rollout:      rollout,
+		listeners:    map[string]*nanny.Listener{},
+		listenerOpts: map[string]*config.GKEConfig_ListenerOptions{},
 	}
 	for _, l := range listener {
 		if strings.Contains(l, ".") { // public listener
 			name := strings.Split(l, ".")[0]
-			v.publicListenerConfig = append(v.publicListenerConfig, &config.GKEConfig_PublicListener{
-				Name:     name,
-				Hostname: l,
-			})
 			v.listeners[l] = &nanny.Listener{Name: name}
+			v.listenerOpts[name] = &config.GKEConfig_ListenerOptions{
+				PublicHostname: l,
+			}
 		}
 	}
 	return v
@@ -1322,7 +1322,7 @@ func registerNewAppVersion(ctx context.Context, controller *controller, v versio
 				},
 				Id: v.id,
 			},
-			PublicListener: v.publicListenerConfig,
+			Listeners: v.listenerOpts,
 		},
 	}
 	for _, location := range v.locations {

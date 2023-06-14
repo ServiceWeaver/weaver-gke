@@ -18,11 +18,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
-	"google.golang.org/protobuf/testing/protocmp"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/codegen"
+	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 func parseGKEConfig(name string, config string) (*config.GKEConfig, error) {
@@ -66,21 +66,13 @@ project = "bar"
 			name: "listeners",
 			config: `
 [gke]
-public_listener = [
-  {name="a", hostname="a.com"},
-  {name="b", hostname="b.com"},
-]
+listeners.a = {public_hostname="a.com"}
+listeners.b = {public_hostname="b.com"}
 `,
 			expect: &config.GKEConfig{
-				PublicListener: []*config.GKEConfig_PublicListener{
-					&config.GKEConfig_PublicListener{
-						Name:     "a",
-						Hostname: "a.com",
-					},
-					&config.GKEConfig_PublicListener{
-						Name:     "b",
-						Hostname: "b.com",
-					},
+				Listeners: map[string]*config.GKEConfig_ListenerOptions{
+					"a": {PublicHostname: "a.com"},
+					"b": {PublicHostname: "b.com"},
 				},
 			},
 		},
@@ -110,19 +102,7 @@ func TestBadGKEConfig(t *testing.T) {
 	}
 
 	for _, c := range []testCase{
-		{
-			name: "missing-hostname",
-			cfg: `
-[serviceweaver]
-name = "test"
-
-[gke]
-public_listener = [{name = "test"}]
-
-`,
-			expectedError: "empty hostname",
-		},
-		// XXX Bad rollout
+		// TODO(spetrovic): Add bad rollout duration.
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := parseGKEConfig(c.name, c.cfg)
