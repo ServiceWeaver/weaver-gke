@@ -15,6 +15,9 @@
 package tool
 
 import (
+	"fmt"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -78,7 +81,18 @@ listeners.b = {public_hostname="b.com"}
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			text := "[serviceweaver]\n\n" + c.config
+			d := t.TempDir()
+			binary := filepath.Join(d, "bin")
+			cmd := exec.Command("go", "build", "-o", binary, "./testprogram")
+			err := cmd.Run()
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := fmt.Sprintf(`
+[serviceweaver]
+binary = "%s"
+
+%s`, binary, c.config)
 			cfg, err := parseGKEConfig(c.name, text)
 			if err != nil {
 				t.Fatal(err)
@@ -102,10 +116,29 @@ func TestBadGKEConfig(t *testing.T) {
 	}
 
 	for _, c := range []testCase{
-		// TODO(spetrovic): Add bad rollout duration.
+		{
+			name: "missing_listeners",
+			cfg: `
+[gke]
+listeners.c = {public_hostname="c.com"}
+`,
+			expectedError: "not found in the binary",
+		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			_, err := parseGKEConfig(c.name, c.cfg)
+			d := t.TempDir()
+			binary := filepath.Join(d, "bin")
+			cmd := exec.Command("go", "build", "-o", binary, "./testprogram")
+			err := cmd.Run()
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := fmt.Sprintf(`
+[serviceweaver]
+binary = "%s"
+
+%s`, binary, c.cfg)
+			_, err = parseGKEConfig(c.name, text)
 			if err == nil || !strings.Contains(err.Error(), c.expectedError) {
 				t.Fatalf("error %v does not contain %q in\n%s", err, c.expectedError, c.cfg)
 			}

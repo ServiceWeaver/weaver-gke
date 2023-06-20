@@ -29,6 +29,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver/runtime"
+	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/codegen"
 	"github.com/ServiceWeaver/weaver/runtime/colors"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
@@ -121,13 +122,30 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app.Sections, parsed); err != nil {
 		return nil, err
 	}
+
+	// Validate the config.
+	binListeners, err := bin.ReadListeners(app.Binary)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read listeners from binary %s: %w", app.Binary, err)
+	}
+	allListeners := make(map[string]struct{})
+	for _, c := range binListeners {
+		for _, l := range c.Listeners {
+			allListeners[l] = struct{}{}
+		}
+	}
 	var listeners map[string]*config.GKEConfig_ListenerOptions
 	if parsed.Listeners != nil {
 		listeners = map[string]*config.GKEConfig_ListenerOptions{}
-		for k, v := range parsed.Listeners {
-			listeners[k] = &config.GKEConfig_ListenerOptions{PublicHostname: v.PublicHostname}
+		for lis, opts := range parsed.Listeners {
+			if _, ok := allListeners[lis]; !ok {
+				return nil, fmt.Errorf("listener %s specified in the config not found in the binary", lis)
+
+			}
+			listeners[lis] = &config.GKEConfig_ListenerOptions{PublicHostname: opts.PublicHostname}
 		}
 	}
+
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
 		Project:   parsed.Project,
