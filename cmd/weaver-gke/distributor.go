@@ -37,11 +37,7 @@ var distributorCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		opts := gke.NannyOptions{
-			StartDistributor: true,
-			Port:             *distributorPort,
-		}
-		return gke.RunNanny(ctx, opts)
+		return gke.RunDistributor(ctx, *distributorPort)
 	},
 	Hidden: true,
 }

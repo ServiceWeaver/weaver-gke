@@ -59,8 +59,12 @@ var (
 )
 
 type DeploySpec struct {
-	Tool           string // e.g., weaver-gke, weaver-gke-local
-	PrepareRollout func(context.Context, *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error)
+	Tool string // e.g., weaver-gke, weaver-gke-local
+	// Controller returns the HTTP address of the controller and an HTTP client
+	// that we can use to contact the controller.
+	Controller func(context.Context, *config.GKEConfig) (string, *http.Client, error)
+
+	PrepareRollout func(context.Context, *config.GKEConfig) (*controller.RolloutRequest, error)
 	Source         func(context.Context, *config.GKEConfig) (logging.Source, error)
 }
 
@@ -254,8 +258,11 @@ func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) er
 	if err := pickDeployRegions(cfg); err != nil {
 		return err
 	}
-
-	req, client, err := d.PrepareRollout(ctx, cfg)
+	controllerAddr, controllerClient, err := d.Controller(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	req, err := d.PrepareRollout(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -265,17 +272,18 @@ func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) er
 	ctx, cancel := context.WithTimeout(ctx, deployTimeout)
 	defer cancel()
 	for r := retry.Begin(); r.Continue(ctx); {
-		if err = protomsg.Call(ctx, protomsg.CallArgs{
-			Client:  client,
-			Addr:    req.NannyAddr,
+		err := protomsg.Call(ctx, protomsg.CallArgs{
+			Client:  controllerClient,
+			Addr:    controllerAddr,
 			URLPath: controller.RolloutURL,
 			Request: req,
-		}); err == nil {
+		})
+		if err == nil {
 			fmt.Fprintln(os.Stderr, "Done")
 			return nil
 		}
 	}
-	fmt.Fprintln(os.Stderr, "Error")
+	fmt.Fprintln(os.Stderr, "Timeout")
 	return fmt.Errorf("timeout trying to deploy the app; last error: %w", err)
 }
 

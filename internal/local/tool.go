@@ -17,7 +17,6 @@ package local
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"syscall"
@@ -33,38 +32,37 @@ const (
 	// The gke-local deployer spawns one controller and one distributor/manager
 	// per region. The controller and distributors all listen on different
 	// ports. The store is used to assign ports to regions.
-	proxyPort      = 8000                 // proxy port
-	controllerPort = 8001                 // controller port
-	portsKey       = "/distributor_ports" // mapping from region to distributor port
-	projectName    = "local"              // fake name for the local GCP "project"
+	proxyPort      = 8000           // proxy port
+	controllerPort = 8001           // controller port
+	portsKey       = "/nanny_ports" // region -> distributor/manager port
+	projectName    = "local"        // fake name for the local GCP "project"
 )
 
 // PrepareRollout returns a new rollout request for the given application
-// version, along with the HTTP client that should be used to reach it.
-// May mutate the passed-in run.
-func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error) {
+// version. This call may mutate the passed-in config.
+func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, error) {
 	cfg.Project = projectName
 
 	// Ensure all Service Weaver service processes (i.e., controller,
 	// distributor/manager) are running.
 	distributorPorts, err := ensureWeaverServices(ctx, cfg)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Generate per-component identities and use the call graph to compute
 	// the set of components each identity is allowed to invoke methods on.
 	callGraph, err := bin.ReadComponentGraph(cfg.Deployment.App.Binary)
 	if err != nil {
-		return nil, nil, fmt.Errorf("cannot read the call graph from the application binary: %w", err)
+		return nil, fmt.Errorf("cannot read the call graph from the application binary: %w", err)
 	}
 	cfg.ComponentIdentity = map[string]string{}
 	cfg.IdentityAllowlist = map[string]*config.GKEConfig_Components{}
 	addIdentity := func(component string) string {
 		// NOTE: we assign each replica set a unique identity, which is the name
-		// of the replica set itself.
+		// of the replica set itself, combined with the deployment id.
 		replicaSet := nanny.ReplicaSetForComponent(component, cfg)
-		cfg.ComponentIdentity[component] = replicaSet
+		cfg.ComponentIdentity[component] = fmt.Sprintf("%s-%s", replicaSet, cfg.Deployment.Id)
 		return replicaSet
 	}
 	for _, edge := range callGraph {
@@ -82,21 +80,22 @@ func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.Rol
 
 	// Prepare the rollout request.
 	req := &controller.RolloutRequest{
-		Config:    cfg,
-		NannyAddr: fmt.Sprintf("http://localhost:%d", controllerPort),
+		Config: cfg,
 	}
 	for _, region := range cfg.Regions {
 		req.Locations = append(req.Locations, &controller.RolloutRequest_Location{
 			Name:            region,
-			DistributorAddr: fmt.Sprintf("http://localhost:%d", distributorPorts[region]),
+			DistributorAddr: fmt.Sprintf("https://localhost:%d", distributorPorts[region]),
 		})
 	}
-	return req, http.DefaultClient, nil
+
+	return req, nil
 }
 
-// ensureWeaverServices ensures that Service Weaver services (i.e., controller and all
-// needed distributors and managers) are running. It returns a map that assigns
-// the region of every distributor to the port it's listening on.
+// ensureWeaverServices ensures that Service Weaver services (i.e., controller,
+// proxy, and all needed distributors and managers) are running. It returns a
+// map that assigns the region of every distributor to the port it's listening
+// on.
 func ensureWeaverServices(ctx context.Context, cfg *config.GKEConfig) (map[string]int, error) {
 	// "weaver-gke-local deploy" launches Service Weaver applications. The
 	// "weaver-gke-local" tool also has subcommands to launch a proxy, a
@@ -122,29 +121,40 @@ func ensureWeaverServices(ctx context.Context, cfg *config.GKEConfig) (map[strin
 		return nil, err
 	}
 
-	// Launch the distributors.
+	// Launch the distributors and managers.
 	s, err := Store("us-central1")
 	if err != nil {
 		return nil, err
 	}
-	ports := map[string]int{}
+	distributorPorts := map[string]int{}
 	for _, region := range cfg.Regions {
-		// Pick a port.
 		offset, err := store.Sequence(ctx, s, portsKey, region)
 		if err != nil {
 			return nil, err
 		}
-		port := controllerPort + 1 + offset
-		ports[region] = port
+		distributorPort := controllerPort + 1 + 2*offset
+		managerPort := controllerPort + 1 + 2*offset + 1
+		distributorPorts[region] = distributorPort
 
 		// Start the distributor.
 		distributor := exec.Command(ex, "distributor",
 			"--region", region,
-			"--port", fmt.Sprint(port))
+			"--port", fmt.Sprint(distributorPort),
+			"--manager_port", fmt.Sprint(managerPort))
 		distributor.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		if err := distributor.Start(); err != nil {
 			return nil, err
 		}
+
+		// Start the manager.
+		manager := exec.Command(ex, "manager",
+			"--region", region,
+			"--port", fmt.Sprint(managerPort),
+			"--proxy_port", fmt.Sprint(proxyPort))
+		manager.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := manager.Start(); err != nil {
+			return nil, err
+		}
 	}
-	return ports, nil
+	return distributorPorts, nil
 }

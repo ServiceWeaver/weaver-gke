@@ -32,7 +32,7 @@ import (
 var dashboardSpec = tool.DashboardSpec{
 	Tool:       "weaver gke-local",
 	Flags:      flag.NewFlagSet("dashboard", flag.ContinueOnError),
-	Controller: local.Nanny,
+	Controller: local.Controller,
 	Init: func(ctx context.Context, mux *http.ServeMux) error {
 		logger := logging.StderrLogger(logging.Options{})
 

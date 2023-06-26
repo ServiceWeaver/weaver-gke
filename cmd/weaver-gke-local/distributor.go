@@ -23,9 +23,10 @@ import (
 )
 
 var (
-	distributorFlags  = flag.NewFlagSet("distributor", flag.ContinueOnError)
-	distributorRegion = distributorFlags.String("region", "us-central1", "Simulated GKE region")
-	distributorPort   = distributorFlags.Int("port", 0, "Distributor port")
+	distributorFlags       = flag.NewFlagSet("distributor", flag.ContinueOnError)
+	distributorRegion      = distributorFlags.String("region", "us-west1", "Simulated GKE region")
+	distributorPort        = distributorFlags.Int("port", 0, "Distributor port")
+	distributorManagerPort = distributorFlags.Int("manager_port", 0, "Local manager port")
 )
 
 var distributorCmd = tool.Command{
@@ -38,12 +39,7 @@ var distributorCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		opts := local.NannyOptions{
-			Region:           *distributorRegion,
-			StartDistributor: true,
-			Port:             *distributorPort,
-		}
-		return local.RunNanny(ctx, opts)
+		return local.RunDistributor(ctx, *distributorRegion, *distributorPort, *distributorManagerPort)
 	},
 	Hidden: true,
 }

@@ -16,6 +16,8 @@ package store
 
 import (
 	"strings"
+
+	"github.com/ServiceWeaver/weaver-gke/internal/config"
 )
 
 const (
@@ -73,14 +75,16 @@ func AppKey(app string, key string) string {
 
 // DeploymentKey returns keys in the format "/app/collatz/deployment/123/key",
 // where "collatz" is the application name and 123 is the deployment id.
-func DeploymentKey(app, deploymentID string, key string) string {
-	return join("app", app, "deployment", deploymentID, key)
+func DeploymentKey(cfg *config.GKEConfig, key string) string {
+	dep := cfg.Deployment
+	return join("app", dep.App.Name, "deployment", dep.Id, key)
 }
 
 // ReplicaSetKey returns keys in the format
 // "/app/collatz/deployment/123/replica_set/OddEven/key", where "collatz" is the
 // application name, 123 is the deployment id, and OddEven is the Kubernetes
 // ReplicaSet name.
-func ReplicaSetKey(app, deploymentID string, replicaSet string, key string) string {
-	return join("app", app, "deployment", deploymentID, "replica_set", replicaSet, key)
+func ReplicaSetKey(cfg *config.GKEConfig, replicaSet string, key string) string {
+	dep := cfg.Deployment
+	return join("app", dep.App.Name, "deployment", dep.Id, "replica_set", replicaSet, key)
 }

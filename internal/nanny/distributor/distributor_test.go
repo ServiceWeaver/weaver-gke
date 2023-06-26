@@ -23,8 +23,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
@@ -1356,8 +1356,8 @@ func TestRunProfiling(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
 			manager := &mockManagerClient{nil, nil, nil, c.procStates}
-			babysitterConstructor := func(addr string) clients.BabysitterClient {
-				return &mockBabysitterClient{c.profiles[addr], nil /*metrics*/}
+			babysitterConstructor := func(_ *config.GKEConfig, _, addr string) (endpoints.Babysitter, error) {
+				return &mockBabysitterClient{c.profiles[addr], nil /*metrics*/}, nil
 			}
 			d, err := Start(ctx,
 				http.NewServeMux(),
@@ -1511,59 +1511,59 @@ type mockManagerClient struct {
 	replicaSets replicaSetStates // returned by GetReplicaSetState
 }
 
-var _ clients.ManagerClient = &mockManagerClient{}
+var _ endpoints.Manager = &mockManagerClient{}
 
-// Deploy implements the clients.ManagerClient interface.
+// Deploy implements the endpoints.Manager interface.
 func (m *mockManagerClient) Deploy(context.Context, *nanny.ApplicationDeploymentRequest) error {
 	return m.deploy
 }
 
-// Stop implements the clients.ManagerClient interface.
+// Stop implements the endpoints.Manager interface.
 func (m *mockManagerClient) Stop(context.Context, *nanny.ApplicationStopRequest) error {
 	return m.stop
 }
 
-// Delete implements the clients.ManagerClient interface.
+// Delete implements the endpoints.Manager interface.
 func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequest) error {
 	return m.delete
 }
 
-// GetReplicaSetState implements the clients.ManagerClient interface.
+// GetReplicaSetState implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetReplicaSetState(_ context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
 	return m.replicaSets.toProto(), nil
 }
 
-// StartComponent implements the clients.ManagerClient interface.
+// StartComponent implements the endpoints.Manager interface.
 func (m *mockManagerClient) ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error {
 	panic("implement me")
 }
 
-// RegisterReplica implements the clients.ManagerClient interface.
+// RegisterReplica implements the endpoints.Manager interface.
 func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error {
 	panic("implement me")
 }
 
-// ReportLoad implements the clients.ManagerClient interface.
+// ReportLoad implements the endpoints.Manager interface.
 func (m *mockManagerClient) ReportLoad(context.Context, *nanny.LoadReport) error {
 	panic("implement me")
 }
 
-// GetListenerAddress implements the clients.ManagerClient interface.
+// GetListenerAddress implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
 	panic("implement me")
 }
 
-// ExportListener implements the clients.ManagerClient interface.
+// ExportListener implements the endpoints.Manager interface.
 func (m *mockManagerClient) ExportListener(context.Context, *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error) {
 	panic("implement me")
 }
 
-// GetRoutingInfo implements the clients.ManagerClient interface.
+// GetRoutingInfo implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetRoutingInfo(context.Context, *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
 	panic("implement me")
 }
 
-// GetComponentsToStart implements the clients.ManagerClient interface.
+// GetComponentsToStart implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetComponentsToStart(context.Context, *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error) {
 	panic("implement me")
 }
@@ -1575,9 +1575,9 @@ type mockBabysitterClient struct {
 	metrics []*protos.MetricValue
 }
 
-var _ clients.BabysitterClient = mockBabysitterClient{}
+var _ endpoints.Babysitter = mockBabysitterClient{}
 
-// RunProfiling implements the clients.BabysitterClient interface.
+// RunProfiling implements the endpoints.Babysitter interface.
 func (b mockBabysitterClient) RunProfiling(_ context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
 	if b.prof == nil {
 		return nil, fmt.Errorf("no profile found")
@@ -1590,7 +1590,7 @@ func (b mockBabysitterClient) RunProfiling(_ context.Context, req *protos.GetPro
 	return &protos.GetProfileReply{Data: buf.Bytes()}, nil
 }
 
-// CheckHealth implements the clients.BabysitterClient interface.
+// CheckHealth implements the endpoints.Babysitter interface.
 func (b mockBabysitterClient) CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
 	panic("implement me")
 }

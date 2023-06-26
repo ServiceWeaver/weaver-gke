@@ -37,11 +37,7 @@ var managerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		opts := gke.NannyOptions{
-			StartManager: true,
-			Port:         *managerPort,
-		}
-		return gke.RunNanny(ctx, opts)
+		return gke.RunManager(ctx, *managerPort)
 	},
 	Hidden: true,
 }

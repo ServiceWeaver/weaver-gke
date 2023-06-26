@@ -24,5 +24,5 @@ import (
 var statusSpec = tool.StatusSpec{
 	Tool:       "weaver gke-local",
 	Flags:      flag.NewFlagSet("status", flag.ContinueOnError),
-	Controller: local.Nanny,
+	Controller: local.Controller,
 }

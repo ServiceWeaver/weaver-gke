@@ -17,22 +17,18 @@ package manager
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"sort"
 	"testing"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
-	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/prototext"
@@ -53,20 +49,16 @@ func nextEvent(events chan string) string {
 	}
 }
 
-func startServer(t *testing.T) (*httptest.Server, chan string) {
+func newTestManager(t *testing.T) (endpoints.Manager, chan string) {
 	t.Helper()
 	ctx := context.Background()
 	events := make(chan string, 100)
-	mux := http.NewServeMux()
-
-	// Start the manager server.
-	if err := Start(ctx,
-		mux,
+	m := NewManager(ctx,
 		store.NewFakeStore(),
 		logging.NewTestSlogger(t, testing.Verbose()),
 		"", // dialAddr
-		func(addr string) clients.BabysitterClient {
-			return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
+		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+			return &babysitter.HttpClient{Addr: addr}, nil
 		},
 		func(context.Context, string) (bool, error) { return true, nil },
 		func(_ context.Context, _ *config.GKEConfig, replicaSet string, listener string) (int, error) {
@@ -80,11 +72,9 @@ func startServer(t *testing.T) (*httptest.Server, chan string) {
 			events <- "startReplicaSet " + replicaSet
 			return nil
 		},
-		func(context.Context, string, []string) error { return nil },
-		func(context.Context, string, []string) error { return nil }); err != nil {
-		t.Fatal("error starting the manager server", err)
-	}
-	return httptest.NewServer(mux), events
+		func(context.Context, string, []*config.GKEConfig) error { return nil },
+		func(context.Context, string, []*config.GKEConfig) error { return nil })
+	return m, events
 }
 
 func makeConfig(colocate ...string) *config.GKEConfig {
@@ -100,18 +90,12 @@ func makeConfig(colocate ...string) *config.GKEConfig {
 }
 
 func TestDeploy(t *testing.T) {
-	ts, events := startServer(t)
-	defer ts.Close()
+	m, events := newTestManager(t)
 
 	cfg := makeConfig()
-	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
-		Client:  ts.Client(),
-		Addr:    ts.URL,
-		URLPath: deployURL,
-		Request: &nanny.ApplicationDeploymentRequest{
-			AppName:  "todo",
-			Versions: []*config.GKEConfig{cfg},
-		},
+	if err := m.Deploy(context.Background(), &nanny.ApplicationDeploymentRequest{
+		AppName:  "todo",
+		Versions: []*config.GKEConfig{cfg},
 	}); err != nil {
 		t.Fatalf("couldn't deploy %v: %v", cfg, err)
 	}
@@ -120,20 +104,10 @@ func TestDeploy(t *testing.T) {
 		t.Fatalf("main not started: got %q", event)
 	}
 
-	// Verify that the process eventst)
-	defer ts.Close()
-
-	// Start the component and check that it has started.
-	req := &nanny.ActivateComponentRequest{
+	// Activate the component and check that it has started.
+	if err := m.ActivateComponent(context.Background(), &nanny.ActivateComponentRequest{
 		Component: "bar",
 		Config:    makeConfig(),
-	}
-
-	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
-		Client:  ts.Client(),
-		Addr:    ts.URL,
-		URLPath: activateComponentURL,
-		Request: req,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -143,101 +117,71 @@ func TestDeploy(t *testing.T) {
 }
 
 func TestGetListenerAddress(t *testing.T) {
-	ts, events := startServer(t)
-	defer ts.Close()
+	m, events := newTestManager(t)
 
-	// Start process and check that it has started.
-	req := &nanny.GetListenerAddressRequest{
+	actual, err := m.GetListenerAddress(context.Background(), &nanny.GetListenerAddressRequest{
 		ReplicaSet: "bar",
 		Listener:   "foo",
 		Config:     makeConfig(),
-	}
-
-	reply := &protos.GetListenerAddressReply{}
-	if err := protomsg.Call(context.Background(), protomsg.CallArgs{
-		Client:  ts.Client(),
-		Addr:    ts.URL,
-		URLPath: getListenerAddressURL,
-		Request: req,
-		Reply:   reply,
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
+
 	if event := nextEvent(events); event != "getListenerPort bar foo" {
 		t.Fatalf("foo port not requested: got %q", event)
 	}
 	expect := &protos.GetListenerAddressReply{
 		Address: fmt.Sprintf(":%d", testListenerPort),
 	}
-	if diff := cmp.Diff(reply, expect, protocmp.Transform()); diff != "" {
+	if diff := cmp.Diff(actual, expect, protocmp.Transform()); diff != "" {
 		t.Fatalf("bad address reply: (-want +got)\n%s", diff)
 	}
 }
 
 func TestGetRoutingInfo(t *testing.T) {
-	ts, _ := startServer(t)
-	defer ts.Close()
-
+	m, _ := newTestManager(t)
 	cfg := makeConfig("sharded", "unsharded")
 
-	// add adds a new resolvable address.
-	addReplica := func(addr string) {
-		req := &nanny.RegisterReplicaRequest{
+	// registerReplica registers a replica with a given weavelet address.
+	registerReplica := func(addr string) {
+		if err := m.RegisterReplica(context.Background(), &nanny.RegisterReplicaRequest{
 			ReplicaSet:        "sharded",
 			PodName:           "unused",
 			BabysitterAddress: "unused",
 			WeaveletAddress:   addr,
 			Config:            cfg,
-		}
-		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
-			Client:  ts.Client(),
-			Addr:    ts.URL,
-			URLPath: registerReplicaURL,
-			Request: req,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	// activateComponent activates the given component.
-	startComponent := func(component string, isRouted bool) {
-		req := &nanny.ActivateComponentRequest{
+	activateComponent := func(component string, isRouted bool) {
+		if err := m.ActivateComponent(context.Background(), &nanny.ActivateComponentRequest{
 			Component: component,
 			Routed:    isRouted,
 			Config:    cfg,
-		}
-		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
-			Client:  ts.Client(),
-			Addr:    ts.URL,
-			URLPath: activateComponentURL,
-			Request: req,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// resolve returns sorted list of resolvable addresses along with an assignment.
-	resolve := func(version, component string) *nanny.GetRoutingReply {
-		req := &nanny.GetRoutingRequest{
+	// getRouting returns the routing information for a given component.
+	getRouting := func(version, component string) *nanny.GetRoutingReply {
+		reply, err := m.GetRoutingInfo(context.Background(), &nanny.GetRoutingRequest{
 			Component: component,
 			Version:   version,
 			Config:    cfg,
-		}
-		var reply nanny.GetRoutingReply
-		if err := protomsg.Call(context.Background(), protomsg.CallArgs{
-			Client:  ts.Client(),
-			Addr:    ts.URL,
-			URLPath: getRoutingInfoURL,
-			Request: req,
-			Reply:   &reply,
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatal(err)
 		}
 		sort.Strings(reply.Routing.Replicas)
-		return &reply
+		return reply
 	}
 
-	routingInfo := resolve("", "nonexistent")
+	routingInfo := getRouting("", "nonexistent")
 	if len(routingInfo.Routing.Replicas) != 0 {
 		t.Fatalf("resolve(empty) = %v; want []", routingInfo.Routing.Replicas)
 	}
@@ -252,14 +196,14 @@ func TestGetRoutingInfo(t *testing.T) {
 	}
 
 	// All existing values returned.
-	addReplica(testData[0])
-	addReplica(testData[1])
+	registerReplica(testData[0])
+	registerReplica(testData[1])
 
 	// Register two components to start.
-	startComponent("sharded", true)
-	startComponent("unsharded", false)
+	activateComponent("sharded", true)
+	activateComponent("unsharded", false)
 
-	routingInfo = resolve("", "unsharded")
+	routingInfo = getRouting("", "unsharded")
 	if diff := cmp.Diff(testData[:2], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
 	}
@@ -269,7 +213,7 @@ func TestGetRoutingInfo(t *testing.T) {
 	if routingInfo.Routing.Assignment != nil {
 		t.Fatalf("want empty assignment, got %v", prototext.Format(routingInfo.Routing.Assignment))
 	}
-	routingInfo = resolve("", "sharded")
+	routingInfo = getRouting("", "sharded")
 	if diff := cmp.Diff(testData[:2], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
 	}
@@ -294,9 +238,9 @@ func TestGetRoutingInfo(t *testing.T) {
 	start := time.Now()
 	go func() {
 		time.Sleep(delay)
-		addReplica(testData[2]) // Delayed change that should make resolve call succeed.
+		registerReplica(testData[2]) // Delayed change that should make resolve call succeed.
 	}()
-	routingInfo = resolve(routingInfo.Version, "sharded")
+	routingInfo = getRouting(routingInfo.Version, "sharded")
 	finish := time.Now()
 	if diff := cmp.Diff(testData[:3], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)

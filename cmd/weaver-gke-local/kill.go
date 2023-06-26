@@ -24,5 +24,5 @@ import (
 var killSpec = tool.KillSpec{
 	Tool:       "weaver gke-local",
 	Flags:      flag.NewFlagSet("kill", flag.ContinueOnError),
-	Controller: local.Nanny,
+	Controller: local.Controller,
 }

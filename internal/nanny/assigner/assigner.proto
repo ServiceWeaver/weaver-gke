@@ -18,6 +18,7 @@ option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner
 
 package assigner;
 import "runtime/protos/runtime.proto";
+import "internal/config/config.proto";
 
 // AppVersionState contains state managed for an application version by
 // the assigner.
@@ -57,9 +58,8 @@ message AppState {
 
 // ReplicaSetId uniquely identifies a Kubernetes ReplicaSet.
 message ReplicaSetId {
-  string App = 1;      // Service Weaver application (e.g., todo)
-  string Id = 2;       // deployment id (e.g., bb6b3172)
-  string Name = 3;    // replica set name (e.g., Cache)
+  config.GKEConfig config = 1;  // config for the replica set
+  string Name = 2;              // replica set name (e.g., Cache)
 }
 
 // ReplicaSetInfo contains information for each Kubernetes ReplicaSet that

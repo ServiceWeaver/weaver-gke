@@ -16,31 +16,19 @@ package gke
 
 import (
 	"context"
-	"crypto/x509"
-	"encoding/pem"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 
 	traceexporter "github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"go.opentelemetry.io/otel/sdk/trace"
-)
-
-const (
-	// Local directory that contains the certificates for this Pod.
-	// NOTE: This directory will only exist if the MTLS protocol has been
-	// enabled for the deployment.
-	certsLocalDir = "/var/run/secrets/workload-spiffe-credentials"
-
-	// Local Files that store the Certificate Authority certificate, the Pod
-	// certificate, and the Pod certificate's matching private key.
-	caCertFile  = certsLocalDir + "/ca_certificates.pem"
-	podCertFile = certsLocalDir + "/certificates.pem"
-	podKeyFile  = certsLocalDir + "/private_key.pem"
 )
 
 // RunBabysitter creates and runs a GKE babysitter.
@@ -99,22 +87,6 @@ func RunBabysitter(ctx context.Context) error {
 		}
 	}
 
-	// Load the CA certificate, if MTLS was enabled for the deployment.
-	var caCert *x509.Certificate
-	if cfg.Mtls {
-		caCertPEM, err := loadPEM(caCertFile)
-		if err != nil {
-			return err
-		}
-		caCertDER, _ := pem.Decode(caCertPEM)
-		if caCertDER == nil || caCertDER.Type != "CERTIFICATE" {
-			return fmt.Errorf("cannot decode the PEM block containing the CA certificate")
-		}
-		if caCert, err = x509.ParseCertificate(caCertDER.Bytes); err != nil {
-			return fmt.Errorf("cannot parse the CA certificate: %w", err)
-		}
-	}
-
 	// Babysitter logs are written to the same log store as the application logs.
 	logClient, err := newCloudLoggingClient(ctx, meta)
 	if err != nil {
@@ -144,27 +116,31 @@ func RunBabysitter(ctx context.Context) error {
 		return metricsExporter.Export(ctx, metrics)
 	}
 
-	// NOTE: all certificates are re-loaded from file each time since they
-	// are updated periodically by the private CA service.
-	selfCertGetter := func() ([]byte, []byte, error) {
-		selfCertPEM, err := loadPEM(podCertFile)
-		if err != nil {
-			return nil, nil, err
-		}
-		selfKeyPEM, err := loadPEM(podKeyFile)
-		if err != nil {
-			return nil, nil, err
-		}
-		return selfCertPEM, selfKeyPEM, nil
-	}
-
-	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	b, err := babysitter.NewBabysitter(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, m, caCert, selfCertGetter, logSaver, traceSaver, metricSaver)
+	caCert, getSelfCert, err := getPodCerts()
 	if err != nil {
 		return err
 	}
 
-	return b.Run()
+	m := &manager.HttpClient{
+		Addr:      cfg.ManagerAddr,
+		TLSConfig: mtls.ClientTLSConfig(cfg.Project, caCert, getSelfCert, "manager"),
+	}
+	mux := http.NewServeMux()
+	lis, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		return err
+	}
+	selfAddr := fmt.Sprintf("https://%s", lis.Addr())
+	_, err = babysitter.Start(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, mux, selfAddr, m, caCert, getSelfCert, logSaver, traceSaver, metricSaver)
+	if err != nil {
+		return err
+	}
+
+	server := &http.Server{
+		Handler:   mux,
+		TLSConfig: mtls.ServerTLSConfig(cfg.Project, caCert, getSelfCert, "manager", "distributor"),
+	}
+	return server.ServeTLS(lis, "", "")
 }
 
 // gkeConfigFromEnv reads config.GKEConfig from the Service Weaver internal
@@ -180,15 +156,4 @@ func gkeConfigFromEnv() (*config.GKEConfig, error) {
 		return nil, err
 	}
 	return cfg, nil
-}
-
-func loadPEM(fname string) ([]byte, error) {
-	data, err := os.ReadFile(fname)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) == 0 {
-		return nil, fmt.Errorf("empty PEM block in file %s", fname)
-	}
-	return data, nil
 }

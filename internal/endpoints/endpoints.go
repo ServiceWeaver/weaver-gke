@@ -1,4 +1,4 @@
-// Copyright 2022 Google LLC
+// Copyright 2023 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package clients
+package endpoints
 
 import (
 	"context"
@@ -25,14 +25,14 @@ import (
 // Interval at which babysitters report load to the manager.
 const LoadReportInterval = 5 * time.Minute
 
-// BabysitterClient is a client to a babysitter.
-type BabysitterClient interface {
+// Babysitter is an interface for a babysitter.
+type Babysitter interface {
 	CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error)
 	RunProfiling(context.Context, *protos.GetProfileRequest) (*protos.GetProfileReply, error)
 }
 
-// DistributorClient is a client to a distributor.
-type DistributorClient interface {
+// Distributor is an interface for a distributor.
+type Distributor interface {
 	Distribute(context.Context, *nanny.ApplicationDistributionRequest) error
 	Cleanup(context.Context, *nanny.ApplicationCleanupRequest) error
 	GetApplicationState(context.Context, *nanny.ApplicationStateAtDistributorRequest) (*nanny.ApplicationStateAtDistributor, error)
@@ -41,8 +41,8 @@ type DistributorClient interface {
 	RunProfiling(context.Context, *nanny.GetProfileRequest) (*protos.GetProfileReply, error)
 }
 
-// ManagerClient is a client to a manager.
-type ManagerClient interface {
+// Manager is an interface for a manager.
+type Manager interface {
 	Deploy(context.Context, *nanny.ApplicationDeploymentRequest) error
 	Stop(context.Context, *nanny.ApplicationStopRequest) error
 	Delete(context.Context, *nanny.ApplicationDeleteRequest) error

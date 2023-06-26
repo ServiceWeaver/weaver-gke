@@ -25,7 +25,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
@@ -78,7 +78,7 @@ type controller struct {
 	logger           *slog.Logger
 	rolloutProcessor rolloutProcessor
 	actuationDelay   time.Duration
-	distributor      func(addr string) clients.DistributorClient
+	distributor      func(addr string) endpoints.Distributor
 	applyTraffic     func(context.Context, *nanny.TrafficAssignment) error
 }
 
@@ -88,7 +88,7 @@ func Start(ctx context.Context,
 	store store.Store,
 	logger *slog.Logger,
 	actuationDelay time.Duration,
-	distributor func(addr string) clients.DistributorClient,
+	distributor func(addr string) endpoints.Distributor,
 	fetchAssignmentsInterval time.Duration,
 	applyAssignmentInterval time.Duration,
 	manageAppInterval time.Duration,

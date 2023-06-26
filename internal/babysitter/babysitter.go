@@ -17,18 +17,15 @@ package babysitter
 import (
 	"context"
 	"crypto/x509"
-	"errors"
 	"fmt"
 	"math/rand"
-	"net"
 	"net/http"
-	"os"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
+	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
@@ -51,13 +48,14 @@ const (
 // Babysitter starts and manages a weavelet inside the Pod.
 type Babysitter struct {
 	ctx            context.Context
+	mux            *http.ServeMux
+	selfAddr       string // HTTP address for the listener
 	cfg            *config.GKEConfig
 	replicaSet     string
 	podName        string
 	envelope       *envelope.Envelope
-	lis            net.Listener // listener to serve /healthz and /run_profiling
-	manager        clients.ManagerClient
-	caCertPool     *x509.CertPool
+	manager        endpoints.Manager
+	caCert         *x509.Certificate
 	selfCertGetter func() ([]byte, []byte, error)
 	logger         *slog.Logger
 	logSaver       func(*protos.LogEntry)
@@ -69,35 +67,24 @@ type Babysitter struct {
 }
 
 var _ envelope.EnvelopeHandler = &Babysitter{}
-var _ clients.BabysitterClient = &Babysitter{}
+var _ endpoints.Babysitter = &Babysitter{}
 
-// NewBabysitter returns a new babysitter.
-func NewBabysitter(
+// Start creates and starts a new babysitter.
+func Start(
 	ctx context.Context,
 	cfg *config.GKEConfig,
 	replicaSet string,
 	podName string,
 	useLocalhost bool,
-	manager clients.ManagerClient,
+	mux *http.ServeMux,
+	selfAddr string,
+	manager endpoints.Manager,
 	caCert *x509.Certificate,
 	selfCertGetter func() ([]byte, []byte, error),
 	logSaver func(*protos.LogEntry),
 	traceSaver func(spans []trace.ReadOnlySpan) error,
 	metricExporter func(metrics []*metrics.MetricSnapshot) error,
 ) (*Babysitter, error) {
-	// Get a dialable address to serve http requests at the babysitter (e.g.,
-	// health checks, profiling information).
-	//
-	// TODO(mwhittaker): Right now, we resolve our hostname to get a dialable
-	// IP address. Double check that this always works.
-	hostname, err := os.Hostname()
-	if err != nil {
-		return nil, err
-	}
-	lis, err := net.Listen("tcp", fmt.Sprintf("%s:0", hostname))
-	if err != nil {
-		return nil, err
-	}
 	logger := slog.New(&logging.LogHandler{
 		Opts: logging.Options{
 			App:        cfg.Deployment.App.Name,
@@ -108,13 +95,6 @@ func NewBabysitter(
 		},
 		Write: logSaver,
 	})
-
-	// Initialize the CA certificate pool.
-	var caCertPool *x509.CertPool
-	if caCert != nil {
-		caCertPool = x509.NewCertPool()
-		caCertPool.AddCert(caCert)
-	}
 
 	// Create the envelope.
 	//
@@ -141,13 +121,14 @@ func NewBabysitter(
 	// Create the babysitter.
 	b := &Babysitter{
 		ctx:            ctx,
+		mux:            mux,
 		cfg:            cfg,
 		replicaSet:     replicaSet,
 		podName:        podName,
 		envelope:       e,
-		lis:            lis,
+		selfAddr:       selfAddr,
 		manager:        manager,
-		caCertPool:     caCertPool,
+		caCert:         caCert,
 		selfCertGetter: selfCertGetter,
 		logger:         logger,
 		logSaver:       logSaver,
@@ -155,23 +136,13 @@ func NewBabysitter(
 		metricExporter: metricExporter,
 	}
 
-	return b, nil
-}
-
-// Run runs the babysitter. This call will block until the context passed to
-// NewBabysitter is canceled.
-func (b *Babysitter) Run() error {
-	if b.lis != nil {
-		go func() {
-			if err := b.runHTTP(); err != nil {
-				b.logger.Error("Error starting the HTTP server", "err", err)
-			}
-		}()
-	}
+	// Register babysitter handlers.
+	mux.HandleFunc(healthURL, protomsg.HandlerFunc(b.logger, b.CheckHealth))
+	mux.HandleFunc(runProfilingURL, protomsg.HandlerFunc(b.logger, b.RunProfiling))
 
 	// Register the weavelet.
 	if err := b.registerReplica(); err != nil {
-		return err
+		return nil, err
 	}
 
 	// Start a goroutine to periodically export metrics.
@@ -182,27 +153,10 @@ func (b *Babysitter) Run() error {
 	// Start a goroutine to periodically report components' load.
 	go b.reportLoad()
 
-	// Run the envelope.
-	return b.envelope.Serve(b)
-}
+	// Start the envelope.
+	go b.envelope.Serve(b)
 
-// runHTTP runs the babysitter HTTP server.
-func (b *Babysitter) runHTTP() error {
-	// Start the server.
-	mux := http.NewServeMux()
-	mux.HandleFunc(healthURL, protomsg.HandlerFunc(b.logger, b.CheckHealth))
-	mux.HandleFunc(runProfilingURL, protomsg.HandlerFunc(b.logger, b.RunProfiling))
-	server := http.Server{Handler: mux}
-	errs := make(chan error, 1)
-	go func() { errs <- server.Serve(b.lis) }()
-
-	// Wait for the server to abort or for the context to be cancelled.
-	select {
-	case err := <-errs:
-		return err
-	case <-b.ctx.Done():
-		return server.Shutdown(b.ctx)
-	}
+	return b, nil
 }
 
 // exportMetrics periodically exports metrics.
@@ -240,7 +194,7 @@ func (b *Babysitter) reportLoad() error {
 	// around the same time from storming to update their load.
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	pick := func() time.Duration {
-		const i = float64(clients.LoadReportInterval)
+		const i = float64(endpoints.LoadReportInterval)
 		const low = int64(i * 0.95)
 		const high = int64(i * 1.05)
 		return time.Duration(r.Int63n(high-low+1) + low)
@@ -273,12 +227,12 @@ func (b *Babysitter) reportLoad() error {
 	}
 }
 
-// CheckHealth implements the clients.BabysitterClient interface.
+// CheckHealth implements the endpoints.Babysitter interface.
 func (b *Babysitter) CheckHealth(_ context.Context, req *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
 	return &protos.GetHealthReply{Status: b.envelope.GetHealth()}, nil
 }
 
-// RunProfiling implements the clients.BabysitterClient interface.
+// RunProfiling implements the endpoints.Babysitter interface.
 func (b *Babysitter) RunProfiling(_ context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
 	prof, err := b.envelope.GetProfile(req)
 	if err != nil {
@@ -350,7 +304,7 @@ func (b *Babysitter) registerReplica() error {
 	if err := b.manager.RegisterReplica(b.ctx, &nanny.RegisterReplicaRequest{
 		ReplicaSet:        b.replicaSet,
 		PodName:           b.podName,
-		BabysitterAddress: b.lis.Addr().String(),
+		BabysitterAddress: b.selfAddr,
 		WeaveletAddress:   b.envelope.WeaveletInfo().DialAddr,
 		Config:            b.cfg,
 	}); err != nil {
@@ -421,7 +375,7 @@ func (b *Babysitter) GetSelfCertificate(context.Context, *protos.GetSelfCertific
 
 // VerifyClientCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) VerifyClientCertificate(_ context.Context, req *protos.VerifyClientCertificateRequest) (*protos.VerifyClientCertificateReply, error) {
-	identity, err := b.verifyCertificate(req.CertChain)
+	identity, err := mtls.VerifyRawCertificateChain(b.cfg.Project, b.caCert, req.CertChain)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +385,7 @@ func (b *Babysitter) VerifyClientCertificate(_ context.Context, req *protos.Veri
 
 // VerifyServerCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) VerifyServerCertificate(_ context.Context, req *protos.VerifyServerCertificateRequest) (*protos.VerifyServerCertificateReply, error) {
-	actual, err := b.verifyCertificate(req.CertChain)
+	actual, err := mtls.VerifyRawCertificateChain(b.cfg.Project, b.caCert, req.CertChain)
 	if err != nil {
 		return nil, err
 	}
@@ -444,59 +398,6 @@ func (b *Babysitter) VerifyServerCertificate(_ context.Context, req *protos.Veri
 		return nil, fmt.Errorf("invalid server identity for target component %s: want %q, got %q", req.TargetComponent, expected, actual)
 	}
 	return &protos.VerifyServerCertificateReply{}, nil
-}
-
-// verifyCertificate verifies the given certificate chain, returning the
-// Kubernetes service account encoded in the chain.
-func (b *Babysitter) verifyCertificate(certChain [][]byte) (string, error) {
-	if b.caCertPool == nil {
-		return "", fmt.Errorf("internal error: cannot verify peer certificate without a non-empty CA cert")
-	}
-	if len(certChain) == 0 {
-		return "", errors.New("empty peer certificate")
-	}
-	var leaf *x509.Certificate
-	intermediates := x509.NewCertPool()
-	for i, certDER := range certChain {
-		cert, err := x509.ParseCertificate(certDER)
-		if err != nil {
-			return "", fmt.Errorf("bad peer certificate: %w", err)
-		}
-		if i == 0 {
-			leaf = cert
-		} else {
-			intermediates.AddCert(cert)
-		}
-	}
-	opts := x509.VerifyOptions{
-		Roots:         b.caCertPool,
-		Intermediates: intermediates,
-		CurrentTime:   time.Now(),
-	}
-	verifiedChains, err := leaf.Verify(opts)
-	if err != nil {
-		return "", fmt.Errorf("couldn't verify peer certificate chain: %w", err)
-	}
-	if len(verifiedChains) != 1 {
-		return "", fmt.Errorf("expected a single peer verified chain, got %d", len(verifiedChains))
-	}
-	if len(verifiedChains[0]) < 1 { // should never happen
-		return "", fmt.Errorf("empty peer verified chain")
-	}
-	verifiedLeaf := verifiedChains[0][0]
-	if len(verifiedLeaf.URIs) != 1 {
-		return "", fmt.Errorf("expected a single peer URI, got %d", len(leaf.URIs))
-	}
-
-	uri := verifiedLeaf.URIs[0]
-	if uri.Scheme != "spiffe" || uri.Host == "" || uri.Path == "" {
-		return "", fmt.Errorf(`invalid peer identity URI, want "spiffe://<host>/<service_account>", got %q`, uri)
-	}
-	expectedHost := fmt.Sprintf("%s.svc.id.goog", b.cfg.Project)
-	if uri.Host != expectedHost {
-		return "", fmt.Errorf("invalid host in peer identity, want %q, got %q", expectedHost, uri.Host)
-	}
-	return strings.TrimPrefix(uri.Path, "/"), nil
 }
 
 // HandleLogEntry implements the envelope.EnvelopeHandler interface.
