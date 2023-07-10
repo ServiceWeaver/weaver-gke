@@ -94,6 +94,9 @@ const (
 	managerKubeServiceAccount     = "manager"
 	spareKubeServiceAccount       = "spare"
 
+	// Name of the controller's public IP address.
+	controllerIPAddressName = "controller"
+
 	// Various settings for the Service Weaver's Certificate Authority.
 	caName         = "serviceweaver-ca"
 	caPoolName     = "serviceweaver-ca"
@@ -101,7 +104,7 @@ const (
 	caLocation     = ConfigClusterRegion
 
 	// Serving port for the nanny.
-	nannyServingPort = 80
+	nannyServingPort = 443
 
 	// Name for the "ServiceExports" CustomResourceDefinition on GKE.
 	serviceExportsResourceName = "serviceexports.net.gke.io"
@@ -459,7 +462,7 @@ func buildRolloutRequest(configCluster *ClusterInfo, cfg *config.GKEConfig) *con
 		// NOTE: distributor address must be resolveable from anywhere inside
 		// the project's VPC.
 		distributorAddr :=
-			fmt.Sprintf("https://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
+			fmt.Sprintf("https://distributor.%s.svc.%s-%s:%d", namespaceName, applicationClusterName, region, nannyServingPort)
 		req.Locations = append(req.Locations, &controller.RolloutRequest_Location{
 			Name:            region,
 			DistributorAddr: distributorAddr,
@@ -1665,7 +1668,42 @@ func ensureController(ctx context.Context, config CloudConfig, toolImageURL stri
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
 		return err
 	}
-	return ensureNannyService(ctx, cluster, name, name)
+	ipAddr, err := ensureControllerIPAddress(ctx, config)
+	if err != nil {
+		return err
+	}
+	return patchService(ctx, cluster, patchOptions{}, &apiv1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespaceName,
+		},
+		Spec: apiv1.ServiceSpec{
+			Type:           apiv1.ServiceTypeLoadBalancer,
+			LoadBalancerIP: ipAddr,
+			Selector: map[string]string{
+				"app": name,
+			},
+			Ports: []apiv1.ServicePort{
+				{
+					Port:       nannyServingPort,
+					TargetPort: intstr.FromInt(nannyServingPort),
+					Protocol:   apiv1.Protocol("TCP"),
+				},
+			},
+		},
+	})
+}
+
+// ensureControllerIPAddress ensures that a public static IP address has
+// been created for the controller in the given cloud project.
+func ensureControllerIPAddress(ctx context.Context, config CloudConfig) (string, error) {
+	// Ensure that the controller static IP address has been created.
+	return patchStaticIPAddress(ctx, config, patchOptions{}, ConfigClusterRegion, &computepb.Address{
+		Name:        ptrOf(controllerIPAddressName),
+		AddressType: ptrOf(computepb.Address_EXTERNAL.String()),
+		Purpose:     ptrOf(computepb.Address_UNDEFINED_PURPOSE.String()),
+		Description: ptrOf("Static IP address for the Service Weaver controller"),
+	})
 }
 
 // ensureDistributor ensures that a distributor is running in the given cluster.
@@ -1754,7 +1792,7 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 							Name:  name,
 							Image: toolImageURL,
 							Args: []string{
-								fmt.Sprintf("/weaver/weaver-gke %s --port=%d", name, nannyServingPort),
+								fmt.Sprintf("/weaver/weaver-gke %s", name),
 							},
 							Resources: apiv1.ResourceRequirements{
 								Requests: v1.ResourceList{
@@ -1832,7 +1870,7 @@ func ensureNannyService(ctx context.Context, cluster *ClusterInfo, svcName, targ
 			},
 			Ports: []apiv1.ServicePort{
 				{
-					Port:       80,
+					Port:       nannyServingPort,
 					TargetPort: intstr.FromInt(nannyServingPort),
 					Protocol:   apiv1.Protocol("TCP"),
 				},

@@ -272,7 +272,7 @@ func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) er
 	ctx, cancel := context.WithTimeout(ctx, deployTimeout)
 	defer cancel()
 	for r := retry.Begin(); r.Continue(ctx); {
-		err := protomsg.Call(ctx, protomsg.CallArgs{
+		err = protomsg.Call(ctx, protomsg.CallArgs{
 			Client:  controllerClient,
 			Addr:    controllerAddr,
 			URLPath: controller.RolloutURL,

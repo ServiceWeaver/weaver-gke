@@ -16,20 +16,14 @@ package main
 
 import (
 	"context"
-	"flag"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/gke"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
 )
 
-var (
-	distributorFlags = flag.NewFlagSet("distributor", flag.ContinueOnError)
-	distributorPort  = distributorFlags.Int("port", 0, "Distributor port")
-)
-
 var distributorCmd = tool.Command{
 	Name:        "distributor",
-	Flags:       distributorFlags,
+	Flags:       nil,
 	Description: "The GKE distributor",
 	Help: `Usage:
   weaver gke distributor
@@ -37,7 +31,7 @@ var distributorCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return gke.RunDistributor(ctx, *distributorPort)
+		return gke.RunDistributor(ctx)
 	},
 	Hidden: true,
 }

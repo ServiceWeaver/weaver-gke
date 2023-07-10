@@ -122,20 +122,30 @@ func runNannyServer(ctx context.Context, server *http.Server, lis net.Listener) 
 // Controller returns the HTTP address of the controller and an HTTP client
 // that can be used to contact the controller.
 func Controller(ctx context.Context, config CloudConfig) (string, *http.Client, error) {
-	configCluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
+	// Generate a new CA-signed certificate for the tool.
+	caCert, toolCert, toolKey, err := createToolCertificate(ctx, config)
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot create tool certificate: %w", err)
+	}
+	getSelfCert := func() ([]byte, []byte, error) {
+		return toolCert, toolKey, nil
+	}
+
+	ipAddr, err := ensureControllerIPAddress(ctx, config)
 	if err != nil {
 		return "", nil, err
 	}
-	addr := configCluster.apiRESTClient.Get().
-		Namespace(namespaceName).
-		Resource("services").
-		Name("controller").
-		SubResource("proxy").URL().String()
-	return addr, configCluster.apiRESTClient.Client, nil
+	addr := fmt.Sprintf("https://%s:%d", ipAddr, nannyServingPort)
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: mtls.ClientTLSConfig(config.Project, caCert, getSelfCert, "controller"),
+		},
+	}
+	return addr, client, nil
 }
 
 // RunController creates and runs a controller.
-func RunController(ctx context.Context, port int) error {
+func RunController(ctx context.Context) error {
 	id := uuid.New().String()
 	cluster, err := inClusterInfo(ctx)
 	if err != nil {
@@ -158,7 +168,7 @@ func RunController(ctx context.Context, port int) error {
 	}
 	defer cancel()
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", nannyServingPort))
 	if err != nil {
 		return err
 	}
@@ -190,18 +200,15 @@ func RunController(ctx context.Context, port int) error {
 	}
 
 	logger.Info("Controller listening", "address", lis.Addr())
-	// TODO(spetrovic): Enable TLS on the controller server. Use a certificate
-	// minted by the Certificate Authority service [1].
-	//
-	// [1]: https://cloud.google.com/certificate-authority-service/docs/requesting-certificates#gcloud_1
 	server := &http.Server{
-		Handler: mux,
+		Handler:   mux,
+		TLSConfig: mtls.ServerTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "tool"),
 	}
 	return runNannyServer(ctx, server, lis)
 }
 
 // RunDistributor creates and runs a distributor.
-func RunDistributor(ctx context.Context, port int) error {
+func RunDistributor(ctx context.Context) error {
 	id := uuid.New().String()
 	cluster, err := inClusterInfo(ctx)
 	if err != nil {
@@ -225,7 +232,7 @@ func RunDistributor(ctx context.Context, port int) error {
 	}
 	defer cancel()
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", nannyServingPort))
 	if err != nil {
 		return err
 	}
@@ -235,7 +242,7 @@ func RunDistributor(ctx context.Context, port int) error {
 	}
 
 	mux := http.NewServeMux()
-	managerAddr := fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
+	managerAddr := fmt.Sprintf("https://manager.%s.svc.%s-%s:%d", namespaceName, applicationClusterName, cluster.Region, nannyServingPort)
 	if _, err := distributor.Start(ctx,
 		mux,
 		s,
@@ -282,7 +289,7 @@ func RunDistributor(ctx context.Context, port int) error {
 }
 
 // RunManager creates and runs a manager.
-func RunManager(ctx context.Context, port int) error {
+func RunManager(ctx context.Context) error {
 	id := uuid.New().String()
 	cluster, err := inClusterInfo(ctx)
 	if err != nil {
@@ -306,7 +313,7 @@ func RunManager(ctx context.Context, port int) error {
 	}
 	defer cancel()
 
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", nannyServingPort))
 	if err != nil {
 		return err
 	}
@@ -319,7 +326,7 @@ func RunManager(ctx context.Context, port int) error {
 	m := manager.NewManager(ctx,
 		s,
 		logger,
-		fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region),
+		fmt.Sprintf("https://manager.%s.svc.%s-%s:%d", namespaceName, applicationClusterName, cluster.Region, nannyServingPort),
 		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
 			replicaSetIdentity, ok := cfg.ComponentIdentity[replicaSet]
 			if !ok { // should never happen
