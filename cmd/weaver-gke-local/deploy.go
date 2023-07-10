@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/local"
@@ -24,7 +25,10 @@ import (
 )
 
 var deploySpec = tool.DeploySpec{
-	Tool:           "weaver gke-local",
+	Tool: "weaver gke-local",
+	Controller: func(ctx context.Context, _ *config.GKEConfig) (string, *http.Client, error) {
+		return local.Controller(ctx)
+	},
 	PrepareRollout: local.PrepareRollout,
 	Source: func(context.Context, *config.GKEConfig) (logging.Source, error) {
 		return logging.FileSource(local.LogDir), nil

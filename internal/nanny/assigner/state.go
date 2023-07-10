@@ -73,7 +73,7 @@ func (a *Assigner) applyAppState(ctx context.Context, app string, apply func(*Ap
 
 // replicaSetInfoKey returns the key into which we persist the ReplicaSetInfo.
 func replicaSetInfoKey(rid *ReplicaSetId) string {
-	return store.ReplicaSetKey(rid.App, rid.Id, rid.Name, "replica_set_info")
+	return store.ReplicaSetKey(rid.Config, rid.Name, "replica_set_info")
 }
 
 // loadReplicaSetInfo loads a Kubernetes ReplicaSet's info from the store.

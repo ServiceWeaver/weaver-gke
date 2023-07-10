@@ -359,12 +359,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 	if err != nil {
 		return err
 	}
-	var annotations map[string]string
-	if cfg.Mtls {
-		annotations = map[string]string{
-			"security.cloud.google.com/use-workload-certificates": "",
-		}
-	}
+
 	return patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -386,7 +381,9 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 					Labels: map[string]string{
 						"app": name,
 					},
-					Annotations: annotations,
+					Annotations: map[string]string{
+						"security.cloud.google.com/use-workload-certificates": "",
+					},
 				},
 				Spec: v1.PodSpec{
 					PriorityClassName:  applicationPriorityClassName,

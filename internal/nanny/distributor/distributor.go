@@ -28,8 +28,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/profiling"
@@ -114,9 +114,9 @@ type Distributor struct {
 	ctx                   context.Context
 	store                 store.Store
 	logger                *slog.Logger
-	manager               clients.ManagerClient
+	manager               endpoints.Manager
 	region                string
-	babysitterConstructor func(addr string) clients.BabysitterClient
+	babysitterConstructor func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error)
 
 	// The following intervals determine how often the distributor performs
 	// various actions as part of its annealing loop. If an interval is 0, the
@@ -137,7 +137,7 @@ type Distributor struct {
 	getMetricCounts func(context.Context, string, ...string) ([]MetricCount, error)
 }
 
-var _ clients.DistributorClient = &Distributor{}
+var _ endpoints.Distributor = &Distributor{}
 
 // Start starts the distributor that manages the distribution of external traffic
 // across applications' versions inside a single deployment location.
@@ -145,9 +145,9 @@ func Start(ctx context.Context,
 	mux *http.ServeMux,
 	store store.Store,
 	logger *slog.Logger,
-	manager clients.ManagerClient,
+	manager endpoints.Manager,
 	region string,
-	babysitterConstructor func(addr string) clients.BabysitterClient,
+	babysitterConstructor func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error),
 	manageAppsInterval time.Duration, // disabled if 0
 	computeTrafficInterval time.Duration, // disabled if 0
 	applyTrafficInterval time.Duration, // disabled if 0
@@ -502,20 +502,23 @@ func (d *Distributor) RunProfiling(ctx context.Context, req *nanny.GetProfileReq
 	}
 
 	groups := make([][]func() ([]byte, error), 0, len(states.ReplicaSets))
-	for _, g := range states.ReplicaSets {
+	for _, rs := range states.ReplicaSets {
 		// Compute a randomly ordered list of healthy babysitters.
-		group := make([]func() ([]byte, error), 0, len(g.Pods))
-		for _, idx := range rand.Perm(len(g.Pods)) {
-			if g.Pods[idx].HealthStatus != protos.HealthStatus_HEALTHY {
+		replicaSets := make([]func() ([]byte, error), 0, len(rs.Pods))
+		for _, idx := range rand.Perm(len(rs.Pods)) {
+			if rs.Pods[idx].HealthStatus != protos.HealthStatus_HEALTHY {
 				continue
 			}
-			addr := g.Pods[idx].BabysitterAddr
-			group = append(group, func() ([]byte, error) {
+			addr := rs.Pods[idx].BabysitterAddr
+			replicaSets = append(replicaSets, func() ([]byte, error) {
 				preq := &protos.GetProfileRequest{
 					ProfileType:   req.ProfileType,
 					CpuDurationNs: req.CpuDurationNs,
 				}
-				babysitter := d.babysitterConstructor(addr)
+				babysitter, err := d.babysitterConstructor(rs.Config, rs.Name, addr)
+				if err != nil {
+					return nil, err
+				}
 				preply, err := babysitter.RunProfiling(ctx, preq)
 				if err != nil {
 					return nil, err
@@ -523,7 +526,7 @@ func (d *Distributor) RunProfiling(ctx context.Context, req *nanny.GetProfileReq
 				return preply.Data, nil
 			})
 		}
-		groups = append(groups, group)
+		groups = append(groups, replicaSets)
 	}
 	data, err := profiling.ProfileGroups(groups)
 	return &protos.GetProfileReply{Data: data}, err

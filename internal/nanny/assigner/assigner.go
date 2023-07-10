@@ -24,7 +24,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
+	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
@@ -105,7 +106,7 @@ type Assigner struct {
 	store                 store.Store
 	logger                *slog.Logger
 	algo                  Algorithm
-	babysitterConstructor func(addr string) clients.BabysitterClient
+	babysitterConstructor func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error)
 	replicaExists         func(ctx context.Context, podName string) (bool, error)
 
 	// replicas stores the set of all weavelets, grouped by replica set id and
@@ -115,10 +116,6 @@ type Assigner struct {
 }
 
 // replicaSetId uniquely identifies a Kubernetes ReplicaSet.
-//
-// NOTE that replicaSetId is a clone of ReplicaSetId, but we duplicate the
-// definition here in a plain struct so that we can use replicaSetIds as keys
-// in maps.
 type replicaSetId struct {
 	app  string
 	id   string
@@ -137,7 +134,7 @@ func NewAssigner(
 	store store.Store,
 	logger *slog.Logger,
 	algo Algorithm,
-	babysitterConstructor func(addr string) clients.BabysitterClient,
+	babysitterConstructor func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error),
 	replicaExists func(context.Context, string) (bool, error)) *Assigner {
 	assigner := &Assigner{
 		ctx:                   ctx,
@@ -177,7 +174,8 @@ func (a *Assigner) registerApp(ctx context.Context, app string) error {
 // registerReplicaSet registers the provided Kubernetes ReplicaSet in the
 // appropriate app's state.
 func (a *Assigner) registerReplicaSet(ctx context.Context, rid *ReplicaSetId) error {
-	_, _, err := a.applyAppState(ctx, rid.App, func(state *AppState) bool {
+	appName := rid.Config.Deployment.App.Name
+	_, _, err := a.applyAppState(ctx, appName, func(state *AppState) bool {
 		for _, existing := range state.ReplicaSetIds {
 			if proto.Equal(rid, existing) {
 				return false
@@ -195,7 +193,6 @@ func (a *Assigner) registerReplicaSet(ctx context.Context, rid *ReplicaSetId) er
 // RegisterActiveComponent registers the given component has been activated. It
 // returns the name of the Kubernetes ReplicaSet that should host the component.
 func (a *Assigner) RegisterActiveComponent(ctx context.Context, req *nanny.ActivateComponentRequest) error {
-	id := req.Config.Deployment.Id
 	rsName := nanny.ReplicaSetForComponent(req.Component, req.Config)
 
 	var state AppVersionState
@@ -217,8 +214,8 @@ func (a *Assigner) RegisterActiveComponent(ctx context.Context, req *nanny.Activ
 
 	// Track the key in the store under histKey.
 	appName := req.Config.Deployment.App.Name
-	key := store.DeploymentKey(appName, id, appVersionStateKey)
-	histKey := store.DeploymentKey(appName, id, store.HistoryKey)
+	key := store.DeploymentKey(req.Config, appVersionStateKey)
+	histKey := store.DeploymentKey(req.Config, store.HistoryKey)
 	err := store.AddToSet(a.ctx, a.store, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		return fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)
@@ -232,7 +229,7 @@ func (a *Assigner) RegisterActiveComponent(ctx context.Context, req *nanny.Activ
 	if err := a.registerApp(ctx, appName); err != nil {
 		return err
 	}
-	rid := &ReplicaSetId{App: appName, Id: id, Name: rsName}
+	rid := &ReplicaSetId{Config: req.Config, Name: rsName}
 	if err := a.registerReplicaSet(ctx, rid); err != nil {
 		return err
 	}
@@ -262,8 +259,6 @@ func (a *Assigner) RegisterActiveComponent(ctx context.Context, req *nanny.Activ
 }
 
 func (a *Assigner) RegisterReplica(ctx context.Context, req *nanny.RegisterReplicaRequest) error {
-	id := req.Config.Deployment.Id
-
 	var state AppVersionState
 	edit := func(version *store.Version) error {
 		rs := findOrCreateReplicaSet(&state, req.ReplicaSet)
@@ -280,8 +275,8 @@ func (a *Assigner) RegisterReplica(ctx context.Context, req *nanny.RegisterRepli
 
 	// Track the key in the store under histKey.
 	appName := req.Config.Deployment.App.Name
-	key := store.DeploymentKey(appName, id, appVersionStateKey)
-	histKey := store.DeploymentKey(appName, id, store.HistoryKey)
+	key := store.DeploymentKey(req.Config, appVersionStateKey)
+	histKey := store.DeploymentKey(req.Config, store.HistoryKey)
 	err := store.AddToSet(a.ctx, a.store, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		return fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)
@@ -295,11 +290,7 @@ func (a *Assigner) RegisterReplica(ctx context.Context, req *nanny.RegisterRepli
 	if err := a.registerApp(ctx, appName); err != nil {
 		return err
 	}
-	rid := &ReplicaSetId{
-		App:  appName,
-		Id:   id,
-		Name: req.ReplicaSet,
-	}
+	rid := &ReplicaSetId{Config: req.Config, Name: req.ReplicaSet}
 	if err := a.registerReplicaSet(ctx, rid); err != nil {
 		return err
 	}
@@ -328,9 +319,6 @@ func (a *Assigner) RegisterReplica(ctx context.Context, req *nanny.RegisterRepli
 }
 
 func (a *Assigner) RegisterListener(ctx context.Context, req *nanny.ExportListenerRequest) error {
-	app := req.Config.Deployment.App.Name
-	id := req.Config.Deployment.Id
-
 	var state AppVersionState
 	edit := func(version *store.Version) error {
 		rs := findOrCreateReplicaSet(&state, req.ReplicaSet)
@@ -344,8 +332,8 @@ func (a *Assigner) RegisterListener(ctx context.Context, req *nanny.ExportListen
 	}
 
 	// Track the key in the store under histKey.
-	key := store.DeploymentKey(app, id, appVersionStateKey)
-	histKey := store.DeploymentKey(app, id, store.HistoryKey)
+	key := store.DeploymentKey(req.Config, appVersionStateKey)
+	histKey := store.DeploymentKey(req.Config, store.HistoryKey)
 	err := store.AddToSet(a.ctx, a.store, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		return fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)
@@ -356,14 +344,10 @@ func (a *Assigner) RegisterListener(ctx context.Context, req *nanny.ExportListen
 	}
 
 	// Register the app and ReplicaSet, if needed.
-	if err := a.registerApp(ctx, app); err != nil {
+	if err := a.registerApp(ctx, req.Config.Deployment.App.Name); err != nil {
 		return err
 	}
-	rid := &ReplicaSetId{
-		App:  app,
-		Id:   id,
-		Name: req.ReplicaSet,
-	}
+	rid := &ReplicaSetId{Config: req.Config, Name: req.ReplicaSet}
 	if err := a.registerReplicaSet(ctx, rid); err != nil {
 		return err
 	}
@@ -384,11 +368,11 @@ func (a *Assigner) RegisterListener(ctx context.Context, req *nanny.ExportListen
 
 // UnregisterReplicaSets unregisters all Kubernetes ReplicaSets for the given
 // application versions.
-func (a *Assigner) UnregisterReplicaSets(ctx context.Context, app string, versions []string) error {
+func (a *Assigner) UnregisterReplicaSets(ctx context.Context, app string, versions []*config.GKEConfig) error {
 	// TODO(mwhittaker): Make sure this doesn't have races.
 	versionSet := map[string]bool{}
 	for _, version := range versions {
-		versionSet[version] = true
+		versionSet[version.Deployment.Id] = true
 	}
 
 	// Compute the ReplicaSets we should delete and the ReplicaSets we should
@@ -403,7 +387,7 @@ func (a *Assigner) UnregisterReplicaSets(ctx context.Context, app string, versio
 	var toDelete []*ReplicaSetId
 	var toKeep []*ReplicaSetId
 	for _, rid := range appState.ReplicaSetIds {
-		if versionSet[rid.Id] {
+		if versionSet[rid.Config.Deployment.Id] {
 			toDelete = append(toDelete, rid)
 		} else {
 			toKeep = append(toKeep, rid)
@@ -412,7 +396,7 @@ func (a *Assigner) UnregisterReplicaSets(ctx context.Context, app string, versio
 
 	// Delete the corresponding ReplicaSetInfos and RoutingInfos.
 	for _, rid := range toDelete {
-		key := store.ReplicaSetKey(rid.App, rid.Id, rid.Name, routingInfoKey)
+		key := store.ReplicaSetKey(rid.Config, rid.Name, routingInfoKey)
 		if err := a.store.Delete(ctx, key); err != nil {
 			return fmt.Errorf("delete routing info %v: %w", rid, err)
 		}
@@ -453,7 +437,7 @@ func (a *Assigner) getRoutingInfo(req *nanny.GetRoutingRequest) (*nanny.GetRouti
 
 	// Fetch routing infos for the ReplicaSet from the store.
 	info := &VersionedRoutingInfo{}
-	key := store.ReplicaSetKey(req.Config.Deployment.App.Name, req.Config.Deployment.Id, rsName, routingInfoKey)
+	key := store.ReplicaSetKey(req.Config, rsName, routingInfoKey)
 	var v *store.Version
 	if req.Version != "" {
 		v = &store.Version{Opaque: req.Version}
@@ -496,8 +480,6 @@ func (a *Assigner) GetComponentsToStart(req *nanny.GetComponentsRequest) (
 
 func (a *Assigner) getComponentsToStart(req *nanny.GetComponentsRequest) (
 	*nanny.GetComponentsReply, error) {
-	id := req.Config.Deployment.Id
-
 	// Fetch components to start from the store.
 	var v *store.Version
 	if req.Version != "" {
@@ -505,7 +487,7 @@ func (a *Assigner) getComponentsToStart(req *nanny.GetComponentsRequest) (
 	}
 
 	var state AppVersionState
-	key := store.DeploymentKey(req.Config.Deployment.App.Name, id, appVersionStateKey)
+	key := store.DeploymentKey(req.Config, appVersionStateKey)
 	newVersion, err := store.GetProto(a.ctx, a.store, key, &state, v)
 	if err != nil {
 		return nil, err
@@ -537,13 +519,13 @@ func (a *Assigner) GetReplicaSetState(ctx context.Context, req *nanny.GetReplica
 	var sets []*nanny.ReplicaSetState_ReplicaSet
 	var errors []string
 	for _, app := range state.Applications {
-		ps, err := a.getReplicaSets(ctx, app, "" /*appVersion*/)
+		rss, err := a.getReplicaSets(ctx, app, "" /*appVersion*/)
 		if err != nil {
 			errors = append(errors, err.Error())
 			continue
 		}
-		sets = append(sets, ps.ReplicaSets...)
-		errors = append(errors, ps.Errors...)
+		sets = append(sets, rss.ReplicaSets...)
+		errors = append(errors, rss.Errors...)
 	}
 	if sets == nil && errors != nil {
 		// No results but have errors: that's an error.
@@ -574,16 +556,20 @@ func (a *Assigner) getReplicaSets(ctx context.Context, appName, appVersion strin
 	// ReplicaSets will be matched.
 	ridsByVersion := map[string][]*ReplicaSetId{}
 	for _, rid := range state.ReplicaSetIds {
-		if appVersion != "" && rid.Id != appVersion { // mismatched app version
+		version := rid.Config.Deployment.Id
+		if appVersion != "" && version != appVersion { // mismatched app version
 			continue
 		}
-		ridsByVersion[rid.Id] = append(ridsByVersion[rid.Id], rid)
+		ridsByVersion[version] = append(ridsByVersion[version], rid)
 	}
 
 	var sets []*nanny.ReplicaSetState_ReplicaSet
 	var errors []string
-	for vid, rids := range ridsByVersion {
-		componentsByReplicaSet, err := a.components(ctx, appName, vid)
+	for _, rids := range ridsByVersion {
+		if len(rids) == 0 {
+			continue
+		}
+		componentsByReplicaSet, err := a.components(ctx, rids[0].Config)
 		if err != nil {
 			return nil, err
 		}
@@ -612,6 +598,7 @@ func (a *Assigner) getReplicaSets(ctx context.Context, appName, appVersion strin
 			}
 			sets = append(sets, &nanny.ReplicaSetState_ReplicaSet{
 				Name:       rid.Name,
+				Config:     rid.Config,
 				Pods:       pods,
 				Components: components,
 				Listeners:  rs.Listeners,
@@ -631,12 +618,14 @@ func (a *Assigner) getReplicaSets(ctx context.Context, appName, appVersion strin
 
 // components returns the names of the active components in the given deployment,
 // grouped by the ReplicaSets that host them.
-func (a *Assigner) components(ctx context.Context, app, vid string) (map[string][]string, error) {
+func (a *Assigner) components(ctx context.Context, cfg *config.GKEConfig) (map[string][]string, error) {
+	dep := cfg.Deployment
+
 	// Load the AppVersionState.
-	key := store.DeploymentKey(app, vid, appVersionStateKey)
+	key := store.DeploymentKey(cfg, appVersionStateKey)
 	var state AppVersionState
 	if _, err := store.GetProto(ctx, a.store, key, &state, nil); err != nil {
-		return nil, fmt.Errorf("load app %q version %q state: %w", app, vid, err)
+		return nil, fmt.Errorf("load app %q version %q state: %w", dep.App.Name, dep.Id, err)
 	}
 
 	// Massage the AppVersionState.
@@ -649,7 +638,7 @@ func (a *Assigner) components(ctx context.Context, app, vid string) (map[string]
 
 // OnNewLoadReport handles a new load report received from a replica.
 func (a *Assigner) OnNewLoadReport(ctx context.Context, req *nanny.LoadReport) error {
-	rid := &ReplicaSetId{App: req.Config.Deployment.App.Name, Id: req.Config.Deployment.Id, Name: req.ReplicaSet}
+	rid := &ReplicaSetId{Config: req.Config, Name: req.ReplicaSet}
 	var rs ReplicaSetInfo
 	_, err := store.UpdateProto(ctx, a.store, replicaSetInfoKey(rid), &rs, func(version *store.Version) error {
 		if *version == store.Missing {
@@ -795,8 +784,8 @@ func (a *Assigner) healthyReplicas(rid *ReplicaSetId, rs *ReplicaSetInfo) ([]str
 }
 
 func (a *Assigner) writeRoutingInfoInStore(rid *ReplicaSetId, info *VersionedRoutingInfo) error {
-	key := store.ReplicaSetKey(rid.App, rid.Id, rid.Name, routingInfoKey)
-	histKey := store.DeploymentKey(rid.App, rid.Id, store.HistoryKey)
+	key := store.ReplicaSetKey(rid.Config, rid.Name, routingInfoKey)
+	histKey := store.DeploymentKey(rid.Config, store.HistoryKey)
 	err := store.AddToSet(a.ctx, a.store, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		return fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)
@@ -828,7 +817,7 @@ func (a *Assigner) anneal() error {
 	// assigners from trying to write to the store at the same time.
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	pick := func() time.Duration {
-		const i = float64(clients.LoadReportInterval)
+		const i = float64(endpoints.LoadReportInterval)
 		const low = int64(i * 1.2)
 		const high = int64(i * 1.4)
 		return time.Duration(r.Int63n(high-low+1) + low)
@@ -1052,9 +1041,9 @@ func (a *Assigner) healthCheck(ctx context.Context, rid *ReplicaSetId, replica *
 	defer ticker.Stop()
 
 	req := &protos.GetHealthRequest{}
-	babysitter := a.babysitterConstructor(babysitterAddr)
-	if babysitter == nil {
-		return fmt.Errorf("nil babysitter: %s", babysitterAddr)
+	babysitter, err := a.babysitterConstructor(rid.Config, rid.Name, babysitterAddr)
+	if err != nil {
+		return fmt.Errorf("cannot create babysitter: %s", babysitterAddr)
 	}
 
 	for {
@@ -1102,7 +1091,8 @@ func (a *Assigner) healthCheck(ctx context.Context, rid *ReplicaSetId, replica *
 
 // unprotoRid converts a ReplicaSetId to a replicaSetId.
 func unprotoRid(rid *ReplicaSetId) replicaSetId {
-	return replicaSetId{app: rid.App, id: rid.Id, name: rid.Name}
+	dep := rid.Config.Deployment
+	return replicaSetId{app: dep.App.Name, id: dep.Id, name: rid.Name}
 }
 
 func findOrCreateReplicaSet(state *AppVersionState, replicaSet string) *ReplicaSetState {

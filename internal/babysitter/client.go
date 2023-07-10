@@ -16,28 +16,42 @@ package babysitter
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
 // HttpClient is a Client that executes requests over HTTP.
 type HttpClient struct {
-	Addr string // babysitter address
+	Addr      string      // babysitter address
+	TLSConfig *tls.Config // TLS config, possibly nil.
 }
 
 var (
-	_ clients.BabysitterClient = &Babysitter{}
-	_ clients.BabysitterClient = &HttpClient{}
+	_ endpoints.Babysitter = &Babysitter{}
+	_ endpoints.Babysitter = &HttpClient{}
 )
 
-// RunProfiling implements the clients.BabysitterClient interface.
+// client returns the HTTP client to use to make requests.
+func (h *HttpClient) client() *http.Client {
+	if h.TLSConfig == nil {
+		return http.DefaultClient
+	}
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: h.TLSConfig,
+		},
+	}
+}
+
+// RunProfiling implements the endpoints.Babysitter interface.
 func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
 	reply := &protos.GetProfileReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  http.DefaultClient,
+		Client:  h.client(),
 		Addr:    h.Addr,
 		URLPath: runProfilingURL,
 		Request: req,
@@ -46,11 +60,11 @@ func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.GetProfileReq
 	return reply, err
 }
 
-// CheckHealth implements the clients.BabysitterClient interface.
+// CheckHealth implements the endpoints.Babysitter interface.
 func (h *HttpClient) CheckHealth(ctx context.Context, req *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
 	reply := &protos.GetHealthReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  http.DefaultClient,
+		Client:  h.client(),
 		Addr:    h.Addr,
 		URLPath: healthURL,
 		Request: req,

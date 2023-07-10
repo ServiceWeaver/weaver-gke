@@ -25,27 +25,131 @@ import (
 	"fmt"
 	"math/big"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
 )
 
-// generateCACert generates a self-signed CA certificate and a corresponding
-// private key.
-//
-// The returned certificate has a one-year validity and is attributed to a fake
-// authority. As such, it should only ever be used on a temporary basis and for
-// in-process certificate signing.
-func generateCACert() (*x509.Certificate, crypto.PrivateKey, error) {
-	return generateLeafCert(true /*isCA*/, "ca")
+// ensureCACert ensures that a CA certificate and the corresponding private key
+// have been generated and stored in caCertFile and caKeyFile, respectively.
+// If those files already exists, it simply reads the certificates from them.
+func ensureCACert() (*x509.Certificate, crypto.PrivateKey, error) {
+	if err := os.MkdirAll(filepath.Dir(caCertFile), 0700); err != nil {
+		return nil, nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(caKeyFile), 0700); err != nil {
+		return nil, nil, err
+	}
+	exists := func(file string) bool {
+		_, err := os.Stat(file)
+		return err == nil
+	}
+	if exists(caCertFile) && exists(caKeyFile) {
+		// Files exist: read from them.
+		certPEM, err := os.ReadFile(caCertFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		keyPEM, err := os.ReadFile(caKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		return pemDecode(certPEM, keyPEM)
+	}
+
+	// Generate a new cert and write it to a file.
+	cert, key, err := generateLeafCert(true /*isCA*/, "ca")
+	if err != nil {
+		return nil, nil, err
+	}
+	certPEM, keyPEM, err := pemEncode(cert, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := os.WriteFile(caCertFile, certPEM, 0755); err != nil {
+		return nil, nil, err
+	}
+	if err := os.WriteFile(caKeyFile, keyPEM, 0600); err != nil {
+		return nil, nil, err
+	}
+	return cert, key, nil
 }
 
-// GenerateSignedCert generates a certificate for the given DNS names, signed
+// ensureToolCert ensures that a tool certificate and the corresponding private
+// key have been generated and stored in toolCertFile and toolKeyFile,
+// respectively. If those files already exists, it simply reads the certificates
+// from them.
+func ensureToolCert(caCert *x509.Certificate, caKey crypto.PrivateKey) ([]byte, []byte, error) {
+	if err := os.MkdirAll(filepath.Dir(toolCertFile), 0700); err != nil {
+		return nil, nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(toolKeyFile), 0700); err != nil {
+		return nil, nil, err
+	}
+	exists := func(file string) bool {
+		_, err := os.Stat(file)
+		return err == nil
+	}
+	if exists(toolCertFile) && exists(toolKeyFile) {
+		// Files exist: read from them.
+		certPEM, err := os.ReadFile(toolCertFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		keyPEM, err := os.ReadFile(toolKeyFile)
+		if err != nil {
+			return nil, nil, err
+		}
+		return certPEM, keyPEM, nil
+	}
+	// Generate a new cert and write it to a file.
+	cert, key, err := generateSignedCert(caCert, caKey, "tool")
+	if err != nil {
+		return nil, nil, nil
+	}
+	certPEM, keyPEM, err := pemEncode(cert, key)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := os.WriteFile(toolCertFile, certPEM, 0755); err != nil {
+		return nil, nil, err
+	}
+	if err := os.WriteFile(toolKeyFile, keyPEM, 0400); err != nil {
+		return nil, nil, err
+	}
+	return certPEM, keyPEM, nil
+}
+
+// generateNannyCert generates a signed nanny certificate with the given name.
+func generateNannyCert(name string) (*x509.Certificate, []byte, []byte, error) {
+	// Load the CA certificate and private key from the local files.
+	caCert, caKey, err := ensureCACert()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("cannot get CA certificate and key: %w", err)
+	}
+
+	// Generate the certificate with the given name.
+	cert, key, err := generateSignedCert(caCert, caKey, name)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("cannot generate a cert for %q: %w", name, err)
+	}
+
+	// Create the TLS certificate.
+	certPEM, keyPEM, err := pemEncode(cert, key)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("cannot PEM-encode a cert for %q: %w", name, err)
+	}
+	return caCert, certPEM, keyPEM, nil
+}
+
+// generateSignedCert generates a certificate for the given DNS names, signed
 // by the given Certificate Authority, and a corresponding private key.
 //
 // The returned certificate has a one-year validity and should only ever
 // be used on a temporary basis.
-func generateSignedCert(ca *x509.Certificate, caKey crypto.PrivateKey, names ...string) (*x509.Certificate, crypto.PrivateKey, error) {
+func generateSignedCert(ca *x509.Certificate, caKey crypto.PrivateKey, name string) (*x509.Certificate, crypto.PrivateKey, error) {
 	// Create an unsigned certificate.
-	unsigned, certKey, err := generateLeafCert(false /*isCA*/, names...)
+	unsigned, certKey, err := generateLeafCert(false /*isCA*/, name)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -60,7 +164,7 @@ func generateSignedCert(ca *x509.Certificate, caKey crypto.PrivateKey, names ...
 	return cert, certKey, nil
 }
 
-func generateLeafCert(isCA bool, names ...string) (*x509.Certificate, crypto.PrivateKey, error) {
+func generateLeafCert(isCA bool, name string) (*x509.Certificate, crypto.PrivateKey, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		return nil, nil, err
@@ -72,13 +176,10 @@ func generateLeafCert(isCA bool, names ...string) (*x509.Certificate, crypto.Pri
 		return nil, nil, err
 	}
 
-	uris := make([]*url.URL, len(names))
-	for i, name := range names {
-		// Match the URI GKE uses.
-		uris[i], err = url.Parse(fmt.Sprintf("spiffe://%s.svc.id.goog/%s", projectName, name))
-		if err != nil {
-			return nil, nil, err
-		}
+	// NOTE: We match the URI that GKE uses.
+	uri, err := url.Parse(fmt.Sprintf("spiffe://%s.svc.id.goog/ns/serviceweaver/sa/%s", projectName, name))
+	if err != nil {
+		return nil, nil, err
 	}
 
 	keyUsage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
@@ -97,7 +198,7 @@ func generateLeafCert(isCA bool, names ...string) (*x509.Certificate, crypto.Pri
 		},
 		BasicConstraintsValid: true,
 		IsCA:                  isCA,
-		URIs:                  uris,
+		URIs:                  []*url.URL{uri},
 	}
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
@@ -132,4 +233,26 @@ func pemEncode(cert *x509.Certificate, key crypto.PrivateKey) ([]byte, []byte, e
 		return nil, nil, err
 	}
 	return certOut.Bytes(), keyOut.Bytes(), nil
+}
+
+// pemDecode returns the certificate and the private key encoded in the given
+// PEM blocks.
+func pemDecode(certPEM, keyPEM []byte) (*x509.Certificate, crypto.PrivateKey, error) {
+	certDER, _ := pem.Decode(certPEM)
+	if certDER == nil {
+		return nil, nil, fmt.Errorf("cannot decode certificate DER block from PEM data")
+	}
+	keyDER, _ := pem.Decode(keyPEM)
+	if keyDER == nil {
+		return nil, nil, fmt.Errorf("cannot decode private key DER block from PEM data")
+	}
+	cert, err := x509.ParseCertificate(certDER.Bytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	key, err := x509.ParsePKCS8PrivateKey(keyDER.Bytes)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cert, key, nil
 }

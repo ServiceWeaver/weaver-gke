@@ -16,7 +16,21 @@ package store
 
 import (
 	"testing"
+
+	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
+
+func cfg(app, version string) *config.GKEConfig {
+	return &config.GKEConfig{
+		Deployment: &protos.Deployment{
+			App: &protos.AppConfig{
+				Name: app,
+			},
+			Id: version,
+		},
+	}
+}
 
 func TestKeys(t *testing.T) {
 	const id = "11111111-1111-1111-1111-111111111111"
@@ -37,12 +51,12 @@ func TestKeys(t *testing.T) {
 		},
 		{
 			name: "Deployment",
-			got:  DeploymentKey("collatz", id, "key"),
+			got:  DeploymentKey(cfg("collatz", id), "key"),
 			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/key",
 		},
 		{
 			name: "ReplicaSet",
-			got:  ReplicaSetKey("collatz", id, "OddEven", "key"),
+			got:  ReplicaSetKey(cfg("collatz", id), "OddEven", "key"),
 			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/replica_set/OddEven/key",
 		},
 	}

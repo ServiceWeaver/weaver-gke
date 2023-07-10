@@ -22,32 +22,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime"
-	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"golang.org/x/exp/slog"
-)
-
-const (
-	// URL suffixes for various HTTP endpoints exported by the manager.
-	deployURL               = "/manager/deploy"
-	stopURL                 = "/manager/stop"
-	deleteURL               = "/manager/delete"
-	getReplicaSetStateURL   = "/manager/get_replica_set_state"
-	activateComponentURL    = "/manager/activate_component"
-	registerReplicaURL      = "/manager/register_replica"
-	reportLoadURL           = "/manager/report_load"
-	getListenerAddressURL   = "/manager/get_listener_address"
-	exportListenerURL       = "/manager/export_listener"
-	getRoutingInfoURL       = "/manager/get_routing_info"
-	getComponentsToStartURL = "/manager/get_components_to_start"
 )
 
 // manager manages applications' deployments (e.g., starting Service Weaver groups)
@@ -72,28 +55,27 @@ type manager struct {
 	startReplicaSet func(context.Context, *config.GKEConfig, string) error
 
 	// Stops all the groups for a list of applications versions.
-	stopAppVersions func(ctx context.Context, app string, versions []string) error
+	stopAppVersions func(ctx context.Context, app string, versions []*config.GKEConfig) error
 
 	// Delete all the groups for a list of applications versions.
-	deleteAppVersions func(ctx context.Context, app string, versions []string) error
+	deleteAppVersions func(ctx context.Context, app string, versions []*config.GKEConfig) error
 }
 
-var _ clients.ManagerClient = &manager{}
+var _ endpoints.Manager = &manager{}
 
-// Start starts the manager service and registers its handlers with the given request multiplexer.
-func Start(ctx context.Context,
-	mux *http.ServeMux,
+// NewManager returns a new manager instance.
+func NewManager(ctx context.Context,
 	store store.Store,
 	logger *slog.Logger,
 	dialAddr string,
-	babysitterConstructor func(string) clients.BabysitterClient,
+	babysitterConstructor func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error),
 	replicaExists func(context.Context, string) (bool, error),
 	getListenerPort func(context.Context, *config.GKEConfig, string, string) (int, error),
 	exportListener func(context.Context, *config.GKEConfig, string, *nanny.Listener) (*protos.ExportListenerReply, error),
 	startReplicaSet func(context.Context, *config.GKEConfig, string) error,
-	stopAppVersions func(context.Context, string, []string) error,
-	deleteAppVersions func(context.Context, string, []string) error) error {
-	m := &manager{
+	stopAppVersions func(context.Context, string, []*config.GKEConfig) error,
+	deleteAppVersions func(context.Context, string, []*config.GKEConfig) error) endpoints.Manager {
+	return &manager{
 		ctx:               ctx,
 		store:             store,
 		assigner:          assigner.NewAssigner(ctx, store, logger, assigner.EqualDistributionAlgorithm, babysitterConstructor, replicaExists),
@@ -105,25 +87,9 @@ func Start(ctx context.Context,
 		stopAppVersions:   stopAppVersions,
 		deleteAppVersions: deleteAppVersions,
 	}
-	m.addHandlers(mux) // keeps a ref on "manager"
-	return nil
 }
 
-// addHandlers adds network handlers exported by this manager.
-func (m *manager) addHandlers(mux *http.ServeMux) {
-	mux.HandleFunc(deployURL, protomsg.HandlerDo(m.logger, m.Deploy))
-	mux.HandleFunc(stopURL, protomsg.HandlerDo(m.logger, m.Stop))
-	mux.HandleFunc(deleteURL, protomsg.HandlerDo(m.logger, m.Delete))
-	mux.HandleFunc(getReplicaSetStateURL, protomsg.HandlerFunc(m.logger, m.GetReplicaSetState))
-	mux.HandleFunc(activateComponentURL, protomsg.HandlerDo(m.logger, m.ActivateComponent))
-	mux.HandleFunc(registerReplicaURL, protomsg.HandlerDo(m.logger, m.RegisterReplica))
-	mux.HandleFunc(reportLoadURL, protomsg.HandlerDo(m.logger, m.ReportLoad))
-	mux.HandleFunc(getListenerAddressURL, protomsg.HandlerFunc(m.logger, m.GetListenerAddress))
-	mux.HandleFunc(exportListenerURL, protomsg.HandlerFunc(m.logger, m.ExportListener))
-	mux.HandleFunc(getRoutingInfoURL, protomsg.HandlerFunc(m.logger, m.GetRoutingInfo))
-	mux.HandleFunc(getComponentsToStartURL, protomsg.HandlerFunc(m.logger, m.GetComponentsToStart))
-}
-
+// Deploy deploys a new version of the given application.
 func (m *manager) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRequest) error {
 	versionStrs := make([]string, len(req.Versions))
 	for i, cfg := range req.Versions {
@@ -195,7 +161,7 @@ func (m *manager) stop(req *nanny.ApplicationStopRequest) error {
 	// gke-local deployer.
 	var errs []error
 	for _, version := range req.Versions {
-		if err := m.gcVersion(m.ctx, req.AppName, version); err != nil {
+		if err := m.gcVersion(m.ctx, version); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -203,17 +169,17 @@ func (m *manager) stop(req *nanny.ApplicationStopRequest) error {
 }
 
 // gcVersion garbage collects all the store entries for the provided version.
-func (m *manager) gcVersion(_ context.Context, app, version string) error {
+func (m *manager) gcVersion(_ context.Context, cfg *config.GKEConfig) error {
 	// Get all keys recorded under histKey in the store.
-	histKey := store.DeploymentKey(app, version, store.HistoryKey)
+	histKey := store.DeploymentKey(cfg, store.HistoryKey)
 	keys, _, err := store.GetSet(m.ctx, m.store, histKey, nil)
 	if err != nil {
-		return fmt.Errorf("cannot get history for %q: %v", version, err)
+		return fmt.Errorf("cannot get history for %q: %v", cfg.Deployment.Id, err)
 	}
 
 	for _, key := range keys {
 		if err := m.store.Delete(m.ctx, key); err != nil {
-			return fmt.Errorf("cannot delete key %q for %q: %v", key, version, err)
+			return fmt.Errorf("cannot delete key %q for %q: %v", key, cfg.Deployment.Id, err)
 		}
 	}
 
@@ -221,7 +187,7 @@ func (m *manager) gcVersion(_ context.Context, app, version string) error {
 	// the history last so that if any previous delete fails, the history
 	// remains.
 	if err := m.store.Delete(m.ctx, histKey); err != nil {
-		return fmt.Errorf("cannot delete key %q for %q: %v", histKey, version, err)
+		return fmt.Errorf("cannot delete key %q for %q: %v", histKey, cfg.Deployment.Id, err)
 	}
 	return nil
 }

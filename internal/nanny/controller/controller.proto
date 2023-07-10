@@ -28,9 +28,6 @@ message RolloutRequest {
   // Deployment information for the application.
   config.GKEConfig config = 1;
 
-  // Address of the nanny in charge of the rollout.
-  string NannyAddr = 2;
-
   // RolloutRequest_Location stores information about the location where
   // the application is being rolled out.
   message Location {

@@ -37,11 +37,7 @@ var controllerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		opts := gke.NannyOptions{
-			StartController: true,
-			Port:            *controllerPort,
-		}
-		return gke.RunNanny(ctx, opts)
+		return gke.RunController(ctx, *controllerPort)
 	},
 	Hidden: true,
 }

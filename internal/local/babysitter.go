@@ -16,13 +16,18 @@ package local
 
 import (
 	"context"
+	"crypto"
 	"crypto/x509"
 	"fmt"
+	"net"
+	"net/http"
+	"os"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
+	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
@@ -31,8 +36,8 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// createBabysitter creates a babysitter in a gke-local deployment.
-func createBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet string, logDir string, caCert *x509.Certificate, selfCertPEM, selfKeyPEM []byte) (*babysitter.Babysitter, error) {
+// startBabysitter creates and starts a babysitter in a gke-local deployment.
+func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet string, logDir string, caCert *x509.Certificate, caKey crypto.PrivateKey) (*babysitter.Babysitter, error) {
 	podName := uuid.New().String()
 	ls, err := logging.NewFileStore(logDir)
 	if err != nil {
@@ -64,9 +69,52 @@ func createBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet str
 		}
 		return nil
 	}
+
+	// Generate a self certificate, used by the weavelet to communicate with its
+	// peers, as well as the babysitter to communicate with the manager.
+	var selfCertPEM, selfKeyPEM []byte
+	selfIdentity, ok := cfg.ComponentIdentity[replicaSet]
+	if !ok { // should never happen
+		return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
+	}
+	selfCert, selfKey, err := generateSignedCert(caCert, caKey, selfIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("cannot generate self cert: %w", err)
+	}
+	selfCertPEM, selfKeyPEM, err = pemEncode(selfCert, selfKey)
+	if err != nil {
+		return nil, fmt.Errorf("cannot PEM-encode cert: %w", err)
+	}
 	selfCertGetter := func() ([]byte, []byte, error) {
 		return selfCertPEM, selfKeyPEM, nil
 	}
-	m := &manager.HttpClient{Addr: cfg.ManagerAddr} // connection to the manager
-	return babysitter.NewBabysitter(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, m, caCert, selfCertGetter, logSaver, traceSaver, metricExporter)
+
+	// Connection to the manager.
+	m := &manager.HttpClient{
+		Addr:      cfg.ManagerAddr,
+		TLSConfig: mtls.ClientTLSConfig(cfg.Project, caCert, selfCertGetter, "manager"),
+	}
+	mux := http.NewServeMux()
+	hostname, err := os.Hostname()
+	if err != nil {
+		return nil, err
+	}
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:0", hostname))
+	if err != nil {
+		return nil, err
+	}
+	selfAddr := fmt.Sprintf("https://%s", lis.Addr().String())
+	b, err := babysitter.Start(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, mux, selfAddr, m, caCert, selfCertGetter, logSaver, traceSaver, metricExporter)
+	if err != nil {
+		return nil, err
+	}
+
+	// Start the server without blocking.
+	server := &http.Server{
+		Handler:   mux,
+		TLSConfig: mtls.ServerTLSConfig(cfg.Project, caCert, selfCertGetter, "manager", "distributor"),
+	}
+	go server.ServeTLS(lis, "", "")
+
+	return b, nil
 }

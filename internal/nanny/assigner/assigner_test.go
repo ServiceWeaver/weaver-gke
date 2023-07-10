@@ -18,11 +18,12 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
@@ -31,6 +32,17 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
 )
+
+func testConfig(app, version string) *config.GKEConfig {
+	return &config.GKEConfig{
+		Deployment: &protos.Deployment{
+			App: &protos.AppConfig{
+				Name: app,
+			},
+			Id: version,
+		},
+	}
+}
 
 // op is an operation performed against an assigner.
 type op interface {
@@ -109,9 +121,8 @@ func (r reportHealth) do(ctx context.Context, assigner *Assigner) error {
 	if err := assigner.annealCheckers(ctx); err != nil {
 		return err
 	}
-
 	for _, h := range r.health {
-		rid := &ReplicaSetId{App: r.app, Id: r.id, Name: r.replicaSet}
+		rid := &ReplicaSetId{Config: testConfig(r.app, r.id), Name: r.replicaSet}
 		if err := reportHealthStatus(ctx, assigner, rid, r.replica, h); err != nil {
 			return err
 		}
@@ -192,7 +203,7 @@ func (c checkReplicaSetState) do(ctx context.Context, assigner *Assigner) error 
 
 type mockBabysitterClient struct{}
 
-var _ clients.BabysitterClient = &mockBabysitterClient{}
+var _ endpoints.Babysitter = &mockBabysitterClient{}
 
 func (b mockBabysitterClient) CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
 	return &protos.GetHealthReply{Status: protos.HealthStatus_HEALTHY}, nil
@@ -716,9 +727,13 @@ func TestAssigner(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			babysitterConstructor := func(*config.GKEConfig, string, string) (endpoints.Babysitter, error) {
+				return &mockBabysitterClient{}, nil
+			}
 			ctx := context.Background()
-			assigner := NewAssigner(ctx, store.NewFakeStore(), logging.NewTestSlogger(t, testing.Verbose()),
-				EqualDistributionAlgorithm, func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
+			assigner := NewAssigner(ctx, store.NewFakeStore(),
+				logging.NewTestSlogger(t, testing.Verbose()),
+				EqualDistributionAlgorithm, babysitterConstructor,
 				func(context.Context, string) (bool, error) { return true, nil })
 			for i, operation := range c.operations {
 				t.Logf("> Operation %d: %T%+v", i, operation, operation)
@@ -1040,14 +1055,18 @@ func TestConcurrentAssigners(t *testing.T) {
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
+			babysitterConstructor := func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+				return &mockBabysitterClient{}, nil
+			}
 			// Construct n assigners.
 			const n = 3
 			ctx := context.Background()
 			store := store.NewFakeStore()
 			var assigners [n]*Assigner
 			for i := 0; i < n; i++ {
-				assigners[i] = NewAssigner(ctx, store, logging.NewTestSlogger(t, testing.Verbose()), EqualDistributionAlgorithm,
-					func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
+				assigners[i] = NewAssigner(ctx, store,
+					logging.NewTestSlogger(t, testing.Verbose()),
+					EqualDistributionAlgorithm, babysitterConstructor,
 					func(context.Context, string) (bool, error) { return true, nil })
 			}
 
@@ -1097,8 +1116,12 @@ func TestConcurrentAssigners(t *testing.T) {
 
 func TestUnregisterReplicaSets(t *testing.T) {
 	ctx := context.Background()
-	assigner := NewAssigner(ctx, store.NewFakeStore(), logging.NewTestSlogger(t, testing.Verbose()),
-		EqualDistributionAlgorithm, func(addr string) clients.BabysitterClient { return &mockBabysitterClient{} },
+	babysitterConstructor := func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+		return &mockBabysitterClient{}, nil
+	}
+	assigner := NewAssigner(ctx, store.NewFakeStore(),
+		logging.NewTestSlogger(t, testing.Verbose()),
+		EqualDistributionAlgorithm, babysitterConstructor,
 		func(context.Context, string) (bool, error) { return true, nil })
 
 	// Register a component with two replicas for two versions.
@@ -1119,7 +1142,7 @@ func TestUnregisterReplicaSets(t *testing.T) {
 	}
 
 	// Unregister one of the versions.
-	if err := assigner.UnregisterReplicaSets(ctx, "a", []string{v1}); err != nil {
+	if err := assigner.UnregisterReplicaSets(ctx, "a", []*config.GKEConfig{testConfig("a", v1)}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1147,7 +1170,7 @@ func TestUnregisterReplicaSets(t *testing.T) {
 	}
 
 	// Check that v1's ReplicaSet info was deleted.
-	rid := &ReplicaSetId{App: "a", Id: v1, Name: "c1"}
+	rid := &ReplicaSetId{Config: testConfig("a", v1), Name: "c1"}
 	_, version, err := assigner.loadReplicaSetInfo(ctx, rid)
 	if err != nil {
 		t.Fatal(err)
@@ -1172,6 +1195,7 @@ func reportHealthStatus(ctx context.Context, a *Assigner, rid *ReplicaSetId, add
 		// Pull this code into a function so that we can defer Unlock.
 		a.mu.Lock()
 		defer a.mu.Unlock()
+		fmt.Fprintln(os.Stderr, "Got replicas:", a.replicas)
 		replicas, ok := a.replicas[unprotoRid(rid)]
 		if !ok {
 			return false, fmt.Errorf("ReplicaSet %v not found", rid)

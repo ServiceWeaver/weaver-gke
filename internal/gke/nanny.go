@@ -16,6 +16,7 @@ package gke
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -23,10 +24,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal"
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
+	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
@@ -40,207 +41,75 @@ import (
 	"golang.org/x/exp/slog"
 )
 
-// NannyOptions configure a GKE nanny.
-type NannyOptions struct {
-	StartController  bool // start a controller?
-	StartDistributor bool // start a distributor?
-	StartManager     bool // start a manager?
-	Port             int  // listen on :port
-}
-
-// RunNanny creates and runs a nanny.
-func RunNanny(ctx context.Context, opts NannyOptions) error {
-	if !opts.StartController && !opts.StartDistributor && !opts.StartManager {
-		return fmt.Errorf("RunNanny: nothing to start")
-	}
-
-	var cancel context.CancelFunc
-	ctx, cancel = context.WithCancel(ctx)
-	defer cancel()
-	cluster, err := inClusterInfo(ctx)
-	if err != nil {
-		return err
-	}
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", opts.Port))
-	if err != nil {
-		return err
-	}
-	store := Store(cluster)
-	id := uuid.New().String()
-
-	// Parse container metadata.
+func getNannyContainerMetadata() (*ContainerMetadata, error) {
 	for _, v := range []string{
 		containerMetadataEnvKey,
 		nodeNameEnvKey,
 		podNameEnvKey,
 	} {
 		if _, ok := os.LookupEnv(v); !ok {
-			return fmt.Errorf("environment variable %q not set\n", v)
+			return nil, fmt.Errorf("environment variable %q not set\n", v)
 		}
 	}
 	meta := &ContainerMetadata{}
 	metaStr := os.Getenv(containerMetadataEnvKey)
 	if err := proto.FromEnv(metaStr, meta); err != nil {
-		return err
+		return nil, err
 	}
 	meta.NodeName = os.Getenv(nodeNameEnvKey)
 	meta.PodName = os.Getenv(podNameEnvKey)
+	return meta, nil
+}
 
-	logClient, err := newCloudLoggingClient(ctx, meta)
+func getNannyLogger(ctx context.Context, meta *ContainerMetadata, id, service string) (*slog.Logger, func() error, error) {
+	lc, err := newCloudLoggingClient(ctx, meta)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer logClient.Close()
+	return lc.Logger(logging.Options{
+		App:       "nanny",
+		Component: service,
+		Weavelet:  id,
+		Attrs:     []string{"serviceweaver/system", ""},
+	}), lc.Close, nil
+}
 
-	makeLogger := func(service string) *slog.Logger {
-		return logClient.Logger(logging.Options{
-			App:       "nanny",
-			Component: service,
-			Weavelet:  id,
-			Attrs:     []string{"serviceweaver/system", ""},
-		})
-	}
-
-	// Launch a goroutine to export metrics.
+func startNannyMetricExporter(ctx context.Context, logger *slog.Logger, meta *ContainerMetadata) (context.CancelFunc, error) {
+	var cancel context.CancelFunc
+	ctx, cancel = context.WithCancel(ctx)
 	exporter, err := newMetricExporter(ctx, meta)
 	if err != nil {
-		return err
+		cancel()
+		return nil, err
 	}
-	go exportNannyMetrics(ctx, exporter, makeLogger("metric_exporter"))
+	go func() {
+		const metricExportInterval = 15 * time.Second
+		ticker := time.NewTicker(metricExportInterval)
+		for {
+			select {
+			case <-ticker.C:
+				snaps := metrics.Snapshot()
+				if err := exporter.Export(ctx, snaps); err != nil {
+					logger.Error("exporting nanny metrics", "err", err)
+				}
 
-	// Launch the nanny.
-	return run(ctx, opts, cluster, lis, store, id, makeLogger)
-}
-
-func exportNannyMetrics(ctx context.Context, exporter *metricExporter, logger *slog.Logger) {
-	const metricExportInterval = 15 * time.Second
-	ticker := time.NewTicker(metricExportInterval)
-	for {
-		select {
-		case <-ticker.C:
-			snaps := metrics.Snapshot()
-			if err := exporter.Export(ctx, snaps); err != nil {
-				logger.Error("exporting nanny metrics", "err", err)
+			case <-ctx.Done():
+				logger.Debug("exportMetrics cancelled")
+				return
 			}
-
-		case <-ctx.Done():
-			logger.Debug("exportMetrics cancelled")
-			return
 		}
-	}
+	}()
+	return cancel, nil
 }
 
-func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.Listener, s store.Store, id string, makeLogger func(service string) *slog.Logger) error {
-	babysitterConstructor := func(addr string) clients.BabysitterClient {
-		return &babysitter.HttpClient{Addr: internal.ToHTTPAddress(addr)}
-	}
-	mux := http.NewServeMux()
-	managerAddr := fmt.Sprintf("http://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
-	if opts.StartController {
-		logger := makeLogger("controller")
-		if _, err := controller.Start(ctx,
-			mux,
-			store.WithMetrics("controller", id, s),
-			logger,
-			10*time.Minute, // actuationDelay
-			func(addr string) clients.DistributorClient {
-				return &distributor.HttpClient{Addr: addr}
-			},
-			10*time.Second, // fetchAssignmentsInterval
-			10*time.Second, // applyAssignmentInterval
-			5*time.Second,  // manageAppInterval
-			func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
-				return updateGlobalExternalTrafficRoutes(ctx, logger, cluster, assignment)
-			},
-		); err != nil {
-			return fmt.Errorf("cannot start controller: %w", err)
-		}
-	}
-	if opts.StartDistributor {
-		logger := makeLogger(fmt.Sprintf("distributor-%s", cluster.Region))
-		if _, err := distributor.Start(ctx,
-			mux,
-			store.WithMetrics("distributor", id, s),
-			logger,
-			&manager.HttpClient{Addr: managerAddr},
-			cluster.Region,
-			babysitterConstructor,
-			5*time.Second,  // manageAppsInterval
-			10*time.Second, // computeTrafficInterval
-			10*time.Second, // applyTrafficInterval
-			10*time.Second, // detectAppliedTrafficInterval
-			func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
-				return updateRegionalInternalTrafficRoutes(ctx, cluster, logger, assignment)
-			},
-			func(ctx context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
-				dep := cfg.Deployment
-				return getListeners(ctx, cluster.Clientset, dep.App.Name, dep.Id)
-			},
-			func(ctx context.Context, metric string, labels ...string) ([]distributor.MetricCount, error) {
-				return getMetricCounts(ctx, cluster.CloudConfig, cluster.Region, metric, labels...)
-			},
-		); err != nil {
-			return fmt.Errorf("cannot start distributor: %w", err)
-		}
-	}
-	if opts.StartManager {
-		logger := makeLogger("manager")
-		s = store.WithMetrics("manager", id, s)
-		if err := manager.Start(ctx,
-			mux,
-			s,
-			logger,
-			managerAddr,
-			babysitterConstructor,
-			func(ctx context.Context, podName string) (bool, error) {
-				return podExists(ctx, cluster, podName)
-			},
-			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis string) (int, error) {
-				port, err := getListenerPort(ctx, s, logger, cluster, cfg, replicaSet, lis)
-				if err != nil {
-					return -1, err
-				}
-				return port, nil
-			},
-			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis *nanny.Listener) (*protos.ExportListenerReply, error) {
-				if err := ensureListenerService(ctx, cluster, logger, cfg, replicaSet, lis); err != nil {
-					return nil, err
-				}
-
-				// TODO(spetrovic): use the global load-balancer's address here.
-				const proxyAddr = ""
-				return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
-			},
-			func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
-				return deploy(ctx, cluster, logger, cfg, replicaSet)
-			},
-			func(_ context.Context, app string, versions []string) error {
-				for _, version := range versions {
-					if err := stop(ctx, cluster, logger, app, version); err != nil {
-						return fmt.Errorf("stop %q: %w", version, err)
-					}
-				}
-				return nil
-			},
-			func(_ context.Context, app string, versions []string) error {
-				for _, version := range versions {
-					if err := kill(ctx, cluster, logger, app, version); err != nil {
-						return fmt.Errorf("kill %q: %w", version, err)
-					}
-				}
-				return nil
-			},
-		); err != nil {
-			return fmt.Errorf("cannot start manager: %w", err)
-		}
-	}
-
-	// Run the nanny server.
-	makeLogger("nanny").Info("Nanny listening", "address", lis.Addr())
-	server := http.Server{Handler: mux}
+func runNannyServer(ctx context.Context, server *http.Server, lis net.Listener) error {
 	errs := make(chan error, 1)
 	go func() {
-		errs <- server.Serve(lis)
+		if server.TLSConfig != nil {
+			errs <- server.ServeTLS(lis, "", "")
+		} else {
+			errs <- server.Serve(lis)
+		}
 	}()
 	select {
 	case err := <-errs:
@@ -250,6 +119,266 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 	}
 }
 
+// Controller returns the HTTP address of the controller and an HTTP client
+// that can be used to contact the controller.
+func Controller(ctx context.Context, config CloudConfig) (string, *http.Client, error) {
+	configCluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
+	if err != nil {
+		return "", nil, err
+	}
+	addr := configCluster.apiRESTClient.Get().
+		Namespace(namespaceName).
+		Resource("services").
+		Name("controller").
+		SubResource("proxy").URL().String()
+	return addr, configCluster.apiRESTClient.Client, nil
+}
+
+// RunController creates and runs a controller.
+func RunController(ctx context.Context, port int) error {
+	id := uuid.New().String()
+	cluster, err := inClusterInfo(ctx)
+	if err != nil {
+		return err
+	}
+	s := store.WithMetrics("controller", id, Store(cluster))
+	meta, err := getNannyContainerMetadata()
+	if err != nil {
+		return err
+	}
+	logger, close, err := getNannyLogger(ctx, meta, id, "controller")
+	if err != nil {
+		return err
+	}
+	defer close()
+
+	cancel, err := startNannyMetricExporter(ctx, logger, meta)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	caCert, getSelfCert, err := getPodCerts()
+	if err != nil {
+		return err
+	}
+
+	mux := http.NewServeMux()
+	if _, err := controller.Start(ctx,
+		mux,
+		s,
+		logger,
+		10*time.Minute, // actuationDelay
+		func(addr string) endpoints.Distributor {
+			return &distributor.HttpClient{
+				Addr:      addr,
+				TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "distributor"),
+			}
+		},
+		10*time.Second, // fetchAssignmentsInterval
+		10*time.Second, // applyAssignmentInterval
+		5*time.Second,  // manageAppInterval
+		func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
+			return updateGlobalExternalTrafficRoutes(ctx, logger, cluster, assignment)
+		},
+	); err != nil {
+		return fmt.Errorf("cannot start controller: %w", err)
+	}
+
+	logger.Info("Controller listening", "address", lis.Addr())
+	// TODO(spetrovic): Enable TLS on the controller server. Use a certificate
+	// minted by the Certificate Authority service [1].
+	//
+	// [1]: https://cloud.google.com/certificate-authority-service/docs/requesting-certificates#gcloud_1
+	server := &http.Server{
+		Handler: mux,
+	}
+	return runNannyServer(ctx, server, lis)
+}
+
+// RunDistributor creates and runs a distributor.
+func RunDistributor(ctx context.Context, port int) error {
+	id := uuid.New().String()
+	cluster, err := inClusterInfo(ctx)
+	if err != nil {
+		return err
+	}
+	name := "distributor-" + cluster.Region
+	s := store.WithMetrics(name, id, Store(cluster))
+	meta, err := getNannyContainerMetadata()
+	if err != nil {
+		return err
+	}
+	logger, close, err := getNannyLogger(ctx, meta, id, name)
+	if err != nil {
+		return err
+	}
+	defer close()
+
+	cancel, err := startNannyMetricExporter(ctx, logger, meta)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	caCert, getSelfCert, err := getPodCerts()
+	if err != nil {
+		return err
+	}
+
+	mux := http.NewServeMux()
+	managerAddr := fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
+	if _, err := distributor.Start(ctx,
+		mux,
+		s,
+		logger,
+		&manager.HttpClient{
+			Addr:      managerAddr,
+			TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "manager"),
+		},
+		cluster.Region,
+		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+			replicaSetIdentity, ok := cfg.ComponentIdentity[replicaSet]
+			if !ok { // should never happen
+				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
+			}
+			return &babysitter.HttpClient{
+				Addr:      addr,
+				TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity),
+			}, nil
+		},
+		5*time.Second,  // manageAppsInterval
+		10*time.Second, // computeTrafficInterval
+		10*time.Second, // applyTrafficInterval
+		10*time.Second, // detectAppliedTrafficInterval
+		func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
+			return updateRegionalInternalTrafficRoutes(ctx, cluster, logger, assignment)
+		},
+		func(ctx context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
+			dep := cfg.Deployment
+			return getListeners(ctx, cluster.Clientset, dep.App.Name, dep.Id)
+		},
+		func(ctx context.Context, metric string, labels ...string) ([]distributor.MetricCount, error) {
+			return getMetricCounts(ctx, cluster.CloudConfig, cluster.Region, metric, labels...)
+		},
+	); err != nil {
+		return fmt.Errorf("cannot start distributor: %w", err)
+	}
+
+	logger.Info("Distributor listening", "address", lis.Addr())
+	server := &http.Server{
+		Handler:   mux,
+		TLSConfig: mtls.ServerTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "controller"),
+	}
+	return runNannyServer(ctx, server, lis)
+}
+
+// RunManager creates and runs a manager.
+func RunManager(ctx context.Context, port int) error {
+	id := uuid.New().String()
+	cluster, err := inClusterInfo(ctx)
+	if err != nil {
+		return err
+	}
+	name := "manager-" + cluster.Region
+	s := store.WithMetrics(name, id, Store(cluster))
+	meta, err := getNannyContainerMetadata()
+	if err != nil {
+		return err
+	}
+	logger, close, err := getNannyLogger(ctx, meta, id, name)
+	if err != nil {
+		return err
+	}
+	defer close()
+
+	cancel, err := startNannyMetricExporter(ctx, logger, meta)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	if err != nil {
+		return err
+	}
+	caCert, getSelfCert, err := getPodCerts()
+	if err != nil {
+		return err
+	}
+
+	s = store.WithMetrics("manager", id, s)
+	m := manager.NewManager(ctx,
+		s,
+		logger,
+		fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region),
+		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+			replicaSetIdentity, ok := cfg.ComponentIdentity[replicaSet]
+			if !ok { // should never happen
+				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
+			}
+			return &babysitter.HttpClient{
+				Addr:      addr,
+				TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity),
+			}, nil
+		},
+		func(ctx context.Context, podName string) (bool, error) {
+			return podExists(ctx, cluster, podName)
+		},
+		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis string) (int, error) {
+			port, err := getListenerPort(ctx, s, logger, cluster, cfg, replicaSet, lis)
+			if err != nil {
+				return -1, err
+			}
+			return port, nil
+		},
+		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis *nanny.Listener) (*protos.ExportListenerReply, error) {
+			if err := ensureListenerService(ctx, cluster, logger, cfg, replicaSet, lis); err != nil {
+				return nil, err
+			}
+
+			// TODO(spetrovic): use the global load-balancer's address here.
+			const proxyAddr = ""
+			return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
+		},
+		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
+			return deploy(ctx, cluster, logger, cfg, replicaSet)
+		},
+		func(_ context.Context, app string, versions []*config.GKEConfig) error {
+			for _, version := range versions {
+				id := version.Deployment.Id
+				if err := stop(ctx, cluster, logger, app, id); err != nil {
+					return fmt.Errorf("stop %q: %w", version, err)
+				}
+			}
+			return nil
+		},
+		func(_ context.Context, app string, versions []*config.GKEConfig) error {
+			for _, version := range versions {
+				id := version.Deployment.Id
+				if err := kill(ctx, cluster, logger, app, id); err != nil {
+					return fmt.Errorf("kill %q: %w", version, err)
+				}
+			}
+			return nil
+		},
+	)
+
+	logger.Info("Manager listening", "address", lis.Addr())
+	verifyPeerCert := func(peer []*x509.Certificate) (string, error) {
+		return mtls.VerifyCertificateChain(cluster.CloudConfig.Project, caCert, peer)
+	}
+	return manager.RunHTTPServer(m, logger, lis, getSelfCert, verifyPeerCert)
+}
+
 // getListenerPort returns the port the network listener should listen on
 // inside the Kubernetes ReplicaSet, and creates a service to forward traffic to
 // that
@@ -257,7 +386,7 @@ func run(ctx context.Context, opts NannyOptions, cluster *ClusterInfo, lis net.L
 func getListenerPort(ctx context.Context, s store.Store, logger *slog.Logger, cluster *ClusterInfo, cfg *config.GKEConfig, replicaSet string, listener string) (int, error) {
 	dep := cfg.Deployment
 	key := store.AppKey(dep.App.Name, "ports")
-	histKey := store.DeploymentKey(dep.App.Name, dep.Id, store.HistoryKey)
+	histKey := store.DeploymentKey(cfg, store.HistoryKey)
 	err := store.AddToSet(ctx, s, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.

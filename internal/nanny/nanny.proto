@@ -76,14 +76,14 @@ message ApplicationDeploymentRequest {
 // for a given application.
 message ApplicationStopRequest {
   string app_name = 1;
-  repeated string versions = 2;
+  repeated config.GKEConfig versions = 2;
 }
 
 // ApplicationDeleteRequest is a request to the manager to delete a set of
 // versions for a given application.
 message ApplicationDeleteRequest {
   string app_name = 1;
-  repeated string versions = 2;
+  repeated config.GKEConfig versions = 2;
 }
 
 // ActivateComponentRequest is a request to ensure that the provided
@@ -221,6 +221,7 @@ message ReplicaSetState {
   // ReplicaSet stores information about an application version ReplicaSet.
   message ReplicaSet {
     string name = 1;
+    config.GKEConfig config = 5;
 
     // Pod stores information about a Pod inside the ReplicaSet.
     message Pod {

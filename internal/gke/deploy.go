@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net/http"
 	"os"
 	"path"
 	"path/filepath"
@@ -116,13 +115,13 @@ type iamBindings map[string]map[string]struct{}
 // version, along with the HTTP client that should be used to reach it.
 // May mutate the passed-in deployment.
 // REQUIRES: Called by the weaver-gke command.
-func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, toolVersion string) (*controller.RolloutRequest, *http.Client, error) {
+func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, toolVersion string) (*controller.RolloutRequest, error) {
 	dep := cfg.Deployment
 	localBinary := dep.App.Binary // Save before finalizeConfig rewrites it
 
 	// Finalize the config.
 	if err := finalizeConfig(config, cfg); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Enable the required cloud services.
@@ -141,10 +140,10 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		"privateca.googleapis.com",
 		"trafficdirector.googleapis.com",
 	); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if err := enableMultiClusterServices(config); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Setup the Service Weaver artifacts repository that will host container images.
@@ -153,7 +152,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 			config.Project, buildLocation, dockerRepoName),
 		Format: artifactregistrypb.Repository_DOCKER,
 	}); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Wait until the robot accounts corresponding to the enabled cloud services
@@ -173,7 +172,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		sub("serviceAccount:service-%s@gcp-sa-gkehub.iam.gserviceaccount.com"),
 		sub("serviceAccount:service-%s@gcp-sa-mcsd.iam.gserviceaccount.com"),
 	); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// In parallel, build the container image and setup the cloud project.
@@ -210,7 +209,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		// Use the running weaver-gke tool binary.
 		toolBinPath, err := os.Executable()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		files = append(files, toolBinPath)
 	} else {
@@ -234,13 +233,13 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	}
 	<-buildDone
 	if firstErr != nil {
-		return nil, nil, firstErr
+		return nil, firstErr
 	}
 	fmt.Fprintln(os.Stderr, "Successfully built container image", appImageURL)
 
 	// Start ServiceWeaver services.
 	if err := ensureWeaverServices(ctx, config, cfg, toolImageURL); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	// Finalize the deployment.
@@ -280,13 +279,13 @@ to use CloudDNS for name resolution [1].
 	if err := helpTmpl.Execute(&b, struct{ ExternalGatewayIP string }{
 		externalGatewayIP,
 	}); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	fmt.Fprintln(os.Stderr, b.String())
 
 	// Build the rollout request.
 	req := buildRolloutRequest(configCluster, cfg)
-	return req, configCluster.apiRESTClient.Client, nil
+	return req, nil
 }
 
 // enableCloudServices() enables the required cloud services for the given
@@ -374,9 +373,8 @@ rolled out in all locations right away. Are you sure you want to proceed? [Y/n] 
 		dep := gkeConfig.Deployment
 		replicaSet := nanny.ReplicaSetForComponent(component, gkeConfig)
 		serviceAccount := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
-		identity := path.Join("ns", namespaceName, "sa", serviceAccount)
-		gkeConfig.ComponentIdentity[component] = identity
-		return identity
+		gkeConfig.ComponentIdentity[component] = serviceAccount
+		return serviceAccount
 	}
 	for _, edge := range callGraph {
 		src := edge[0]
@@ -455,14 +453,13 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 
 func buildRolloutRequest(configCluster *ClusterInfo, cfg *config.GKEConfig) *controller.RolloutRequest {
 	req := &controller.RolloutRequest{
-		Config:    cfg,
-		NannyAddr: controllerAddr(configCluster),
+		Config: cfg,
 	}
 	for _, region := range cfg.Regions {
 		// NOTE: distributor address must be resolveable from anywhere inside
 		// the project's VPC.
 		distributorAddr :=
-			fmt.Sprintf("http://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
+			fmt.Sprintf("https://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
 		req.Locations = append(req.Locations, &controller.RolloutRequest_Location{
 			Name:            region,
 			DistributorAddr: distributorAddr,
@@ -1747,7 +1744,6 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": name},
 					Annotations: map[string]string{
-						// TODO(spetrovic): Change Nanny to use these certificates.
 						"security.cloud.google.com/use-workload-certificates": "",
 					},
 				},

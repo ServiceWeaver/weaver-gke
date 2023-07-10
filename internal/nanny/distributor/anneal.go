@@ -234,10 +234,12 @@ func (d *Distributor) mayCleanupApp(ctx context.Context, app string) error {
 func (d *Distributor) stop(ctx context.Context, app string, state *AppState) error {
 	// Compute the set of versions that need to be stopped.
 	var toStop []*AppVersionState
+	var configs []*config.GKEConfig
 	var ids []string
 	for _, v := range state.Versions {
 		if v.Status == AppVersionState_STOPPING {
 			toStop = append(toStop, v)
+			configs = append(configs, v.Config)
 			ids = append(ids, v.Config.Deployment.Id)
 		}
 	}
@@ -251,7 +253,7 @@ func (d *Distributor) stop(ctx context.Context, app string, state *AppState) err
 	defer cancel()
 
 	d.logger.Info("Stopping", "versions", ids, "application", app)
-	req := &nanny.ApplicationStopRequest{AppName: app, Versions: ids}
+	req := &nanny.ApplicationStopRequest{AppName: app, Versions: configs}
 	if err := d.manager.Stop(ctx, req); err != nil {
 		return fmt.Errorf("cannot stop versions %v: %w", ids, err)
 	}
@@ -276,10 +278,12 @@ func (d *Distributor) delete(ctx context.Context, app string, state *AppState) e
 
 	// Compute the set of versions that need to be deleted.
 	var toDelete []*AppVersionState
+	var configs []*config.GKEConfig
 	var ids []string
 	for _, v := range state.Versions {
 		if v.Status == AppVersionState_STOPPED && time.Since(v.StoppedTime.AsTime()) >= deleteDelay {
 			toDelete = append(toDelete, v)
+			configs = append(configs, v.Config)
 			ids = append(ids, v.Config.Deployment.Id)
 		}
 	}
@@ -293,7 +297,7 @@ func (d *Distributor) delete(ctx context.Context, app string, state *AppState) e
 	defer cancel()
 
 	d.logger.Info("Deleting", "versions", ids, "application", app)
-	req := &nanny.ApplicationDeleteRequest{AppName: app, Versions: ids}
+	req := &nanny.ApplicationDeleteRequest{AppName: app, Versions: configs}
 	if err := d.manager.Delete(ctx, req); err != nil {
 		return fmt.Errorf("cannot stop versions %v: %w", ids, err)
 	}

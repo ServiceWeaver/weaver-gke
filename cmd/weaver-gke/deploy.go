@@ -31,18 +31,24 @@ import (
 
 var deploySpec = tool.DeploySpec{
 	Tool: "weaver gke",
-	PrepareRollout: func(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, *http.Client, error) {
+	Controller: func(ctx context.Context, cfg *config.GKEConfig) (string, *http.Client, error) {
 		config, err := gke.SetupCloudConfig(cfg.Project, cfg.Account)
 		if err != nil {
-			return nil, nil, err
+			return "", nil, err
+		}
+		return gke.Controller(ctx, config)
+	},
+	PrepareRollout: func(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, error) {
+		config, err := gke.SetupCloudConfig(cfg.Project, cfg.Account)
+		if err != nil {
+			return nil, err
 		}
 		fmt.Fprintf(os.Stderr, "Using account %s in project %s\n",
 			config.Account, config.Project)
 		toolBinVersion, err := getToolVersion()
 		if err != nil {
-			return nil, nil, fmt.Errorf("error extracting the tool binary version: %w", err)
+			return nil, fmt.Errorf("error extracting the tool binary version: %w", err)
 		}
-
 		return gke.PrepareRollout(ctx, config, cfg, toolBinVersion)
 	},
 	Source: func(ctx context.Context, cfg *config.GKEConfig) (logging.Source, error) {

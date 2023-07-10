@@ -24,5 +24,5 @@ import (
 var profileSpec = tool.ProfileSpec{
 	Tool:       "weaver gke-local",
 	Flags:      flag.NewFlagSet("profile", flag.ContinueOnError),
-	Controller: local.Nanny,
+	Controller: local.Controller,
 }

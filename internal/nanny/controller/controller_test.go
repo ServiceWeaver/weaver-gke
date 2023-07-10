@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/clients"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
@@ -156,7 +156,7 @@ func TestRolloutRequests(t *testing.T) {
 	}
 
 	// Start the controller.
-	ctrl, err := startController(context.Background(), t, func(string) clients.DistributorClient {
+	ctrl, err := startController(context.Background(), t, func(string) endpoints.Distributor {
 		panic("unimplemented")
 	})
 	if err != nil {
@@ -406,7 +406,7 @@ func TestUpdateRolloutStatus(t *testing.T) {
 			ctx := context.Background()
 
 			// Start the controller.
-			ctrl, err := startController(ctx, t, func(string) clients.DistributorClient {
+			ctrl, err := startController(ctx, t, func(string) endpoints.Distributor {
 				panic("unimplemented")
 			})
 			if err != nil {
@@ -797,7 +797,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 
 			// Start the distributors (one for each location where an
 			// application version should run).
-			distributors := map[string]clients.DistributorClient{}
+			distributors := map[string]endpoints.Distributor{}
 			for loc, a := range locAssignments {
 				hosts := map[string]*nanny.HostTrafficAssignment{}
 				for host, v := range a {
@@ -821,7 +821,7 @@ func TestGetTrafficAssignment(t *testing.T) {
 			}
 
 			// Start the controller.
-			controller, err := startController(ctx, t, func(addr string) clients.DistributorClient {
+			controller, err := startController(ctx, t, func(addr string) endpoints.Distributor {
 				distributor, ok := distributors[addr]
 				if !ok {
 					panic(fmt.Sprintf("distributor %q not found", addr))
@@ -963,7 +963,7 @@ func TestRunProfiling(t *testing.T) {
 			const versionId = "1"
 			ctx := context.Background()
 			// Start the controller.
-			distributorConstructor := func(addr string) clients.DistributorClient {
+			distributorConstructor := func(addr string) endpoints.Distributor {
 				prof, ok := c.profiles[addr]
 				if !ok {
 					prof = nil
@@ -1193,7 +1193,7 @@ func TestControllerDistributorInteraction(t *testing.T) {
 			network.deliverAll(ctx)
 
 			// Allow the controller to successfully execute an annealing loop.
-			controller.distributor = func(addr string) clients.DistributorClient {
+			controller.distributor = func(addr string) endpoints.Distributor {
 				distributor, ok := distributors[addr]
 				if !ok {
 					t.Fatalf("distributor %q not found", addr)
@@ -1245,7 +1245,7 @@ func TestControllerDistributorInteraction(t *testing.T) {
 	}
 }
 
-func startController(ctx context.Context, t *testing.T, distributor func(addr string) clients.DistributorClient) (*controller, error) {
+func startController(ctx context.Context, t *testing.T, distributor func(addr string) endpoints.Distributor) (*controller, error) {
 	return Start(ctx,
 		http.NewServeMux(),
 		store.NewFakeStore(),
@@ -1380,39 +1380,39 @@ type mockManagerClient struct {
 	delete error // returned by Delete
 }
 
-var _ clients.ManagerClient = &mockManagerClient{}
+var _ endpoints.Manager = &mockManagerClient{}
 
-// Deploy implements the clients.ManagerClient interface.
+// Deploy implements the endpoints.Manager interface.
 func (m *mockManagerClient) Deploy(context.Context, *nanny.ApplicationDeploymentRequest) error {
 	return m.deploy
 }
 
-// Stop implements the clients.ManagerClient interface.
+// Stop implements the endpoints.Manager interface.
 func (m *mockManagerClient) Stop(context.Context, *nanny.ApplicationStopRequest) error {
 	return m.stop
 }
 
-// Delete implements the clients.ManagerClient interface.
+// Delete implements the endpoints.Manager interface.
 func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequest) error {
 	return m.delete
 }
 
-// GetReplicaSetState implements the clients.ManagerClient interface.
+// GetReplicaSetState implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetReplicaSetState(context.Context, *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
 	return nil, fmt.Errorf("unimplemented")
 }
 
-// ActivateComponent implements the clients.ManagerClient interface.
+// ActivateComponent implements the endpoints.Manager interface.
 func (m *mockManagerClient) ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error {
 	panic("implement me")
 }
 
-// RegisterReplica implements the clients.ManagerClient interface.
+// RegisterReplica implements the endpoints.Manager interface.
 func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error {
 	panic("implement me")
 }
 
-// ReportLoad implements the clients.ManagerClient interface.
+// ReportLoad implements the endpoints.Manager interface.
 func (m *mockManagerClient) ReportLoad(context.Context, *nanny.LoadReport) error {
 	panic("implement me")
 }
@@ -1421,18 +1421,18 @@ func (m *mockManagerClient) GetListenerAddress(ctx context.Context, req *nanny.G
 	panic("implement me")
 }
 
-// ExportListener implements the clients.ManagerClient interface.
+// ExportListener implements the endpoints.Manager interface.
 func (m *mockManagerClient) ExportListener(context.Context, *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error) {
 	panic("implement me")
 }
 
-// GetRoutingInfo implements the clients.ManagerClient interface.
+// GetRoutingInfo implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetRoutingInfo(context.Context, *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
 	//TODO implement me
 	panic("implement me")
 }
 
-// GetComponentsToStart implements the clients.ManagerClient interface.
+// GetComponentsToStart implements the endpoints.Manager interface.
 func (m *mockManagerClient) GetComponentsToStart(context.Context, *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error) {
 	panic("implement me")
 }
@@ -1445,24 +1445,24 @@ type mockDistributorClient struct {
 	prof           *profile.Profile
 }
 
-var _ clients.DistributorClient = &mockDistributorClient{}
+var _ endpoints.Distributor = &mockDistributorClient{}
 
-// Distribute implements the clients.DistributorClient interface.
+// Distribute implements the endpoints.Distributor interface.
 func (d *mockDistributorClient) Distribute(context.Context, *nanny.ApplicationDistributionRequest) error {
 	return nil
 }
 
-// Cleanup implements the clients.DistributorClient interface.
+// Cleanup implements the endpoints.Distributor interface.
 func (d *mockDistributorClient) Cleanup(context.Context, *nanny.ApplicationCleanupRequest) error {
 	return fmt.Errorf("unimplemented")
 }
 
-// GetApplicationState implements the clients.DistributorClient interface.
+// GetApplicationState implements the endpoints.Distributor interface.
 func (d *mockDistributorClient) GetApplicationState(context.Context, *nanny.ApplicationStateAtDistributorRequest) (*nanny.ApplicationStateAtDistributor, error) {
 	return nil, fmt.Errorf("unimplemented")
 }
 
-// GetPublicTrafficAssignment implements the clients.DistributorClient interface.
+// GetPublicTrafficAssignment implements the endpoints.Distributor interface.
 func (d *mockDistributorClient) GetPublicTrafficAssignment(context.Context) (*nanny.TrafficAssignment, error) {
 	return d.publicTraffic, nil
 }
@@ -1470,7 +1470,7 @@ func (d *mockDistributorClient) GetPrivateTrafficAssignment(context.Context) (*n
 	return d.privateTraffic, nil
 }
 
-// RunProfiling implements the clients.DistributorClient interface.
+// RunProfiling implements the endpoints.Distributor interface.
 func (d *mockDistributorClient) RunProfiling(context.Context, *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	if d.prof == nil {
 		return nil, fmt.Errorf("cannot generate profile")
@@ -1588,7 +1588,7 @@ func (c *chaosNetwork) step(ctx context.Context, op op, f func() error) error {
 	return err
 }
 
-func (c *chaosNetwork) client(addr string) clients.DistributorClient {
+func (c *chaosNetwork) client(addr string) endpoints.Distributor {
 	distributor, ok := c.distributors[addr]
 	if !ok {
 		panic(fmt.Sprintf("distributor %q not found", addr))

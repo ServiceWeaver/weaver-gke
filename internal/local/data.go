@@ -26,6 +26,10 @@ var (
 	DataDir      = filepath.Join(must(runtime.DataDir()), "gke-local")
 	MetricsFile  = filepath.Join(DataDir, "metrics.db")
 	perfettoFile = filepath.Join(DataDir, "perfetto.db")
+	caCertFile   = filepath.Join(DataDir, "ca_cert.pem")
+	caKeyFile    = filepath.Join(DataDir, "ca_key.pem")
+	toolCertFile = filepath.Join(DataDir, "tool_cert.pem")
+	toolKeyFile  = filepath.Join(DataDir, "tool_key.pem")
 )
 
 func must[T any](x T, err error) T {

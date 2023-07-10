@@ -35,5 +35,6 @@ func main() {
 		"proxy":       &proxyCmd,
 		"controller":  &controllerCmd,
 		"distributor": &distributorCmd,
+		"manager":     &managerCmd,
 	})
 }

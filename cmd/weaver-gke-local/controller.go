@@ -38,12 +38,7 @@ var controllerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		opts := local.NannyOptions{
-			Region:          *controllerRegion,
-			StartController: true,
-			Port:            *controllerPort,
-		}
-		return local.RunNanny(ctx, opts)
+		return local.RunController(ctx, *controllerRegion, *controllerPort)
 	},
 	Hidden: true,
 }
