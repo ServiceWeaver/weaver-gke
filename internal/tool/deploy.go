@@ -184,16 +184,26 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 	if info.IsDir() {
 		return fmt.Errorf("want binary, found directory at path %q", app.Binary)
 	}
-	major, minor, patch, err := version.ReadVersion(app.Binary)
+	versions, err := bin.ReadVersions(app.Binary)
 	if err != nil {
 		return fmt.Errorf("read binary version: %w", err)
 	}
-	if major != version.Major || minor != version.Minor || patch != version.Patch {
-		return fmt.Errorf(
-			"version mismatch: deployer version %d.%d.%d is incompatible with app version %d.%d.%d",
-			version.Major, version.Minor, version.Patch,
-			major, minor, patch,
-		)
+	if versions.DeployerVersion != version.DeployerVersion {
+		return fmt.Errorf(`
+ERROR: The binary you're trying to deploy (%q) was built with
+github.com/ServiceWeaver/weaver module version %s. However, the 'weaver
+gke' binary you're using was built with weaver module version %s.
+These versions are incompatible.
+
+We recommend updating both the weaver module your application is built with and
+updating the 'weaver gke' command by running the following.
+
+    go get github.com/ServiceWeaver/weaver@latest
+	go install github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@latest
+
+Then, re-build your code and re-run 'weaver gke deploy'. If the problem
+persists, please file an issue at https://github.com/ServiceWeaver/weaver-gke/issues.`,
+			app.Binary, versions.ModuleVersion, version.ModuleVersion)
 	}
 	// TODO(mwhittaker): Check that the controller is running the same version
 	// as the tool? Have the controller check the binary version as well?
