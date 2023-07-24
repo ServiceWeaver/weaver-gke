@@ -31,9 +31,9 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
-	"github.com/ServiceWeaver/weaver/runtime/perfetto"
+	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/ServiceWeaver/weaver/runtime/traces"
 	"github.com/google/uuid"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // startBabysitter creates and starts a babysitter in a gke-local deployment.
@@ -47,11 +47,11 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 	logSaver := ls.Add
 
 	// Setup trace recording.
-	traceDB, err := perfetto.Open(ctx, perfettoFile)
+	traceDB, err := traces.OpenDB(ctx, TracesFile)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open Perfetto database: %w", err)
 	}
-	traceSaver := func(spans []sdktrace.ReadOnlySpan) error {
+	traceSaver := func(spans *protos.TraceSpans) error {
 		return traceDB.Store(ctx, cfg.Deployment.App.Name, cfg.Deployment.Id, spans)
 	}
 
