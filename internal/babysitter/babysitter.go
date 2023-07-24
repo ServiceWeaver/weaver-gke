@@ -34,7 +34,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
-	"go.opentelemetry.io/otel/sdk/trace"
 	"golang.org/x/exp/slog"
 )
 
@@ -59,7 +58,7 @@ type Babysitter struct {
 	selfCertGetter func() ([]byte, []byte, error)
 	logger         *slog.Logger
 	logSaver       func(*protos.LogEntry)
-	traceSaver     func(spans []trace.ReadOnlySpan) error
+	traceSaver     func(spans *protos.TraceSpans) error
 	metricExporter func(metrics []*metrics.MetricSnapshot) error
 
 	mu                  sync.Mutex
@@ -82,7 +81,7 @@ func Start(
 	caCert *x509.Certificate,
 	selfCertGetter func() ([]byte, []byte, error),
 	logSaver func(*protos.LogEntry),
-	traceSaver func(spans []trace.ReadOnlySpan) error,
+	traceSaver func(spans *protos.TraceSpans) error,
 	metricExporter func(metrics []*metrics.MetricSnapshot) error,
 ) (*Babysitter, error) {
 	logger := slog.New(&logging.LogHandler{
@@ -407,7 +406,7 @@ func (b *Babysitter) HandleLogEntry(_ context.Context, entry *protos.LogEntry) e
 }
 
 // HandleTraceSpans implements the envelope.EnvelopeHandler interface.
-func (b *Babysitter) HandleTraceSpans(_ context.Context, traces []trace.ReadOnlySpan) error {
+func (b *Babysitter) HandleTraceSpans(_ context.Context, traces *protos.TraceSpans) error {
 	if b.traceSaver == nil {
 		return nil
 	}

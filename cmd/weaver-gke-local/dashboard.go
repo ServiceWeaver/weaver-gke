@@ -16,17 +16,30 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"flag"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
-	"os"
+	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/local"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/metricdb"
 	"github.com/ServiceWeaver/weaver-gke/internal/tool"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/perfetto"
+	"github.com/ServiceWeaver/weaver/runtime/traces"
+)
+
+var (
+	//go:embed templates/traces.html
+	tracesHTML     string
+	tracesTemplate = template.Must(template.New("traces").Funcs(template.FuncMap{
+		"sub": func(endTime, startTime time.Time) string {
+			return endTime.Sub(startTime).String()
+		},
+	}).Parse(tracesHTML))
 )
 
 var dashboardSpec = tool.DashboardSpec{
@@ -43,26 +56,25 @@ var dashboardSpec = tool.DashboardSpec{
 		}
 		mux.Handle("/metrics", local.NewPrometheusHandler(metricDB, logger))
 
-		// Start a separate Perfetto server, which has to run on
-		// a specific port.
-		db, err := perfetto.Open(ctx, "gke-local")
+		// Add the trace handlers.
+		traceDB, err := traces.OpenDB(ctx, local.TracesFile)
 		if err != nil {
 			return err
 		}
-		go func() {
-			defer db.Close()
-			if db.Serve(ctx); err != nil {
-				fmt.Fprintln(os.Stderr, "Error serving local traces", err)
-			}
-		}()
+		mux.HandleFunc("/traces", func(w http.ResponseWriter, r *http.Request) {
+			handleTraces(w, r, traceDB)
+		})
+		mux.HandleFunc("/tracefetch", func(w http.ResponseWriter, r *http.Request) {
+			handleTraceFetch(w, r, traceDB)
+		})
+
 		return nil
 	},
 	AppLinks: func(ctx context.Context, app string) (tool.Links, error) {
 		v := url.Values{}
 		v.Set("app", app)
-		tracerURL := url.QueryEscape("http://127.0.0.1:9001?" + v.Encode())
 		return tool.Links{
-			Traces:  "https://ui.perfetto.dev/#!/?url=" + tracerURL,
+			Traces:  "/traces?" + v.Encode(),
 			Metrics: "/metrics?" + v.Encode(),
 		}, nil
 	},
@@ -71,9 +83,8 @@ var dashboardSpec = tool.DashboardSpec{
 		v := url.Values{}
 		v.Set("app", app)
 		v.Set("version", version)
-		tracerURL := url.QueryEscape("http://127.0.0.1:9001?" + v.Encode())
 		return tool.Links{
-			Traces:  "https://ui.perfetto.dev/#!/?url=" + tracerURL,
+			Traces:  "/traces?" + v.Encode(),
 			Metrics: "/metrics?" + v.Encode(),
 		}, nil
 	},
@@ -93,4 +104,89 @@ var dashboardSpec = tool.DashboardSpec{
 			{Label: "profile", Command: fmt.Sprintf("weaver multi profile --duration=30s %s", id)},
 		}
 	},
+}
+
+// handleTraces handles requests to /traces?app=<app>&version=<app_version>
+func handleTraces(w http.ResponseWriter, r *http.Request, db *traces.DB) {
+	app := r.URL.Query().Get("app")
+	version := r.URL.Query().Get("version")
+	if app == "" && version == "" {
+		http.Error(w, "neither application name or version id provided", http.StatusBadRequest)
+	}
+	parseDuration := func(arg string) (time.Duration, bool) {
+		str := r.URL.Query().Get(arg)
+		if str == "" {
+			return 0, true
+		}
+		dur, err := time.ParseDuration(str)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("invalid duration %q", str), http.StatusBadRequest)
+			return 0, false
+		}
+		return dur, true
+	}
+	latencyLower, ok := parseDuration("lat_low")
+	if !ok {
+		return
+	}
+	latencyUpper, ok := parseDuration("lat_hi")
+	if !ok {
+		return
+	}
+	onlyErrors := r.URL.Query().Get("errs") != ""
+
+	// Weavelets export traces every 5 seconds. In order to (semi-)guarantee
+	// that the database contains all spans for the selected traces, we only
+	// fetch traces that ended more than 5+ seconds ago (all spans for such
+	// traces should have been exported to the database by now).
+	const exportInterval = 5 * time.Second
+	const gracePeriod = time.Second
+	endTime := time.Now().Add(-1 * (exportInterval + gracePeriod))
+
+	const maxNumTraces = 100
+	ts, err := db.QueryTraces(r.Context(), app, version, time.Time{} /*startTime*/, endTime, latencyLower, latencyUpper, onlyErrors, maxNumTraces)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("cannot query trace database: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	content := struct {
+		Tool    string
+		App     string
+		Version string
+		Traces  []traces.TraceSummary
+	}{
+		Tool:    "gke-local",
+		App:     app,
+		Version: version,
+		Traces:  ts,
+	}
+	if err := tracesTemplate.Execute(w, content); err != nil {
+		http.Error(w, fmt.Sprintf("cannot display traces: %v", err), http.StatusInternalServerError)
+		return
+	}
+}
+
+// handleTraceFetch handles requests to /tracefetch?trace_id=<trace_id>.
+func handleTraceFetch(w http.ResponseWriter, r *http.Request, db *traces.DB) {
+	traceID := r.URL.Query().Get("trace_id")
+	if traceID == "" {
+		http.Error(w, fmt.Sprintf("invalid trace id %q", traceID), http.StatusBadRequest)
+		return
+	}
+	spans, err := db.FetchSpans(r.Context(), traceID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("cannot fetch spans: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if len(spans) == 0 {
+		http.Error(w, "no matching spans", http.StatusNotFound)
+		return
+	}
+	data, err := perfetto.EncodeSpans(spans)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("cannot encode spans: %v", err), http.StatusInternalServerError)
+		return
+	}
+	w.Write(data) //nolint:errcheck // response write error
 }

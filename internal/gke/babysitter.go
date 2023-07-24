@@ -28,6 +28,8 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
+	"github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/ServiceWeaver/weaver/runtime/traces"
 	"go.opentelemetry.io/otel/sdk/trace"
 )
 
@@ -109,8 +111,15 @@ func RunBabysitter(ctx context.Context) error {
 	defer traceExporter.Shutdown(ctx)
 
 	logSaver := logClient.Log
-	traceSaver := func(spans []trace.ReadOnlySpan) error {
-		return traceExporter.ExportSpans(ctx, spans)
+	traceSaver := func(spans *protos.TraceSpans) error {
+		if len(spans.Span) == 0 {
+			return nil
+		}
+		s := make([]trace.ReadOnlySpan, len(spans.Span))
+		for i, span := range spans.Span {
+			s[i] = &traces.ReadSpan{Span: span}
+		}
+		return traceExporter.ExportSpans(ctx, s)
 	}
 	metricSaver := func(metrics []*metrics.MetricSnapshot) error {
 		return metricsExporter.Export(ctx, metrics)
