@@ -23,7 +23,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/gke"
 	"github.com/ServiceWeaver/weaver-gke/internal/tool"
@@ -31,35 +30,18 @@ import (
 )
 
 var (
-	dashboardFlags   = flag.NewFlagSet("dashboard", flag.ContinueOnError)
-	dashboardProject = dashboardFlags.String("project", "", "Google Cloud project")
-	dashboardAccount = dashboardFlags.String("account", "", "Google Cloud user account")
-
-	// See setupCloudConfig.
-	cloudConfig    gke.CloudConfig
-	cloudConfigErr error
-	configInit     sync.Once
+	dashboardFlags = newCloudFlagSet("dashboard", flag.ContinueOnError)
 )
-
-// setupCloudConfig caches and returns the cloud config returned by
-// gke.SetupCloudConfig called on dashboardProject and dashboardAccount.
-func setupCloudConfig() (gke.CloudConfig, error) {
-	configInit.Do(func() {
-		flag.Parse()
-		cloudConfig, cloudConfigErr = gke.SetupCloudConfig(*dashboardProject, *dashboardAccount)
-	})
-	return cloudConfig, cloudConfigErr
-}
 
 var dashboardSpec = tool.DashboardSpec{
 	Tool:  "weaver gke",
-	Flags: dashboardFlags,
+	Flags: dashboardFlags.FlagSet,
 	Controller: func(ctx context.Context) (string, *http.Client, error) {
-		config, err := setupCloudConfig()
+		config, err := dashboardFlags.CloudConfig()
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(os.Stderr, "Using account %s in project %s", config.Account, config.Project)
+		fmt.Fprintf(os.Stderr, "Using project %s", config.Project)
 		return gke.Controller(ctx, config)
 	},
 	AppLinks: func(ctx context.Context, app string) (tool.Links, error) {
@@ -90,11 +72,14 @@ var dashboardSpec = tool.DashboardSpec{
 // links are provided for the app.
 func links(app, version string) (tool.Links, error) {
 	// Get the account and project.
-	config, err := setupCloudConfig()
+	config, err := dashboardFlags.CloudConfig()
 	if err != nil {
 		return tool.Links{}, err
 	}
-	account := url.QueryEscape(config.Account)
+	authuser := "0"
+	if config.Account != "" {
+		authuser = url.QueryEscape(config.Account)
+	}
 	project := url.QueryEscape(config.Project)
 
 	// Form a Google Cloud Logging query that matches this version's logs.
@@ -126,9 +111,9 @@ func links(app, version string) (tool.Links, error) {
 	}
 	traceQuery := url.QueryEscape(fmt.Sprintf(`("traceFilter":("chips":"%s"))`, traceFilter))
 	return tool.Links{
-		Metrics: fmt.Sprintf("https://console.cloud.google.com/monitoring/metrics-explorer?authuser=%s&project=%s", account, project),
-		Logs:    fmt.Sprintf("https://console.cloud.google.com/logs/query?authuser=%s&project=%s&query=%s", account, project, logQuery),
-		Traces:  fmt.Sprintf("https://console.cloud.google.com/traces/list?authuser=%s&project=%s&pageState=%s", account, project, traceQuery),
+		Metrics: fmt.Sprintf("https://console.cloud.google.com/monitoring/metrics-explorer?authuser=%s&project=%s", authuser, project),
+		Logs:    fmt.Sprintf("https://console.cloud.google.com/logs/query?authuser=%s&project=%s&query=%s", authuser, project, logQuery),
+		Traces:  fmt.Sprintf("https://console.cloud.google.com/traces/list?authuser=%s&project=%s&pageState=%s", authuser, project, traceQuery),
 	}, nil
 }
 

@@ -41,8 +41,6 @@ const (
 // PrepareRollout returns a new rollout request for the given application
 // version. This call may mutate the passed-in config.
 func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, error) {
-	cfg.Project = projectName
-
 	// Ensure all Service Weaver service processes (i.e., controller,
 	// distributor/manager) are running.
 	distributorPorts, err := ensureWeaverServices(ctx, cfg)

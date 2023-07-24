@@ -26,20 +26,18 @@ import (
 )
 
 var (
-	statusFlags   = flag.NewFlagSet("status", flag.ContinueOnError)
-	statusProject = statusFlags.String("project", "", "Google Cloud project")
-	statusAccount = statusFlags.String("account", "", "Google Cloud user account")
+	statusFlags = newCloudFlagSet("status", flag.ContinueOnError)
 )
 
 var statusSpec = tool.StatusSpec{
 	Tool:  "weaver gke",
-	Flags: statusFlags,
+	Flags: statusFlags.FlagSet,
 	Controller: func(ctx context.Context) (string, *http.Client, error) {
-		config, err := gke.SetupCloudConfig(*statusProject, *statusAccount)
+		config, err := statusFlags.CloudConfig()
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(os.Stderr, "Using account %s in project %s", config.Account, config.Project)
+		fmt.Fprintf(os.Stderr, "Using project %s", config.Project)
 		return gke.Controller(ctx, config)
 	},
 }

@@ -26,20 +26,18 @@ import (
 )
 
 var (
-	profileFlags   = flag.NewFlagSet("profile", flag.ContinueOnError)
-	profileProject = profileFlags.String("project", "", "Google Cloud project")
-	profileAccount = profileFlags.String("account", "", "Google Cloud user account")
+	profileFlags = newCloudFlagSet("profile", flag.ContinueOnError)
 )
 
 var profileSpec = tool.ProfileSpec{
 	Tool:  "weaver gke",
-	Flags: profileFlags,
+	Flags: profileFlags.FlagSet,
 	Controller: func(ctx context.Context) (string, *http.Client, error) {
-		config, err := gke.SetupCloudConfig(*profileProject, *profileAccount)
+		config, err := profileFlags.CloudConfig()
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(os.Stderr, "Using account %s in project %s\n", config.Account, config.Project)
+		fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
 		return gke.Controller(ctx, config)
 	},
 }

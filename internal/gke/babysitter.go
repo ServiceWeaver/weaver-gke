@@ -132,7 +132,7 @@ func RunBabysitter(ctx context.Context) error {
 
 	m := &manager.HttpClient{
 		Addr:      cfg.ManagerAddr,
-		TLSConfig: mtls.ClientTLSConfig(cfg.Project, caCert, getSelfCert, "manager"),
+		TLSConfig: mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager"),
 	}
 	mux := http.NewServeMux()
 	lis, err := net.Listen("tcp", "localhost:0")
@@ -140,14 +140,14 @@ func RunBabysitter(ctx context.Context) error {
 		return err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr())
-	_, err = babysitter.Start(ctx, cfg, replicaSet, meta.PodName, false /*useLocalhost*/, mux, selfAddr, m, caCert, getSelfCert, logSaver, traceSaver, metricSaver)
+	_, err = babysitter.Start(ctx, cfg, replicaSet, meta.Project, meta.PodName, false /*useLocalhost*/, mux, selfAddr, m, caCert, getSelfCert, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}
 
 	server := &http.Server{
 		Handler:   mux,
-		TLSConfig: mtls.ServerTLSConfig(cfg.Project, caCert, getSelfCert, "manager", "distributor"),
+		TLSConfig: mtls.ServerTLSConfig(meta.Project, caCert, getSelfCert, "manager", "distributor"),
 	}
 	return server.ServeTLS(lis, "", "")
 }

@@ -26,13 +26,7 @@ import (
 )
 
 var (
-	storeFlags   = flag.NewFlagSet("store", flag.ContinueOnError)
-	storeProject = storeFlags.String("project", "",
-		`GCP project where the store resides. If empty, a default cloud
-project on the local machine is used.`)
-	storeAccount = storeFlags.String("account", "",
-		`GCP user account to use to access the store. If empty, a default cloud
-	account on the local machine is used.`)
+	storeFlags  = newCloudFlagSet("store", flag.ContinueOnError)
 	storeRegion = storeFlags.String("region", gke.ConfigClusterRegion,
 		`Cloud region where the store resides. Default value is the region of
 the Service Weaver configuration cluster.`)
@@ -42,13 +36,13 @@ Service Weaver configuration cluster.`)
 
 	storeSpec = tool.StoreSpec{
 		Tool:  "weaver gke",
-		Flags: storeFlags,
+		Flags: storeFlags.FlagSet,
 		Store: func(ctx context.Context) (store.Store, error) {
-			config, err := gke.SetupCloudConfig(*storeProject, *storeAccount)
+			config, err := storeFlags.CloudConfig()
 			if err != nil {
 				return nil, err
 			}
-			fmt.Fprintf(os.Stderr, "Using account %s in project %s\n", config.Account, config.Project)
+			fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
 			cluster, err := gke.GetClusterInfo(ctx, config, *storeCluster, *storeRegion)
 			if err != nil {
 				return nil, err

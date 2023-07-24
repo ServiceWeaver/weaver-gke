@@ -26,20 +26,18 @@ import (
 )
 
 var (
-	killFlags   = flag.NewFlagSet("kill", flag.ContinueOnError)
-	killProject = killFlags.String("project", "", "Google Cloud project")
-	killAccount = killFlags.String("account", "", "Google Cloud user account")
+	killFlags = newCloudFlagSet("kill", flag.ContinueOnError)
 )
 
 var killSpec = tool.KillSpec{
 	Tool:  "weaver gke",
-	Flags: killFlags,
+	Flags: killFlags.FlagSet,
 	Controller: func(ctx context.Context) (string, *http.Client, error) {
-		config, err := gke.SetupCloudConfig(*killProject, *killAccount)
+		config, err := killFlags.CloudConfig()
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(os.Stderr, "Using account %s in project %s\n", config.Account, config.Project)
+		fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
 		return gke.Controller(ctx, config)
 	},
 }

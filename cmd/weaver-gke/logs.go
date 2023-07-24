@@ -27,9 +27,8 @@ import (
 )
 
 var (
-	logsFlags   = flag.NewFlagSet("logs", flag.ContinueOnError)
-	logsProject = logsFlags.String("project", "", "Google Cloud project")
-	logsAccount = logsFlags.String("account", "", "Google Cloud user account")
+	logsFlags = newCloudFlagSet("logs", flag.ContinueOnError)
+
 	// NOTE(mwhittaker): The Cloud Logging team informed us that they're
 	// working on speeding up queries over large time ranges, so in the future,
 	// we may be able to remove this flag.
@@ -39,7 +38,7 @@ var (
 	logsFreshness = logsFlags.String("freshness", "24h", "Only show logs that are this fresh (e.g., 300ms, 1.5h, 2h45m)")
 	logsSpec      = tool.LogsSpec{
 		Tool:  "weaver gke",
-		Flags: logsFlags,
+		Flags: logsFlags.FlagSet,
 		Rewrite: func(q logging.Query) (logging.Query, error) {
 			hasTime, err := gke.HasTime(q)
 			if err != nil {
@@ -70,11 +69,11 @@ a time based predicate in your query to override this behavior.
 			return q, nil
 		},
 		Source: func(context.Context) (logging.Source, error) {
-			config, err := gke.SetupCloudConfig(*logsProject, *logsAccount)
+			config, err := logsFlags.CloudConfig()
 			if err != nil {
 				return nil, err
 			}
-			fmt.Fprintf(os.Stderr, "Using account %s in project %s\n", config.Account, config.Project)
+			fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
 			return gke.LogSource(config)
 		},
 	}

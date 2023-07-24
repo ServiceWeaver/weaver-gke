@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"net/http"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
@@ -25,7 +26,8 @@ import (
 )
 
 var deploySpec = tool.DeploySpec{
-	Tool: "weaver gke-local",
+	Tool:  "weaver gke-local",
+	Flags: flag.NewFlagSet("deploy", flag.ContinueOnError),
 	Controller: func(ctx context.Context, _ *config.GKEConfig) (string, *http.Client, error) {
 		return local.Controller(ctx)
 	},
