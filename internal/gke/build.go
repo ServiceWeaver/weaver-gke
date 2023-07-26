@@ -28,14 +28,18 @@ import (
 )
 
 var dockerfileTmpl = template.Must(template.New("Dockerfile").Parse(`
+{{if .GoInstall}}
+FROM golang:1.20-bullseye as builder
+RUN echo ""{{range .GoInstall}} && go install {{.}}{{end}}
+{{end}}
 FROM ubuntu:rolling
 WORKDIR /weaver/
 RUN apt-get update
 RUN apt-get install -y ca-certificates
-RUN apt-get install -y golang-go{{range .GoInstall}}
-RUN GOPATH=/weaver/ go install {{.}}{{end}}
-RUN if [ "$(ls -A /weaver/bin)" ]; then cp /weaver/bin/* /weaver/; fi
 COPY . .
+{{if .GoInstall}}
+COPY --from=builder /go/bin/ /weaver/
+{{end}}
 ENTRYPOINT ["/bin/bash", "-c"]
 `))
 
