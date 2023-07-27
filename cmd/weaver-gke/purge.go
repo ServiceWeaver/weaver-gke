@@ -27,13 +27,13 @@ import (
 )
 
 var (
-	purgeFlags = flag.NewFlagSet("purge", flag.ContinueOnError)
+	purgeFlags = newCloudFlagSet("purge", flag.ContinueOnError)
 	purgeForce = purgeFlags.Bool("force", false, "Purge without prompt")
 )
 
 var purgeCmd = tool.Command{
 	Name:        "purge",
-	Flags:       purgeFlags,
+	Flags:       purgeFlags.FlagSet,
 	Description: "Purge cloud resources",
 	Help: fmt.Sprintf(`Usage:
   weaver gke purge [--force]
@@ -45,7 +45,7 @@ Flags:
 Description:
   "weaver gke purge" deletes all cloud resources created by "weaver gke
   deploy". This terminates all running jobs and deletes all data.`,
-		tool.FlagsHelp(purgeFlags)),
+		tool.FlagsHelp(purgeFlags.FlagSet)),
 
 	Fn: purge,
 	// TODO(mwhittaker): Unhide the purge command when it's fully implemented.
@@ -74,7 +74,7 @@ Enter (y)es to continue: `)
 		}
 	}
 
-	config, err := gke.SetupCloudConfig("", "")
+	config, err := purgeFlags.CloudConfig()
 	if err != nil {
 		return nil
 	}

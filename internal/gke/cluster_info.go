@@ -15,8 +15,6 @@
 package gke
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -88,7 +86,6 @@ func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region str
 		os.TempDir(), fmt.Sprintf("serviceweaver_%s_%s", cluster, uuid.New().String()))
 	if _, err := runGcloud(config, "", cmdOptions{
 		EnvOverrides: []string{
-			"USE_GKE_GCLOUD_AUTH_PLUGIN=False",
 			fmt.Sprintf("KUBECONFIG=%s", kubeFileName),
 		}},
 		"container", "clusters", "get-credentials", cluster, "--region", region,
@@ -96,28 +93,13 @@ func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region str
 		return nil, err
 	}
 	defer os.Remove(kubeFileName)
-	kubeFile, err := os.Open(kubeFileName)
+	contents, err := os.ReadFile(kubeFileName)
 	if err != nil {
 		return nil, err
 	}
 
-	// Manually add the --account and --project flags to the gcloud command in
-	// the kubernetes config. These are dropped by the 'get-credentials' command
-	// above, which causes the account and project from the currently active
-	// gcloud config to be used.
-	var contents bytes.Buffer
-	scanner := bufio.NewScanner(kubeFile)
-	for scanner.Scan() {
-		line := scanner.Text()
-		contents.Write([]byte(line))
-		if strings.Contains(line, "cmd-args:") {
-			contents.Write([]byte(fmt.Sprintf(" --account %s --project %s", config.Account, config.Project)))
-		}
-		contents.WriteRune('\n')
-	}
-
 	// Parse the config and fill the cluster info.
-	kubeConfig, err := clientcmd.RESTConfigFromKubeConfig(contents.Bytes())
+	kubeConfig, err := clientcmd.RESTConfigFromKubeConfig(contents)
 	if err != nil {
 		return nil, fmt.Errorf("internal error: error creating kube config: %w", err)
 	}

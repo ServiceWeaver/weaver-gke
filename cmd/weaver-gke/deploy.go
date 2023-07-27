@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"os"
@@ -29,36 +30,40 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 )
 
-var deploySpec = tool.DeploySpec{
-	Tool: "weaver gke",
-	Controller: func(ctx context.Context, cfg *config.GKEConfig) (string, *http.Client, error) {
-		config, err := gke.SetupCloudConfig(cfg.Project, cfg.Account)
-		if err != nil {
-			return "", nil, err
-		}
-		return gke.Controller(ctx, config)
-	},
-	PrepareRollout: func(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, error) {
-		config, err := gke.SetupCloudConfig(cfg.Project, cfg.Account)
-		if err != nil {
-			return nil, err
-		}
-		fmt.Fprintf(os.Stderr, "Using account %s in project %s\n",
-			config.Account, config.Project)
-		toolBinVersion, err := getToolVersion()
-		if err != nil {
-			return nil, fmt.Errorf("error extracting the tool binary version: %w", err)
-		}
-		return gke.PrepareRollout(ctx, config, cfg, toolBinVersion)
-	},
-	Source: func(ctx context.Context, cfg *config.GKEConfig) (logging.Source, error) {
-		config, err := gke.SetupCloudConfig(cfg.Project, cfg.Account)
-		if err != nil {
-			return nil, err
-		}
-		return gke.LogSource(config)
-	},
-}
+var (
+	deployFlags = newCloudFlagSet("deploy", flag.ContinueOnError)
+
+	deploySpec = tool.DeploySpec{
+		Tool:  "weaver gke",
+		Flags: deployFlags.FlagSet,
+		Controller: func(ctx context.Context, cfg *config.GKEConfig) (string, *http.Client, error) {
+			config, err := deployFlags.CloudConfig()
+			if err != nil {
+				return "", nil, err
+			}
+			return gke.Controller(ctx, config)
+		},
+		PrepareRollout: func(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, error) {
+			config, err := deployFlags.CloudConfig()
+			if err != nil {
+				return nil, err
+			}
+			fmt.Fprintf(os.Stderr, "Deploying to project %s\n", config.Project)
+			toolBinVersion, err := getToolVersion()
+			if err != nil {
+				return nil, fmt.Errorf("error extracting the tool binary version: %w", err)
+			}
+			return gke.PrepareRollout(ctx, config, cfg, toolBinVersion)
+		},
+		Source: func(ctx context.Context, cfg *config.GKEConfig) (logging.Source, error) {
+			config, err := deployFlags.CloudConfig()
+			if err != nil {
+				return nil, err
+			}
+			return gke.LogSource(config)
+		},
+	}
+)
 
 // getToolVersion returns the version of the tool binary.
 func getToolVersion() (string, error) {

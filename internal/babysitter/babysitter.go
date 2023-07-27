@@ -51,6 +51,7 @@ type Babysitter struct {
 	selfAddr       string // HTTP address for the listener
 	cfg            *config.GKEConfig
 	replicaSet     string
+	projectName    string
 	podName        string
 	envelope       *envelope.Envelope
 	manager        endpoints.Manager
@@ -73,6 +74,7 @@ func Start(
 	ctx context.Context,
 	cfg *config.GKEConfig,
 	replicaSet string,
+	projectName string,
 	podName string,
 	useLocalhost bool,
 	mux *http.ServeMux,
@@ -123,6 +125,7 @@ func Start(
 		mux:            mux,
 		cfg:            cfg,
 		replicaSet:     replicaSet,
+		projectName:    projectName,
 		podName:        podName,
 		envelope:       e,
 		selfAddr:       selfAddr,
@@ -374,7 +377,7 @@ func (b *Babysitter) GetSelfCertificate(context.Context, *protos.GetSelfCertific
 
 // VerifyClientCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) VerifyClientCertificate(_ context.Context, req *protos.VerifyClientCertificateRequest) (*protos.VerifyClientCertificateReply, error) {
-	identity, err := mtls.VerifyRawCertificateChain(b.cfg.Project, b.caCert, req.CertChain)
+	identity, err := mtls.VerifyRawCertificateChain(b.projectName, b.caCert, req.CertChain)
 	if err != nil {
 		return nil, err
 	}
@@ -384,7 +387,7 @@ func (b *Babysitter) VerifyClientCertificate(_ context.Context, req *protos.Veri
 
 // VerifyServerCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) VerifyServerCertificate(_ context.Context, req *protos.VerifyServerCertificateRequest) (*protos.VerifyServerCertificateReply, error) {
-	actual, err := mtls.VerifyRawCertificateChain(b.cfg.Project, b.caCert, req.CertChain)
+	actual, err := mtls.VerifyRawCertificateChain(b.projectName, b.caCert, req.CertChain)
 	if err != nil {
 		return nil, err
 	}

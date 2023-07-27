@@ -23,18 +23,8 @@ import "runtime/protos/config.proto";
 // of user specified configuration and Service Weaver provided information
 // specific to a particular execution.
 message GKEConfig {
-  // Cloud project the application should be deployed to. If empty, the
-  // project value will be extracted from the active gcloud configuration
-  // on the deploying machine.
-  string project = 1;
-
-  // Cloud account that should be used to deploy the application. If empty,
-  // the account value will be extracted from the active gcloud
-  // configuration on the deploying machine.
-  string account = 2;
-
-  // List of unique regions to deploy the application to. Service Weaver will manage the
-  // clusters in the given regions.
+  // List of unique regions to deploy the application to. Service Weaver will
+  // manage the clusters in the given regions.
   //
   // If empty, Service Weaver will pick regions automatically.
   //
@@ -67,8 +57,8 @@ message GKEConfig {
   // application.
   bool mtls = 8;
 
-  // Address of the manager local to a Service Weaver process. This field is typically
-  // filled by the manager, before starting a Service Weaver process.
+  // Address of the manager local to a Service Weaver process. This field is
+  // typically filled by the manager, before starting a Service Weaver process.
   string manager_addr = 5;
 
   // The URL of the container used to deploy the application (e.g.,

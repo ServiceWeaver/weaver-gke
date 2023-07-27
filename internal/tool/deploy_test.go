@@ -52,18 +52,17 @@ func TestMakeGKEConfig(t *testing.T) {
 			name: "simple",
 			config: `
 [gke]
-project = "foo"
-account = "bar"
+mtls = true
 `,
-			expect: &config.GKEConfig{Project: "foo", Account: "bar"},
+			expect: &config.GKEConfig{Mtls: true},
 		},
 		{
 			name: "long-key",
 			config: `
 ["github.com/ServiceWeaver/weaver-gke/internal/gke"]
-project = "bar"
+mtls = true
 `,
-			expect: &config.GKEConfig{Project: "bar"},
+			expect: &config.GKEConfig{Mtls: true},
 		},
 		{
 			name: "listeners",

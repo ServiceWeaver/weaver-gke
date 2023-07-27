@@ -92,7 +92,7 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 	// Connection to the manager.
 	m := &manager.HttpClient{
 		Addr:      cfg.ManagerAddr,
-		TLSConfig: mtls.ClientTLSConfig(cfg.Project, caCert, selfCertGetter, "manager"),
+		TLSConfig: mtls.ClientTLSConfig(projectName, caCert, selfCertGetter, "manager"),
 	}
 	mux := http.NewServeMux()
 	hostname, err := os.Hostname()
@@ -104,7 +104,7 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 		return nil, err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr().String())
-	b, err := babysitter.Start(ctx, cfg, replicaSet, podName, true /*useLocalhost*/, mux, selfAddr, m, caCert, selfCertGetter, logSaver, traceSaver, metricExporter)
+	b, err := babysitter.Start(ctx, cfg, replicaSet, projectName, podName, true /*useLocalhost*/, mux, selfAddr, m, caCert, selfCertGetter, logSaver, traceSaver, metricExporter)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 	// Start the server without blocking.
 	server := &http.Server{
 		Handler:   mux,
-		TLSConfig: mtls.ServerTLSConfig(cfg.Project, caCert, selfCertGetter, "manager", "distributor"),
+		TLSConfig: mtls.ServerTLSConfig(projectName, caCert, selfCertGetter, "manager", "distributor"),
 	}
 	go server.ServeTLS(lis, "", "")
 

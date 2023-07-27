@@ -344,10 +344,6 @@ func enableMultiClusterServices(config CloudConfig) error {
 }
 
 func finalizeConfig(cloudConfig CloudConfig, gkeConfig *config.GKEConfig) error {
-	// Override the project and account values in the app config.
-	gkeConfig.Project = cloudConfig.Project
-	gkeConfig.Account = cloudConfig.Account
-
 	// Finalize the rollout duration.
 	if gkeConfig.Deployment.App.RolloutNanos == 0 {
 		scanner := bufio.NewScanner(os.Stdin)

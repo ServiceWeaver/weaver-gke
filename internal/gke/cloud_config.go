@@ -17,6 +17,7 @@ package gke
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 
 	"cloud.google.com/go/compute/metadata"
@@ -24,32 +25,42 @@ import (
 	"google.golang.org/api/option"
 )
 
+const cloudTokenEnvVar = "CLOUDSDK_AUTH_ACCESS_TOKEN"
+
 // CloudConfig stores the configuration information for a cloud project.
 type CloudConfig struct {
 	Project       string // Cloud project.
-	Account       string // Cloud user account.
 	ProjectNumber string // Cloud project number
 
-	// TokenSource associated with the account and project.
-	tokenSource oauth2.TokenSource
+	// TokenSource used for accessing the cloud project.
+	TokenSource oauth2.TokenSource
+
+	// Account name associated with the project. This value is filled as
+	// best-effort and may be empty (e.g., if token is used for access).
+	Account string
 }
 
 // ClientOptions returns the client options that should be passed to
 // cloud clients for proper authentication.
 func (c *CloudConfig) ClientOptions() []option.ClientOption {
 	var opt []option.ClientOption
-	if c.tokenSource != nil {
-		opt = append(opt, option.WithTokenSource(c.tokenSource))
+	if c.TokenSource != nil {
+		opt = append(opt, option.WithTokenSource(c.TokenSource))
 	}
 	return opt
 }
 
-// SetupCloudConfig sets up the cloud configuration with the given project and
-// account names. If a project or an account name is empty, their values
-// are retrieved from the active gcloud configuration on the local
-// machine.
+// SetupCloudConfig sets up the cloud configuration for the given project,
+// using the provided account name and access token. If the project name is
+// empty, its value is retrieved from the active gcloud configuration on the
+// local machine. If access token is empty, and if the
+// CLOUDSDK_AUTH_ACCESS_TOKEN environment variable is set, the environment
+// variable value is used. Otherwise, a new access token is generated
+// for the provided account name. If the account name is also empty, its
+// value is retrieved from the active gcloud configuration on the local machine.
+//
 // REQUIRES: The caller is running on a user machine.
-func SetupCloudConfig(project, account string) (CloudConfig, error) {
+func SetupCloudConfig(project, token, account string) (CloudConfig, error) {
 	// Check that google cloud SDK is installed.
 	if err := checkSDK(); err != nil {
 		return CloudConfig{}, err
@@ -62,37 +73,56 @@ func SetupCloudConfig(project, account string) (CloudConfig, error) {
 		project, err = runCmd(
 			"", cmdOptions{}, "gcloud", "config", "get-value", "project")
 		if err != nil {
-			return CloudConfig{}, fmt.Errorf("couldn't find an active cloud project: "+
-				"please run \"gcloud init\": %w", err)
+			return CloudConfig{}, fmt.Errorf("couldn't find an active cloud "+
+				"project: please run \"gcloud init\": %w", err)
 		}
 		project = strings.TrimSuffix(project, "\n") // remove trailing newline
-	}
-	if account == "" {
-		var err error
-		account, err = runCmd(
-			"", cmdOptions{}, "gcloud", "config", "get-value", "account")
-		if err != nil {
+		if project == "" {
 			return CloudConfig{}, fmt.Errorf(
-				"couldn't find an active cloud account: please run "+
-					"\"gcloud init\": %w", err)
+				"empty active cloud project: please run \"gcloud init\"")
 		}
-		account = strings.TrimSuffix(account, "\n") // remove trailing newline
 	}
-	number, err := runCmd(
-		"", cmdOptions{}, "gcloud", "projects", "describe", project,
-		"--format=value(projectNumber)", "--project", project, "--account",
-		account)
+	var accountErr error
+	if account == "" {
+		account, accountErr = runCmd(
+			"", cmdOptions{}, "gcloud", "config", "get-value", "account")
+		if accountErr != nil {
+			account = ""
+		} else {
+			account = strings.TrimSuffix(account, "\n") // remove trailing newline
+			if account == "" {
+				accountErr = fmt.Errorf("empty account name in gcloud configuration")
+			}
+		}
+	}
+
+	// Create the token source.
+	var source oauth2.TokenSource
+	if token != "" {
+		source = &fixedTokenSource{token: token}
+	} else if os.Getenv(cloudTokenEnvVar) != "" {
+		source = &fixedTokenSource{token: os.Getenv(cloudTokenEnvVar)}
+	} else if account != "" {
+		source = &refreshingTokenSource{account: account}
+	} else {
+		return CloudConfig{}, fmt.Errorf("empty token and account error: %w", accountErr)
+	}
+	config := CloudConfig{
+		Project:     project,
+		Account:     account,
+		TokenSource: source,
+	}
+
+	number, err := runGcloud(
+		config, "", cmdOptions{}, "projects", "describe", project,
+		"--format=value(projectNumber)", "--project", project)
 	if err != nil {
 		return CloudConfig{}, fmt.Errorf("couldn't find the numeric project "+
 			"id for project %q: %w", project, err)
 	}
 	number = strings.TrimSuffix(number, "\n") // remove trailing newline
-	return CloudConfig{
-		Project:       project,
-		Account:       account,
-		ProjectNumber: number,
-		tokenSource:   &tokenSource{project: project, account: account},
-	}, nil
+	config.ProjectNumber = number
+	return config, nil
 }
 
 // checkSDK checks that Google Cloud SDK is installed.

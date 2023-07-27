@@ -54,13 +54,11 @@ const (
 	deployTimeout = 8 * time.Minute
 )
 
-var (
-	deployFlags = flag.NewFlagSet("deploy", flag.ContinueOnError)
-	detach      = deployFlags.Bool("detach", false, "Don't follow logs after deploying")
-)
-
 type DeploySpec struct {
-	Tool string // e.g., weaver-gke, weaver-gke-local
+	Tool   string        // e.g., weaver-gke, weaver-gke-local
+	Flags  *flag.FlagSet // command line flags
+	detach *bool         // detach flag value
+
 	// Controller returns the HTTP address of the controller and an HTTP client
 	// that we can use to contact the controller.
 	Controller func(context.Context, *config.GKEConfig) (string, *http.Client, error)
@@ -71,16 +69,17 @@ type DeploySpec struct {
 
 // DeployCmd returns the "deploy" command.
 func DeployCmd(spec *DeploySpec) *tool.Command {
+	spec.detach = spec.Flags.Bool("detach", false, "Don't follow logs after deploying")
 	return &tool.Command{
 		Name:        "deploy",
-		Flags:       deployFlags,
+		Flags:       spec.Flags,
 		Description: "Deploy a Service Weaver app",
 		Help: fmt.Sprintf(`Usage:
   %s deploy <configfile>
 
 Flags:
   -h, --help	Print this help message.
-%s`, spec.Tool, tool.FlagsHelp(deployFlags)),
+%s`, spec.Tool, tool.FlagsHelp(spec.Flags)),
 		Fn: spec.deployFn,
 	}
 }
@@ -117,8 +116,6 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		PublicHostname string `toml:"public_hostname"`
 	}
 	type gkeConfigSchema struct {
-		Project   string
-		Account   string
 		Regions   []string
 		Listeners map[string]lisOpts
 		MTLS      bool
@@ -153,8 +150,6 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
-		Project:   parsed.Project,
-		Account:   parsed.Account,
 		Regions:   parsed.Regions,
 		Listeners: listeners,
 		Deployment: &protos.Deployment{
@@ -223,12 +218,12 @@ persists, please file an issue at https://github.com/ServiceWeaver/weaver/issues
 		return err
 	}
 	fmt.Printf("Version %q of app %q started successfully.\n", deployment.Id, deployment.App.Name)
-	if !*detach {
+	if !*d.detach {
 		fmt.Println("Note that stopping this binary will not affect the app in any way.")
 	}
 
 	query := fmt.Sprintf(`version == %q`, logging.Shorten(deployment.Id))
-	if *detach {
+	if *d.detach {
 		fmt.Printf(`To watch the version's logs, run the following command:
 
     %s logs --follow '%s'

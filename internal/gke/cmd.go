@@ -31,9 +31,11 @@ type cmdOptions struct {
 // the given arguments, using the account and the project specified
 // in the given config.
 func runGcloud(config CloudConfig, msg string, opts cmdOptions, args ...string) (string, error) {
-	args = append([]string{
-		"--project", config.Project, "--account", config.Account,
-	}, args...)
+	token, err := config.TokenSource.Token()
+	if err != nil {
+		return "", fmt.Errorf("cannot get cloud access token: %w", err)
+	}
+	opts.EnvOverrides = append(opts.EnvOverrides, fmt.Sprintf("CLOUDSDK_AUTH_ACCESS_TOKEN=%s", token.AccessToken))
 	return runCmd(msg, opts, "gcloud", args...)
 }
 

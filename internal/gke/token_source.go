@@ -22,11 +22,10 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// tokenSource is an oauth2.TokenSource that generates access tokens using
-// the gcloud command.
-type tokenSource struct {
+// refreshingTokenSource is an oauth2.TokenSource that generates the access
+// token using the gcloud command and refreshes the token if needed.
+type refreshingTokenSource struct {
 	// These fields are immutable after construction.
-	project string
 	account string
 
 	mu     sync.Mutex
@@ -34,9 +33,9 @@ type tokenSource struct {
 	expiry time.Time
 }
 
-var _ oauth2.TokenSource = &tokenSource{}
+var _ oauth2.TokenSource = &refreshingTokenSource{}
 
-func (s *tokenSource) Token() (*oauth2.Token, error) {
+func (s *refreshingTokenSource) Token() (*oauth2.Token, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -49,7 +48,7 @@ func (s *tokenSource) Token() (*oauth2.Token, error) {
 	token, err := runCmd(
 		"", cmdOptions{},
 		"gcloud", "auth", "--format", "value(token)", "print-access-token",
-		"--project", s.project, "--account", s.account,
+		s.account,
 	)
 	if err != nil {
 		return nil, err
@@ -66,4 +65,16 @@ func (s *tokenSource) Token() (*oauth2.Token, error) {
 	s.token = &oauth2.Token{AccessToken: token}
 	s.expiry = time.Now().Add(tokenValidity)
 	return s.token, nil
+}
+
+// fixedTokenSource is a oauth2.TokenSource that returns a fixed token
+// value.
+type fixedTokenSource struct {
+	token string
+}
+
+var _ oauth2.TokenSource = &fixedTokenSource{}
+
+func (s *fixedTokenSource) Token() (*oauth2.Token, error) {
+	return &oauth2.Token{AccessToken: s.token}, nil
 }
