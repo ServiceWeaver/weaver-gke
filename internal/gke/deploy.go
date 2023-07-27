@@ -39,6 +39,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
+	"github.com/ServiceWeaver/weaver-gke/internal/version"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"google.golang.org/api/cloudresourcemanager/v1"
@@ -214,7 +215,8 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		files = append(files, toolBinPath)
 	} else {
 		// Cross-compile the weaver-gke tool binary inside the container.
-		goInstall = append(goInstall, "github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@latest")
+		toolVersion := fmt.Sprintf("v%d.%d.%d", version.Major, version.Minor, version.Patch)
+		goInstall = append(goInstall, "github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@"+toolVersion)
 	}
 	go func() {
 		defer close(buildDone)
