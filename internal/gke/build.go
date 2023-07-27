@@ -109,6 +109,8 @@ steps:
   - '.'
 images: {{range $tag := .Tags}}
   - '{{$tag}}' {{end}}
+options:
+  logging: CLOUD_LOGGING_ONLY
 `
 	if err := template.Must(template.New("cloudbuild").Parse(tmpl)).Execute(cloudbuildFile, spec); err != nil {
 		cloudbuildFile.Close()
