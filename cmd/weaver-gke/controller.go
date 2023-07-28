@@ -16,20 +16,14 @@ package main
 
 import (
 	"context"
-	"flag"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/gke"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
 )
 
-var (
-	controllerFlags = flag.NewFlagSet("controller", flag.ContinueOnError)
-	controllerPort  = controllerFlags.Int("port", 0, "Controller port")
-)
-
 var controllerCmd = tool.Command{
 	Name:        "controller",
-	Flags:       controllerFlags,
+	Flags:       nil,
 	Description: "The GKE controller",
 	Help: `Usage:
   weaver gke controller
@@ -37,7 +31,7 @@ var controllerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return gke.RunController(ctx, *controllerPort)
+		return gke.RunController(ctx)
 	},
 	Hidden: true,
 }
