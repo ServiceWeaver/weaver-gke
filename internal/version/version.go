@@ -18,5 +18,5 @@ const (
 	// weaver-gke module version (Major.Minor.Patch).
 	Major = 0
 	Minor = 18
-	Patch = 0
+	Patch = 2
 )
