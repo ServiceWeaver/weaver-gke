@@ -41,6 +41,12 @@ const (
 // PrepareRollout returns a new rollout request for the given application
 // version. This call may mutate the passed-in config.
 func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.RolloutRequest, error) {
+	// Ensure the CA certificate/key files have been created on the local
+	// machine. This ensures that there is no race when creating these files
+	// between the tool and weaver services below (i.e., controller,
+	// distributor, and manager).
+	ensureCACert()
+
 	// Ensure all Service Weaver service processes (i.e., controller,
 	// distributor/manager) are running.
 	distributorPorts, err := ensureWeaverServices(ctx, cfg)
