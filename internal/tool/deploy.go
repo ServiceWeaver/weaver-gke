@@ -274,11 +274,13 @@ func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) er
 	if err := pickDeployRegions(cfg); err != nil {
 		return err
 	}
-	controllerAddr, controllerClient, err := d.Controller(ctx, cfg)
+
+	req, err := d.PrepareRollout(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	req, err := d.PrepareRollout(ctx, cfg)
+
+	controllerAddr, controllerClient, err := d.Controller(ctx, cfg)
 	if err != nil {
 		return err
 	}

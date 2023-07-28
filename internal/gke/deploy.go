@@ -139,6 +139,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 		"multiclusterservicediscovery.googleapis.com",
 		"multiclusteringress.googleapis.com",
 		"privateca.googleapis.com",
+		"serviceusage.googleapis.com",
 		"trafficdirector.googleapis.com",
 	); err != nil {
 		return nil, err
