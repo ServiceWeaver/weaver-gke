@@ -135,7 +135,11 @@ func RunBabysitter(ctx context.Context) error {
 		TLSConfig: mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager"),
 	}
 	mux := http.NewServeMux()
-	lis, err := net.Listen("tcp", "localhost:0")
+	host, err := os.Hostname()
+	if err != nil {
+		return err
+	}
+	lis, err := net.Listen("tcp", fmt.Sprintf("%s:0", host))
 	if err != nil {
 		return err
 	}
