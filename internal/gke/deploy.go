@@ -947,8 +947,8 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 // and running in the given region and is set up to host Service Weaver applications.
 // It returns the cluster information and the IP address of the gateway that
 // routes internal traffic to Service Weaver applications in the cluster.
-func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, cfg, name, region)
+func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, clusterName, region string) (*ClusterInfo, string, error) {
+	cluster, err := ensureManagedCluster(ctx, config, cfg, clusterName, region)
 	if err != nil {
 		return nil, "", err
 	}
@@ -981,6 +981,11 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 			Verbs:     []string{"*"},
 		},
 		{
+			APIGroups: []string{"rbac.authorization.k8s.io"}, // Auth
+			Resources: []string{"clusterrole", "rolebinding"},
+			Verbs:     []string{"*"},
+		},
+		{
 			APIGroups: []string{"batch"}, // Batch APIs.
 			Resources: []string{"jobs"},
 			Verbs:     []string{"*"},
@@ -1002,6 +1007,24 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 	// Setup the service account used for spare capacity.
 	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, spareKubeServiceAccount, "" /*iamAccount*/, nil /*labels*/, nil /*policyRules*/); err != nil {
 		return nil, "", err
+	}
+
+	// Setup service accounts used for application replica sets.
+	for _, sa := range cfg.ComponentIdentity {
+		if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, sa, applicationIAMServiceAccount,
+			map[string]string{
+				appKey:     name{cfg.Deployment.App.Name}.DNSLabel(),
+				versionKey: name{cfg.Deployment.Id}.DNSLabel(),
+			},
+			[]rbacv1.PolicyRule{
+				{
+					APIGroups: []string{""}, // Core APIs.
+					Resources: []string{"pods"},
+					Verbs:     []string{"get", "list", "watch"},
+				},
+			}); err != nil {
+			return nil, "", err
+		}
 	}
 
 	// Ensure Service Weaver priority classes have been created in the cluster.
