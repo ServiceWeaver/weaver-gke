@@ -323,6 +323,9 @@ func (b *Babysitter) watchRouted(ctx context.Context, component string) {
 
 // watchNonRouted watches and updates the routing information for an component
 // that isn't routed.
+// TODO(spetrovic): Re-consider the decision to move watching into the
+// babysitter. Currently, we watch from two places (i.e., here and the
+// assigner).
 func (b *Babysitter) watchNonRouted(ctx context.Context, component, replicaSet string) {
 outer:
 	for r := retry.Begin(); r.Continue(ctx); {

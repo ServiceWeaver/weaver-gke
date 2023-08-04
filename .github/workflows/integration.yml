@@ -83,5 +83,6 @@ jobs:
 
     - name: Cleanup the echo app
       if: always()
-      run: ./cmd/weaver-gke/weaver-gke kill --force echo-${{env.VERSION}}
+      run: 
+        ./cmd/weaver-gke/weaver-gke kill --force echo-${{env.VERSION}} || true
 
