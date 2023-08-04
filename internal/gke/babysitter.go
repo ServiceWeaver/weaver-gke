@@ -27,10 +27,18 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/manager"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
+	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/traces"
 	"go.opentelemetry.io/otel/sdk/trace"
+	"golang.org/x/exp/slog"
+	v1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/watch"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 // RunBabysitter creates and runs a GKE babysitter.
@@ -81,6 +89,16 @@ func RunBabysitter(ctx context.Context) error {
 	meta.NodeName = os.Getenv(nodeNameEnvKey)
 	meta.PodName = os.Getenv(podNameEnvKey)
 
+	// Get the clientset to access Kubernetes APIs.
+	kubeConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return fmt.Errorf("cannot get kubernetes config: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(kubeConfig)
+	if err != nil {
+		return fmt.Errorf("cannot get kubernetes clientset: %w", err)
+	}
+
 	// Unset some environment variables, so that we don't pollute the Service Weaver
 	// application's environment.
 	for _, v := range []string{containerMetadataEnvKey, nodeNameEnvKey, podNameEnvKey} {
@@ -111,6 +129,16 @@ func RunBabysitter(ctx context.Context) error {
 	defer traceExporter.Shutdown(ctx)
 
 	logSaver := logClient.Log
+	logger := slog.New(&logging.LogHandler{
+		Opts: logging.Options{
+			App:        cfg.Deployment.App.Name,
+			Deployment: cfg.Deployment.Id,
+			Component:  "Babysitter",
+			Weavelet:   meta.PodName,
+			Attrs:      []string{"serviceweaver/system", ""},
+		},
+		Write: logSaver,
+	})
 	traceSaver := func(spans *protos.TraceSpans) error {
 		if len(spans.Span) == 0 {
 			return nil
@@ -130,6 +158,10 @@ func RunBabysitter(ctx context.Context) error {
 		return err
 	}
 
+	getReplicaWatcher := func(ctx context.Context, replicaSet string) (babysitter.ReplicaWatcher, error) {
+		return newReplicaWatcher(ctx, clientset, logger, cfg.Deployment, replicaSet)
+	}
+
 	m := &manager.HttpClient{
 		Addr:      cfg.ManagerAddr,
 		TLSConfig: mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager"),
@@ -144,7 +176,7 @@ func RunBabysitter(ctx context.Context) error {
 		return err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr())
-	_, err = babysitter.Start(ctx, cfg, replicaSet, meta.Project, meta.PodName, false /*useLocalhost*/, mux, selfAddr, m, caCert, getSelfCert, logSaver, traceSaver, metricSaver)
+	_, err = babysitter.Start(ctx, logger, cfg, replicaSet, meta.Project, meta.PodName, false /*useLocalhost*/, weaveletPort, mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}
@@ -154,6 +186,98 @@ func RunBabysitter(ctx context.Context) error {
 		TLSConfig: mtls.ServerTLSConfig(meta.Project, caCert, getSelfCert, "manager", "distributor"),
 	}
 	return server.ServeTLS(lis, "", "")
+}
+
+// replicaWatcher is an implementation of the babysitter.ReplicaWatcher
+// interface for the GKE deployer.
+// The implementation is not thread safe.
+type replicaWatcher struct {
+	replicaSet string
+	logger     *slog.Logger
+	addrs      map[string]string // pod name -> weavelet IP address
+	watcher    watch.Interface
+}
+
+var _ babysitter.ReplicaWatcher = &replicaWatcher{}
+
+func newReplicaWatcher(ctx context.Context, clientset *kubernetes.Clientset, logger *slog.Logger, dep *protos.Deployment, replicaSet string) (*replicaWatcher, error) {
+	selector := labels.SelectorFromSet(labels.Set{
+		appKey:        name{dep.App.Name}.DNSLabel(),
+		versionKey:    name{dep.Id}.DNSLabel(),
+		replicaSetKey: name{replicaSet}.DNSLabel(),
+	})
+	opts := metav1.ListOptions{LabelSelector: selector.String()}
+	watcher, err := clientset.CoreV1().Pods(namespaceName).Watch(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create watcher for replica set %s: %w", replicaSet, err)
+	}
+	return &replicaWatcher{
+		replicaSet: replicaSet,
+		logger:     logger,
+		addrs:      map[string]string{},
+		watcher:    watcher,
+	}, nil
+}
+
+// GetReplicas implements the babysitter.ReplicaWatcher interface.
+func (w *replicaWatcher) GetReplicas(ctx context.Context) ([]string, error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case event, ok := <-w.watcher.ResultChan():
+			if !ok { // channel closed
+				return nil, fmt.Errorf("watcher closed")
+			}
+
+			// Read all events available on the channel to avoid incremental
+			// replica changes.
+			events := []watch.Event{event}
+		inner:
+			for {
+				select {
+				case event, ok := <-w.watcher.ResultChan():
+					if !ok { // channel closed
+						return nil, fmt.Errorf("watcher closed")
+					}
+					events = append(events, event)
+				default:
+					// Channel empty.
+					break inner
+				}
+			}
+
+			// Process available channel events.
+			changed := false
+			for _, event := range events {
+				switch event.Type {
+				case watch.Added, watch.Modified:
+					pod := event.Object.(*v1.Pod)
+					if pod.Status.PodIP != "" && w.addrs[pod.Name] != pod.Status.PodIP {
+						w.addrs[pod.Name] = pod.Status.PodIP
+						changed = true
+					}
+				case watch.Deleted:
+					pod := event.Object.(*v1.Pod)
+					if _, ok := w.addrs[pod.Name]; ok {
+						delete(w.addrs, pod.Name)
+						changed = true
+					}
+				case watch.Error:
+					w.logger.Error("watch error for replica set: will retry", "err", event, "replica set", w.replicaSet)
+					continue
+				}
+			}
+			if !changed {
+				continue
+			}
+			replicas := []string{}
+			for _, addr := range w.addrs {
+				replicas = append(replicas, fmt.Sprintf("tcp://%s:%d", addr, weaveletPort))
+			}
+			return replicas, nil
+		}
+	}
 }
 
 // gkeConfigFromEnv reads config.GKEConfig from the Service Weaver internal

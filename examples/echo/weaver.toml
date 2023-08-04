@@ -1,0 +1,12 @@
+[serviceweaver]
+binary = "./echo"
+
+[single]
+listeners.echo = {address = "localhost:9000"}
+
+[multi]
+listeners.echo = {address = "localhost:9000"}
+
+[gke]
+regions = ["us-west1"]
+listeners.echo = {public_hostname = "echo.example.com"} 

@@ -300,7 +300,7 @@ func RunManager(ctx context.Context, region string, port, proxyPort int) error {
 		return fmt.Errorf("cannot get the store: %w", err)
 	}
 	s = store.WithMetrics(name, id, s)
-	starter, err := NewStarter(s)
+	starter, err := NewStarter()
 	if err != nil {
 		return fmt.Errorf("cannot create starter: %w", err)
 	}

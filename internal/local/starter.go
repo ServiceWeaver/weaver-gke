@@ -18,13 +18,11 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
-	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/store"
+	"github.com/ServiceWeaver/weaver-gke/internal/local/cond"
 )
 
 const (
@@ -34,113 +32,132 @@ const (
 
 // Starter starts ReplicaSets on the local machine.
 type Starter struct {
-	store  store.Store
 	caCert *x509.Certificate
 	caKey  crypto.PrivateKey
 
 	mu          sync.Mutex
-	babysitters map[string][]bsitter // babysitters, by deployment id
+	changed     *cond.Cond // broadcast on every change in deployments
+	deployments map[string]*deployment
 }
 
-type bsitter struct {
+type deployment struct {
+	replicaSets map[string]*replicaSet
+}
+
+type replicaSet struct {
+	replicas []replica
+}
+
+type replica struct {
 	cancel context.CancelFunc
 	b      *babysitter.Babysitter
 }
 
 // NewStarter creates a starter that runs all replicas of a colocation
 // group as OS processes on the local machine.
-func NewStarter(s store.Store) (*Starter, error) {
+func NewStarter() (*Starter, error) {
 	caCert, caKey, err := ensureCACert()
 	if err != nil {
 		return nil, err
 	}
-	return &Starter{
-		store:       s,
-		babysitters: map[string][]bsitter{},
+	s := &Starter{
+		deployments: map[string]*deployment{},
 		caCert:      caCert,
 		caKey:       caKey,
-	}, nil
+	}
+	s.changed = cond.NewCond(&s.mu)
+	return s, nil
 }
 
 // Start starts the ReplicaSet for a given deployment.
-func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
-	// Determine if the colocation group has already been started.
-	shouldStart, err := s.shouldStart(ctx, cfg, replicaSet)
-	if err != nil {
-		return err
+func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSetName string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	d, ok := s.deployments[cfg.Deployment.Id]
+	if !ok {
+		d = &deployment{
+			replicaSets: map[string]*replicaSet{},
+		}
+		s.deployments[cfg.Deployment.Id] = d
 	}
-	if !shouldStart {
+	rs, ok := d.replicaSets[replicaSetName]
+	if !ok {
+		rs = &replicaSet{}
+		d.replicaSets[replicaSetName] = rs
+	}
+
+	if rs.replicas != nil {
+		// Already started.
 		return nil
 	}
 
-	// Create and run one babysitter per colocation group replica.
-	babysitters := make([]bsitter, defaultReplication)
+	// Create replicas.
 	for i := 0; i < defaultReplication; i++ {
 		ctx, cancel := context.WithCancel(ctx)
-		b, err := startBabysitter(ctx, cfg, replicaSet, LogDir, s.caCert, s.caKey)
+		b, err := startBabysitter(ctx, cfg, s, replicaSetName, LogDir, s.caCert, s.caKey)
 		if err != nil {
-			// TODO(mwhittaker): Should we stop the previously started
-			// babysitters?
 			cancel()
 			return err
 		}
-		babysitters[i] = bsitter{cancel: cancel, b: b}
+		rs.replicas = append(rs.replicas, replica{
+			cancel: cancel,
+			b:      b,
+		})
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	id := cfg.Deployment.Id
-	s.babysitters[id] = append(s.babysitters[id], babysitters...)
+	s.changed.Broadcast()
 	return nil
 }
 
-// Stop kills processes in all of the versions' colocation groups,
-// blocking until all of the processes are killed.
+// getReplicas returns addresses for all the replicas in a given replica set.
+// If the replica set hasn't yet been started, this method will block.
+func (s *Starter) getReplicas(ctx context.Context, cfg *config.GKEConfig, replicaSetName string) ([]string, error) {
+	// NOTE(spetrovic): The algorithm below may lead to a lot of unnecessary
+	// wakeups, but that's okay for GKE local.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for {
+		d, ok := s.deployments[cfg.Deployment.Id]
+		if !ok {
+			if err := s.changed.Wait(ctx); err != nil { // context canceled
+				return nil, err
+			}
+			continue
+		}
+		rs, ok := d.replicaSets[replicaSetName]
+		if !ok {
+			if err := s.changed.Wait(ctx); err != nil { // context canceled
+				return nil, err
+			}
+			continue
+		}
+		addrs := make([]string, len(rs.replicas))
+		for i, r := range rs.replicas {
+			addrs[i] = r.b.WeaveletInfo().DialAddr
+		}
+		return addrs, nil
+	}
+}
+
+// Stop kills processes in all of the versions' replica sets, blocking until all
+// of the processes are killed.
 func (s *Starter) Stop(_ context.Context, versions []*config.GKEConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	for _, v := range versions {
-		for _, b := range s.babysitters[v.Deployment.Id] {
-			b.cancel() // cancels the context the babysitter started with
-
+		d := s.deployments[v.Deployment.Id]
+		if d == nil {
+			// Already stopped.
+			return nil
 		}
-		// TODO(spetrovic): Wait for running babysitters to finish.
-		delete(s.babysitters, v.Deployment.Id)
+		for _, rs := range d.replicaSets {
+			for _, r := range rs.replicas {
+				r.cancel() // Stops the babysitter process.
+			}
+		}
+		delete(s.deployments, v.Deployment.Id)
 	}
 	return nil
-}
-
-// Babysitters returns a snapshot of all currently running babysitters.
-func (s *Starter) Babysitters() []*babysitter.Babysitter {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var babysitters []*babysitter.Babysitter
-	for _, bs := range s.babysitters {
-		for _, b := range bs {
-			babysitters = append(babysitters, b.b)
-		}
-	}
-	return babysitters
-}
-
-// shouldStart returns true iff the caller should start the given ReplicaSet.
-func (s *Starter) shouldStart(ctx context.Context, cfg *config.GKEConfig, replicaSet string) (bool, error) {
-	// Use the store to coordinate the starting of processes. The process
-	// that ends up creating the key "started_by" is the deployer.
-	key := store.ReplicaSetKey(cfg, replicaSet, "started_by")
-	histKey := store.DeploymentKey(cfg, store.HistoryKey)
-	err := store.AddToSet(ctx, s.store, histKey, key)
-	if err != nil && !errors.Is(err, store.ErrUnchanged) {
-		// Track the key in the store under histKey.
-		return false, fmt.Errorf("unable to record key %q under %q: %w", key, histKey, err)
-	}
-	_, err = s.store.Put(ctx, key, "" /*value*/, &store.Missing)
-	if errors.Is(err, store.Stale{}) {
-		// Some other process created the key first.
-		return false, nil
-	} else if err != nil {
-		return false, err
-	}
-	return true, nil
 }

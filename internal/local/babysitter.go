@@ -34,10 +34,11 @@ import (
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/traces"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slog"
 )
 
 // startBabysitter creates and starts a babysitter in a gke-local deployment.
-func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet string, logDir string, caCert *x509.Certificate, caKey crypto.PrivateKey) (*babysitter.Babysitter, error) {
+func startBabysitter(ctx context.Context, cfg *config.GKEConfig, s *Starter, replicaSet string, logDir string, caCert *x509.Certificate, caKey crypto.PrivateKey) (*babysitter.Babysitter, error) {
 	podName := uuid.New().String()
 	ls, err := logging.NewFileStore(logDir)
 	if err != nil {
@@ -45,6 +46,16 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 	}
 	defer ls.Close()
 	logSaver := ls.Add
+	logger := slog.New(&logging.LogHandler{
+		Opts: logging.Options{
+			App:        cfg.Deployment.App.Name,
+			Deployment: cfg.Deployment.Id,
+			Component:  "Babysitter",
+			Weavelet:   podName,
+			Attrs:      []string{"serviceweaver/system", ""},
+		},
+		Write: logSaver,
+	})
 
 	// Setup trace recording.
 	traceDB, err := traces.OpenDB(ctx, TracesFile)
@@ -85,14 +96,22 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 	if err != nil {
 		return nil, fmt.Errorf("cannot PEM-encode cert: %w", err)
 	}
-	selfCertGetter := func() ([]byte, []byte, error) {
+	getSelfCert := func() ([]byte, []byte, error) {
 		return selfCertPEM, selfKeyPEM, nil
+	}
+
+	getReplicaWatcher := func(ctx context.Context, replicaSet string) (babysitter.ReplicaWatcher, error) {
+		return &replicaWatcher{
+			cfg:        cfg,
+			replicaSet: replicaSet,
+			s:          s,
+		}, nil
 	}
 
 	// Connection to the manager.
 	m := &manager.HttpClient{
 		Addr:      cfg.ManagerAddr,
-		TLSConfig: mtls.ClientTLSConfig(projectName, caCert, selfCertGetter, "manager"),
+		TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "manager"),
 	}
 	mux := http.NewServeMux()
 	hostname, err := os.Hostname()
@@ -104,7 +123,7 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 		return nil, err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr().String())
-	b, err := babysitter.Start(ctx, cfg, replicaSet, projectName, podName, true /*useLocalhost*/, mux, selfAddr, m, caCert, selfCertGetter, logSaver, traceSaver, metricExporter)
+	b, err := babysitter.Start(ctx, logger, cfg, replicaSet, projectName, podName, true /*useLocalhost*/, 0 /*internalPort*/, mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricExporter)
 	if err != nil {
 		return nil, err
 	}
@@ -112,9 +131,33 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, replicaSet stri
 	// Start the server without blocking.
 	server := &http.Server{
 		Handler:   mux,
-		TLSConfig: mtls.ServerTLSConfig(projectName, caCert, selfCertGetter, "manager", "distributor"),
+		TLSConfig: mtls.ServerTLSConfig(projectName, caCert, getSelfCert, "manager", "distributor"),
 	}
 	go server.ServeTLS(lis, "", "")
 
 	return b, nil
+}
+
+// replicaWatcher is an implementation of the babysitter.ReplicaWatcher
+// interface for the GKE local deployer.
+// The implementation is not thread safe.
+type replicaWatcher struct {
+	cfg        *config.GKEConfig
+	replicaSet string
+	s          *Starter
+	called     bool
+}
+
+var _ babysitter.ReplicaWatcher = &replicaWatcher{}
+
+// GetReplicas implements the babysitter.ReplicaWatcher interface.
+func (w *replicaWatcher) GetReplicas(ctx context.Context) ([]string, error) {
+	if w.called {
+		// Local replicas don't change, so we can just block until the context
+		// is canceled.
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	w.called = true
+	return w.s.getReplicas(ctx, w.cfg, w.replicaSet) // blocks
 }

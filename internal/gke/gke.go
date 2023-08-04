@@ -17,6 +17,7 @@ package gke
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -43,7 +44,7 @@ import (
 	apiv1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -81,12 +82,23 @@ const (
 	// Key in a Kubernetes resource's label map that corresponds to the
 	// application name that the resource is associated with. Used when looking
 	// up resources that belong to a particular application.
-	appNameKey = "serviceweaver/app_name"
+	// The corresponding value will be a DNS label derived from the
+	// application name.
+	appKey = "serviceweaver/app_name"
 
 	// Key in Kubernetes resource's label map that corresponds to the
 	// application's deployment version. Used when looking up resources that
 	// belong to a particular application version.
-	deploymentIDKey = "serviceweaver/deployment_id"
+	// The corresponding value will be a DNS label derived from the application
+	// version.
+	versionKey = "serviceweaver/deployment_id"
+
+	// Key in Kuberentes resource's label map that corresponds to the
+	// application deployment version's replica set. Used when looking up
+	// resources that belong to a particular application version's replica set.
+	// The corresponding value will be a DNS label derived from the
+	// replica set name.
+	replicaSetKey = "serviceweaver/replica_set"
 
 	// Key in external Service's annotations map that correspond to the listener
 	// for that service.
@@ -148,6 +160,9 @@ const (
 	// podNameEnvKey is the environment variable under which a pod's name is
 	// stored. For internal use by Service Weaver infrastructure.
 	podNameEnvKey = "SERVICEWEAVER_INTERNAL_POD_NAME"
+
+	// Port on which weavelets listen on for intra-weavelet communication.
+	weaveletPort = 12121
 )
 
 var (
@@ -194,7 +209,7 @@ func podExists(ctx context.Context, cluster *ClusterInfo, name string) (bool, er
 	if err == nil { // confirmed exists
 		return true, nil
 	}
-	if errors.IsNotFound(err) { // confirmed doesn't exist
+	if kerrors.IsNotFound(err) { // confirmed doesn't exist
 		return false, nil
 	}
 	// Not sure.
@@ -203,19 +218,6 @@ func podExists(ctx context.Context, cluster *ClusterInfo, name string) (bool, er
 
 // deploy deploys the Kubernetes ReplicaSet in the given cluster.
 func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
-	dep := cfg.Deployment
-
-	// Create a service account for the replica set and bind it to the
-	// application IAM service account.
-	saName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
-	labels := map[string]string{
-		appNameKey:      dep.App.Name,
-		deploymentIDKey: dep.Id,
-	}
-	if err := ensureKubeServiceAccount(ctx, cluster, logger, saName, applicationIAMServiceAccount, labels, nil /*policyRules*/); err != nil {
-		return err
-	}
-
 	if err := ensureReplicaSet(ctx, cluster, logger, cfg, replicaSet); err != nil {
 		return err
 	}
@@ -262,7 +264,7 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 	// abort the update if the number of replicas is zero. Right now, the
 	// update can still succeed. As mentioned in the note above, this is not
 	// catastrophic but isn't ideal.
-	selector := labels.SelectorFromSet(labels.Set{deploymentIDKey: version})
+	selector := labels.SelectorFromSet(labels.Set{versionKey: name{version}.DNSLabel()})
 	listOpts := metav1.ListOptions{LabelSelector: selector.String()}
 	numReplicas := int32(0)
 
@@ -276,7 +278,8 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 		return fmt.Errorf("get listeners for %q: %w", version, err)
 	}
 	for _, lis := range listeners {
-		if err := deleteListenerService(ctx, cluster, app, version, lis.Name); err != nil && !errors.IsNotFound(err) {
+		svcName := name{cluster.Region, app, lis.Name, version[:8]}.DNSLabel()
+		if err := deleteListenerService(ctx, cluster, svcName); err != nil && !kerrors.IsNotFound(err) {
 			return fmt.Errorf("delete %v for %q: %w", lis, version, err)
 		}
 	}
@@ -289,7 +292,7 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 	}
 	for _, deployment := range deployments.Items {
 		deployment.Spec.Replicas = &numReplicas
-		if err := patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &deployment); err != nil && !errors.IsNotFound(err) {
+		if err := patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &deployment); err != nil && !kerrors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -302,7 +305,7 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 	}
 	for _, job := range jobs.Items {
 		job.Spec.Parallelism = &numReplicas
-		if err := patchJob(ctx, cluster, patchOptions{logger: logger}, &job); err != nil && !errors.IsNotFound(err) {
+		if err := patchJob(ctx, cluster, patchOptions{logger: logger}, &job); err != nil && !kerrors.IsNotFound(err) {
 			return err
 		}
 	}
@@ -316,6 +319,14 @@ type collectionDeleter interface {
 // kill kills any resources (e.g., Deployments, Jobs) that belong to the
 // provided application version.
 func kill(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, version string) error {
+	var errs []error
+
+	// Remove IAM bindings for all of version's service accounts.
+	if err := unbindServiceAccounts(ctx, cluster, logger, app, version); err != nil {
+		errs = append(errs, err)
+	}
+
+	// Delete various kubernetes resources for the given application version.
 	for _, deleter := range []collectionDeleter{
 		cluster.dynamicClient.Resource(schema.GroupVersionResource{
 			Group:    "autoscaling.gke.io",
@@ -323,28 +334,32 @@ func kill(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 			Resource: "multidimpodautoscalers",
 		}).Namespace(namespaceName),
 		cluster.Clientset.AppsV1().Deployments(namespaceName),
+		cluster.Clientset.RbacV1().ClusterRoleBindings(),
+		cluster.Clientset.RbacV1().ClusterRoles(),
+		cluster.Clientset.CoreV1().ServiceAccounts(namespaceName),
 	} {
-		if err := killHelper(ctx, cluster, version, deleter); err != nil {
-			return err
+		opts := metav1.DeleteOptions{}
+		selector := labels.SelectorFromSet(labels.Set{
+			appKey:     name{app}.DNSLabel(),
+			versionKey: name{version}.DNSLabel()})
+		listOpts := metav1.ListOptions{LabelSelector: selector.String()}
+		if err := deleter.DeleteCollection(ctx, opts, listOpts); err != nil {
+			errs = append(errs, err)
 		}
+	}
+	if err := deleteListenerServices(ctx, cluster, app, version); err != nil {
+		errs = append(errs, err)
 	}
 
 	// NOTE: Jobs have to be killed using the Delete method, as otherwise
 	// the jobs entries stick around indefinitely in the SUCCESS state, which
 	// is undesirable.
 	name := name{tempSpareCapacityJobPrefix, app, version[:8]}.DNSLabel()
-	if err := cluster.Clientset.BatchV1().Jobs(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
-		return err
+	if err := cluster.Clientset.BatchV1().Jobs(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !kerrors.IsNotFound(err) {
+		errs = append(errs, err)
 	}
 
-	return deleteReplicaSetServiceAccounts(ctx, cluster, logger, app, version)
-}
-
-func killHelper(ctx context.Context, cluster *ClusterInfo, version string, deleter collectionDeleter) error {
-	opts := metav1.DeleteOptions{}
-	selector := labels.SelectorFromSet(labels.Set{deploymentIDKey: version})
-	listOpts := metav1.ListOptions{LabelSelector: selector.String()}
-	return deleter.DeleteCollection(ctx, opts, listOpts)
+	return errors.Join(errs...)
 }
 
 // Store returns the Service Weaver store for the given cluster.
@@ -354,32 +369,37 @@ func Store(cluster *ClusterInfo) store.Store {
 
 func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
 	dep := cfg.Deployment
-	name := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
-	container, err := appContainer(name, cluster, cfg, replicaSet)
+	kubeName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
+	saName := cfg.ComponentIdentity[replicaSet]
+	container, err := appContainer(kubeName, cluster, cfg, replicaSet)
 	if err != nil {
 		return err
 	}
 
 	return patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
+			Name:      kubeName,
 			Namespace: namespaceName,
 			Labels: map[string]string{
-				appNameKey:      dep.App.Name,
-				deploymentIDKey: dep.Id,
+				appKey:     name{dep.App.Name}.DNSLabel(),
+				versionKey: name{dep.Id}.DNSLabel(),
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: ptrOf(int32(1)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					"app": name,
+					appKey:        name{dep.App.Name}.DNSLabel(),
+					versionKey:    name{dep.Id}.DNSLabel(),
+					replicaSetKey: name{replicaSet}.DNSLabel(),
 				},
 			},
 			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app": name,
+						appKey:        name{dep.App.Name}.DNSLabel(),
+						versionKey:    name{dep.Id}.DNSLabel(),
+						replicaSetKey: name{replicaSet}.DNSLabel(),
 					},
 					Annotations: map[string]string{
 						"security.cloud.google.com/use-workload-certificates": "",
@@ -388,7 +408,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 				Spec: v1.PodSpec{
 					PriorityClassName:  applicationPriorityClassName,
 					Containers:         []v1.Container{container},
-					ServiceAccountName: name,
+					ServiceAccountName: saName,
 				},
 			},
 		},
@@ -554,24 +574,25 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *sl
 		return fmt.Errorf("internal error: error encoding listener %+v: %w", lis, err)
 	}
 	svcName := name{cluster.Region, dep.App.Name, lis.Name, dep.Id[:8]}.DNSLabel()
-	targetName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	if err := patchService(ctx, cluster, patchOptions{logger: logger}, &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      svcName,
 			Namespace: namespaceName,
+			Labels: map[string]string{
+				appKey:     name{dep.App.Name}.DNSLabel(),
+				versionKey: name{dep.Id}.DNSLabel(),
+			},
 			Annotations: map[string]string{
 				serviceListenerKey:                lisEnc,
 				backendConfigServiceAnnotationKey: fmt.Sprintf(`{"default": "%s"}`, backendConfigName),
-			},
-			Labels: map[string]string{
-				appNameKey:      dep.App.Name,
-				deploymentIDKey: dep.Id,
 			},
 		},
 		Spec: v1.ServiceSpec{
 			Type: "ClusterIP",
 			Selector: map[string]string{
-				"app": targetName,
+				appKey:        name{dep.App.Name}.DNSLabel(),
+				versionKey:    name{dep.Id}.DNSLabel(),
+				replicaSetKey: name{replicaSet}.DNSLabel(),
 			},
 			Ports: []v1.ServicePort{
 				{
@@ -608,18 +629,39 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *sl
 		ctx, cluster, patchOptions{logger: logger}, b.String())
 }
 
-// deleteListenerService deletes the service that exposes the given network
-// listener.
-func deleteListenerService(ctx context.Context, cluster *ClusterInfo, app, version string, lis string) error {
-	name := name{cluster.Region, app, lis, version[:8]}.DNSLabel()
-	if err := cluster.Clientset.CoreV1().Services(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+// deleteListenerServices deletes all of the listener services for a given
+// application version.
+func deleteListenerServices(ctx context.Context, cluster *ClusterInfo, app, version string) error {
+	opts := metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labels.Set{
+			appKey:     name{app}.DNSLabel(),
+			versionKey: name{version}.DNSLabel(),
+		}).String(),
+	}
+	svcs, err := cluster.Clientset.CoreV1().Services(namespaceName).List(ctx, opts)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, svc := range svcs.Items {
+		if err := deleteListenerService(ctx, cluster, svc.Name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// deleteListenerService deletes the listener service and its associated
+// service export with the given name.
+func deleteListenerService(ctx context.Context, cluster *ClusterInfo, svcName string) error {
+	if err := cluster.Clientset.CoreV1().Services(namespaceName).Delete(ctx, svcName, metav1.DeleteOptions{}); err != nil {
 		return err
 	}
 	if err := cluster.dynamicClient.Resource(schema.GroupVersionResource{
 		Group:    "net.gke.io",
 		Version:  "v1",
 		Resource: "serviceexports",
-	}).Namespace(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil {
+	}).Namespace(namespaceName).Delete(ctx, svcName, metav1.DeleteOptions{}); err != nil {
 		return err
 	}
 	return nil
@@ -631,8 +673,8 @@ func getListeners(ctx context.Context, clientset *kubernetes.Clientset, app, ver
 	cli := clientset.CoreV1().Services(namespaceName)
 	opts := metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set{
-			appNameKey:      app,
-			deploymentIDKey: version,
+			appKey:     name{app}.DNSLabel(),
+			versionKey: name{version}.DNSLabel(),
 		}).String(),
 	}
 	svcs, err := cli.List(ctx, opts)
@@ -715,7 +757,7 @@ func sanitizeGlobalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logg
 			u.SetAnnotations(annotations)
 			return true // modified
 		}); err != nil {
-			if errors.IsNotFound(err) { // ServiceImport doesn't exist (yet)
+			if kerrors.IsNotFound(err) { // ServiceImport doesn't exist (yet)
 				return false, nil
 			}
 			return false, err
@@ -1011,7 +1053,8 @@ func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger 
 	// Create a Kubernetes cluster role with the given permissions.
 	if err := patchClusterRole(ctx, cluster, patchOptions{}, &rbacv1.ClusterRole{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: account,
+			Name:   account,
+			Labels: labels,
 		},
 		Rules: policyRules,
 	}); err != nil {
@@ -1023,6 +1066,7 @@ func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger 
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      account,
 			Namespace: namespaceName,
+			Labels:    labels,
 		},
 		Subjects: []rbacv1.Subject{
 			{
@@ -1106,14 +1150,16 @@ func tryEnsureServiceAccountIAMBindings(ctx context.Context, config CloudConfig,
 	return err
 }
 
-// deleteReplicaSetServiceAccounts deletes all of the service accounts
-// associated with the given application version.
-func deleteReplicaSetServiceAccounts(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, version string) error {
-	// Find all kubernetes service accounts for the given app version.
-	selector := labels.SelectorFromSet(labels.Set{deploymentIDKey: version})
+// unbindServiceAccounts removes IAM bindings for all of the service
+// accounts used by the given application version.
+func unbindServiceAccounts(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, version string) error {
+	selector := labels.SelectorFromSet(labels.Set{
+		appKey:     name{app}.DNSLabel(),
+		versionKey: name{version}.DNSLabel(),
+	})
 	listOpts := metav1.ListOptions{LabelSelector: selector.String()}
-	client := cluster.Clientset.CoreV1().ServiceAccounts(namespaceName)
-	accountsList, err := client.List(ctx, listOpts)
+	saClient := cluster.Clientset.CoreV1().ServiceAccounts(namespaceName)
+	accountsList, err := saClient.List(ctx, listOpts)
 	if err != nil {
 		return err
 	}
@@ -1129,12 +1175,12 @@ func deleteReplicaSetServiceAccounts(ctx context.Context, cluster *ClusterInfo, 
 	for i, sa := range accountsList.Items {
 		members[i] = fmt.Sprintf("serviceAccount:%s.svc.id.goog[%s/%s]", cluster.CloudConfig.Project, namespaceName, sa.Name)
 	}
+	var errs []error
 	if err := deleteServiceAccountIAMBindings(ctx, cluster.CloudConfig, logger, applicationIAMServiceAccount, accountRole, members); err != nil {
-		return err
+		logger.Error("deleteServiceAccounts", "IAM bindings deletion error", err)
+		errs = append(errs, err)
 	}
-
-	// Delete the kubernetes service accounts.
-	return client.DeleteCollection(ctx, metav1.DeleteOptions{}, listOpts)
+	return errors.Join(errs...)
 }
 
 // deleteServiceAccountIAMBindings ensures that the bindings member -> role
@@ -1256,10 +1302,6 @@ func ensureTemporarySpareCapacity(ctx context.Context, cluster *ClusterInfo, log
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: namespaceName,
-			Labels: map[string]string{
-				appNameKey:      dep.App.Name,
-				deploymentIDKey: dep.Id,
-			},
 		},
 		Spec: batchv1.JobSpec{
 			Parallelism:             ptrOf(int32(numReplicas)),
