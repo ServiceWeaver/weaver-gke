@@ -60,6 +60,7 @@ message AppState {
 message ReplicaSetId {
   config.GKEConfig config = 1;  // config for the replica set
   string Name = 2;              // replica set name (e.g., Cache)
+  bool has_routed = 3;          // replica set hosts a routed component?
 }
 
 // ReplicaSetInfo contains information for each Kubernetes ReplicaSet that

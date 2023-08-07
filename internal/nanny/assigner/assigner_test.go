@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
@@ -75,7 +74,6 @@ type reportHealth struct {
 type checkRoutingInfo struct {
 	app, id, component string
 	replicaSet         string // ReplicaSet name, if different from component.
-	wantAssignment     bool
 	replicas           []string
 }
 
@@ -150,12 +148,11 @@ func (c checkRoutingInfo) do(_ context.Context, assigner *Assigner) error {
 	}
 
 	// Check the assignment.
-	actualAssignment := info.Routing.Assignment != nil
-	if c.wantAssignment != actualAssignment {
-		return fmt.Errorf("has assignment diff, want %v, got %v", c.wantAssignment, actualAssignment)
-	}
-	if !c.wantAssignment {
-		return nil
+	if info.Routing.Assignment == nil {
+		if c.replicas == nil {
+			return nil
+		}
+		return fmt.Errorf("bad replicas, want %v, got nil", c.replicas)
 	}
 	assignment, err := FromProto(info.Routing.Assignment)
 	if err != nil {
@@ -240,14 +237,34 @@ func TestAssigner(t *testing.T) {
 		operations []op
 	}{
 		{
-			// Test plan: Register a process replica to start. Verify that
-			// routing info is generated, but no assignments.
+			// Test plan: Register a started component. Verify that no routing
+			// info is generated because no replica was started to manage the
+			// component.
+			name: "register_component",
+			operations: []op{
+				registerComponent{
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					routed:    true,
+				},
+				checkRoutingInfo{
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+				},
+			},
+		},
+		{
+			// Test plan: Register a component and a replica. Verify that
+			// routing info is generated with assignments.
 			name: "register_replica",
 			operations: []op{
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
+					routed:    true,
 				},
 				registerReplica{
 					app:        "app1",
@@ -264,20 +281,27 @@ func TestAssigner(t *testing.T) {
 			},
 		},
 		{
-			// Test plan: Register a component to start. Verify that no routing
-			// info is generated because no replica was started to manage the
-			// component.
-			name: "register_component",
+			// Test plan: Register a replica before the component . Verify that
+			// routing info is generated with assignments.
+			name: "register_replica_before_component",
 			operations: []op{
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
+					routed:    true,
+				},
+				registerReplica{
+					app:        "app1",
+					id:         depId,
+					replicaSet: "component1",
+					replica:    "replica1",
 				},
 				checkRoutingInfo{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
+					replicas:  []string{"replica1"},
 				},
 			},
 		},
@@ -291,11 +315,13 @@ func TestAssigner(t *testing.T) {
 					app:       "app1",
 					id:        depId,
 					component: "component1",
+					routed:    true,
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component2",
+					routed:    true,
 				},
 				registerReplica{
 					app:        "app1",
@@ -319,7 +345,7 @@ func TestAssigner(t *testing.T) {
 		{
 			// Test plan: Register a ReplicaSet to start and a corresponding
 			// unrouted component. Verify that no routing information is
-			// generated, because the ReplicaSet has no replica.
+			// generated, because the replica set has no routed components.
 			name: "register_replica_set_to_start_register_unrouted_component",
 			operations: []op{
 				registerComponent{
@@ -363,19 +389,11 @@ func TestAssigner(t *testing.T) {
 					replica:    "replica1",
 				},
 				checkRoutingInfo{
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: false,
-					replicas:       []string{"replica1"},
-				},
-				checkRoutingInfo{
-					app:            "app1",
-					id:             depId,
-					component:      "component2",
-					replicaSet:     "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica1"},
+					app:        "app1",
+					id:         depId,
+					component:  "component2",
+					replicaSet: "component1",
+					replicas:   []string{"replica1"},
 				},
 				registerReplica{
 					app:        "app1",
@@ -384,19 +402,11 @@ func TestAssigner(t *testing.T) {
 					replica:    "replica2",
 				},
 				checkRoutingInfo{
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: false,
-					replicas:       []string{"replica1", "replica2"},
-				},
-				checkRoutingInfo{
-					app:            "app1",
-					id:             depId,
-					component:      "component2",
-					replicaSet:     "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica1", "replica2"},
+					app:        "app1",
+					id:         depId,
+					component:  "component2",
+					replicaSet: "component1",
+					replicas:   []string{"replica1", "replica2"},
 				},
 			},
 		},
@@ -428,11 +438,10 @@ func TestAssigner(t *testing.T) {
 					routed:    true,
 				},
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica1", "replica2"},
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					replicas:  []string{"replica1", "replica2"},
 				},
 				reportHealth{ // replica 1 becomes unhealthy
 					app:        "app1",
@@ -445,11 +454,10 @@ func TestAssigner(t *testing.T) {
 						protos.HealthStatus_UNHEALTHY},
 				},
 				checkRoutingInfo{ // an assignment is generated that contains only the healthy replica 2
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica2"},
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					replicas:  []string{"replica2"},
 				},
 				reportHealth{ // replica 1 becomes healthy again
 					app:        "app1",
@@ -463,11 +471,10 @@ func TestAssigner(t *testing.T) {
 						protos.HealthStatus_HEALTHY},
 				},
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica1", "replica2"},
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					replicas:  []string{"replica1", "replica2"},
 				},
 			},
 		},
@@ -476,6 +483,18 @@ func TestAssigner(t *testing.T) {
 			// applications. Verify that routing info is generated for both.
 			name: "register_two_apps",
 			operations: []op{
+				registerComponent{
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					routed:    true,
+				},
+				registerComponent{
+					app:       "app2",
+					id:        depId,
+					component: "component1",
+					routed:    true,
+				},
 				registerReplica{
 					app:        "app1",
 					id:         depId,
@@ -557,22 +576,32 @@ func TestAssigner(t *testing.T) {
 					app:       "app1",
 					id:        depId,
 					component: "component1",
+					routed:    true,
 				},
 				registerComponent{
 					app:        "app1",
 					id:         depId,
 					component:  "component2",
 					replicaSet: "component1",
+					routed:     true,
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component3",
+					routed:    true,
 				},
 				registerComponent{
 					app:       "app2",
 					id:        depId,
 					component: "component4",
+					routed:    true,
+				},
+				registerComponent{
+					app:       "app1",
+					id:        depId,
+					component: "component4",
+					routed:    false,
 				},
 				registerListener{
 					app:        "app1",
@@ -703,11 +732,10 @@ func TestAssigner(t *testing.T) {
 					routed:    true,
 				},
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica1", "replica2"},
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					replicas:  []string{"replica1", "replica2"},
 				},
 				reportHealth{ // replica 1 becomes terminated
 					app:        "app1",
@@ -717,11 +745,10 @@ func TestAssigner(t *testing.T) {
 					health:     []protos.HealthStatus{protos.HealthStatus_TERMINATED},
 				},
 				checkRoutingInfo{ // an assignment is generated that contains only the healthy replica 2
-					app:            "app1",
-					id:             depId,
-					component:      "component1",
-					wantAssignment: true,
-					replicas:       []string{"replica2"},
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					replicas:  []string{"replica2"},
 				},
 			},
 		},
@@ -773,7 +800,6 @@ func TestConcurrentAssigners(t *testing.T) {
 				app:       "app1",
 				id:        depId,
 				component: "component1",
-				replicas:  []string{"replica1"},
 			},
 		},
 		// Test plan: register a single component.
@@ -785,7 +811,7 @@ func TestConcurrentAssigners(t *testing.T) {
 						app:       "app1",
 						id:        depId,
 						component: "component1",
-						routed:    false,
+						routed:    true,
 					},
 				},
 			},
@@ -793,7 +819,58 @@ func TestConcurrentAssigners(t *testing.T) {
 				app:       "app1",
 				id:        depId,
 				component: "component1",
-				replicas:  nil,
+			},
+		},
+		// Test plan: register a single component and replica.
+		{
+			name: "register_component_and_replica",
+			ops: [][]op{
+				{
+					registerComponent{
+						app:       "app1",
+						id:        depId,
+						component: "component1",
+						routed:    true,
+					},
+					registerReplica{
+						app:        "app1",
+						id:         depId,
+						replicaSet: "component1",
+						replica:    "replica1",
+					},
+				},
+			},
+			check: checkRoutingInfo{
+				app:       "app1",
+				id:        depId,
+				component: "component1",
+				replicas:  []string{"replica1"},
+			},
+		},
+		// Test plan: register a replica before the component
+		{
+			name: "register_replica_before_component",
+			ops: [][]op{
+				{
+					registerReplica{
+						app:        "app1",
+						id:         depId,
+						replicaSet: "component1",
+						replica:    "replica1",
+					},
+					registerComponent{
+						app:       "app1",
+						id:        depId,
+						component: "component1",
+						routed:    true,
+					},
+				},
+			},
+			check: checkRoutingInfo{
+				app:       "app1",
+				id:        depId,
+				component: "component1",
+				replicas:  []string{"replica1"},
 			},
 		},
 		// Test plan: register multiple replicas.
@@ -812,7 +889,6 @@ func TestConcurrentAssigners(t *testing.T) {
 				app:       "a1",
 				id:        depId,
 				component: "c1",
-				replicas:  []string{"r1", "r2", "r3", "r4", "r5"},
 			},
 		},
 		// Test plan: register one component and multiple replicas.
@@ -829,11 +905,10 @@ func TestConcurrentAssigners(t *testing.T) {
 				},
 			},
 			check: checkRoutingInfo{
-				app:            "a1",
-				id:             depId,
-				component:      "c1",
-				wantAssignment: true,
-				replicas:       []string{"r1", "r2", "r3", "r4", "r5"},
+				app:       "a1",
+				id:        depId,
+				component: "c1",
+				replicas:  []string{"r1", "r2", "r3", "r4", "r5"},
 			},
 		},
 		// Test plan: register multiple components and multiple replicas.
@@ -854,11 +929,10 @@ func TestConcurrentAssigners(t *testing.T) {
 				},
 			},
 			check: checkRoutingInfo{
-				app:            "a1",
-				id:             depId,
-				component:      "c1",
-				wantAssignment: true,
-				replicas:       []string{"r1", "r2", "r3", "r4", "r5"},
+				app:       "a1",
+				id:        depId,
+				component: "c1",
+				replicas:  []string{"r1", "r2", "r3", "r4", "r5"},
 			},
 		},
 		// Test plan: register one replica and have it become unhealthy.
@@ -866,6 +940,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "one_replica_die",
 			ops: [][]op{
 				{
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
 				},
 				{
@@ -897,6 +972,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "one_replica_resurrect",
 			ops: [][]op{
 				{
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
 				},
 				{
@@ -943,6 +1019,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "multiple_replicas_die",
 			ops: [][]op{
 				{
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
@@ -996,6 +1073,7 @@ func TestConcurrentAssigners(t *testing.T) {
 			name: "multiple_replicas_health_changes",
 			ops: [][]op{
 				{
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
 					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
@@ -1155,11 +1233,10 @@ func TestUnregisterReplicaSets(t *testing.T) {
 			replicas:  nil,
 		},
 		{
-			app:            "a",
-			id:             v2,
-			component:      "c1",
-			wantAssignment: true,
-			replicas:       []string{"r1", "r2"},
+			app:       "a",
+			id:        v2,
+			component: "c1",
+			replicas:  []string{"r1", "r2"},
 		},
 	}
 	for i, check := range checks {
@@ -1195,7 +1272,6 @@ func reportHealthStatus(ctx context.Context, a *Assigner, rid *ReplicaSetId, add
 		// Pull this code into a function so that we can defer Unlock.
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		fmt.Fprintln(os.Stderr, "Got replicas:", a.replicas)
 		replicas, ok := a.replicas[unprotoRid(rid)]
 		if !ok {
 			return false, fmt.Errorf("ReplicaSet %v not found", rid)
