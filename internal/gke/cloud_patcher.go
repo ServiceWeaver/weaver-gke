@@ -224,11 +224,14 @@ func patchSSLCertificate(ctx context.Context, config CloudConfig, opts patchOpti
 			return old, nil
 		},
 		create: func() error {
-			_, err := client.Insert(ctx, &computepb.InsertSslCertificateRequest{
+			op, err := client.Insert(ctx, &computepb.InsertSslCertificateRequest{
 				SslCertificateResource: cert,
 				Project:                config.Project,
 			})
-			return err
+			if err != nil {
+				return err
+			}
+			return op.Wait(ctx)
 		},
 		update: func(updateVal interface{}) error {
 			// Neither Update or a Patch API exists.  We also cannot delete the

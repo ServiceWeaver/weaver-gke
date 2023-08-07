@@ -334,8 +334,7 @@ func kill(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 			Resource: "multidimpodautoscalers",
 		}).Namespace(namespaceName),
 		cluster.Clientset.AppsV1().Deployments(namespaceName),
-		cluster.Clientset.RbacV1().ClusterRoleBindings(),
-		cluster.Clientset.RbacV1().ClusterRoles(),
+		cluster.Clientset.RbacV1().RoleBindings(namespaceName),
 		cluster.Clientset.CoreV1().ServiceAccounts(namespaceName),
 	} {
 		opts := metav1.DeleteOptions{}
@@ -897,6 +896,7 @@ func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog
 	}
 
 	// Delete the old routes that aren't in the new set.
+	var errs []error
 	for _, route := range oldRoutes.Items {
 		routeName := route.ObjectMeta.Name
 		if _, ok := newRoutes[routeName]; ok {
@@ -904,11 +904,11 @@ func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog
 		}
 		// Delete the old route.
 		if err := cli.Delete(ctx, routeName, metav1.DeleteOptions{}); err != nil {
-			return fmt.Errorf("error deleting obsolete route %s: %w", routeName, err)
+			errs = append(errs, fmt.Errorf("error deleting obsolete route %s: %w", routeName, err))
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // updateGlobalExternalGateway updates the global external gateway in the
@@ -1015,7 +1015,7 @@ func computeTrafficBackends(isGlobal bool, cluster *ClusterInfo, allocations []*
 // ensureKubeServiceAccount ensures that a service account with the given
 // name has been created with the given policy rules, and has been associated
 // with a given IAM service account, if one was specified.
-func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, account, iamAccount string, labels map[string]string, policyRules []rbacv1.PolicyRule) error {
+func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, account, iamAccount string, labels map[string]string, kubeRole string) error {
 	if iamAccount != "" {
 		// Allow the kubernetes service account to access the IAM service
 		// account.
@@ -1045,23 +1045,12 @@ func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger 
 		return err
 	}
 
-	if policyRules == nil {
-		// No Kubernetes permissions: we're done.
+	if kubeRole == "" {
+		// No Kubernetes role to bind: we're done.
 		return nil
 	}
 
-	// Create a Kubernetes cluster role with the given permissions.
-	if err := patchClusterRole(ctx, cluster, patchOptions{}, &rbacv1.ClusterRole{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:   account,
-			Labels: labels,
-		},
-		Rules: policyRules,
-	}); err != nil {
-		return err
-	}
-
-	// Bind the Kubernetes cluster role to the Kubernetes service account.
+	// Bind the Kubernetes cluster role to the service account.
 	return patchRoleBinding(ctx, cluster, patchOptions{}, &rbacv1.RoleBinding{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      account,
@@ -1076,8 +1065,8 @@ func ensureKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, logger 
 			},
 		},
 		RoleRef: rbacv1.RoleRef{
-			Kind: "ClusterRole",
-			Name: account,
+			Kind: "Role",
+			Name: kubeRole,
 		},
 	})
 }

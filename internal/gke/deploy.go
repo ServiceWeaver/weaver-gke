@@ -83,17 +83,23 @@ const (
 	// Managed DNS zone for the Service Weaver's internal domain name.
 	managedDNSZoneName = "serviceweaver-internal"
 
-	// Names of the GCP IAM service accounts used by various Service Weaver actors.
+	// Names of the GCP IAM service accounts used by various Service Weaver entities.
 	controllerIAMServiceAccount  = "serviceweaver-controller"
 	distributorIAMServiceAccount = "serviceweaver-distributor"
 	managerIAMServiceAccount     = "serviceweaver-manager"
 	applicationIAMServiceAccount = "serviceweaver-application"
 
-	// Names of the GKE service accounts used by various Service Weaver actors.
+	// Names of the GKE service accounts used by various Service Weaver entities.
 	controllerKubeServiceAccount  = "controller"
 	distributorKubeServiceAccount = "distributor"
 	managerKubeServiceAccount     = "manager"
 	spareKubeServiceAccount       = "spare"
+
+	// Names of the Roles in use by various Service Weaver entities.
+	controllerKubeRole  = "controller"
+	distributorKubeRole = "distributor"
+	managerKubeRole     = "manager"
+	applicationKubeRole = "application"
 
 	// Various settings for the Service Weaver's Certificate Authority.
 	caName         = "serviceweaver-ca"
@@ -898,23 +904,32 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 	if err != nil {
 		return nil, "", err
 	}
-	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, controllerKubeServiceAccount, controllerIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
-		{
-			APIGroups: []string{""}, // Core APIs.
-			Resources: []string{"configmaps"},
-			Verbs:     []string{"*"},
+	if err := patchRole(ctx, cluster, patchOptions{}, &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      controllerKubeRole,
+			Namespace: namespaceName,
 		},
-		{
-			APIGroups: []string{"net.gke.io"}, // Networking APIs.
-			Resources: []string{"serviceimports"},
-			Verbs:     []string{"*"},
-		},
-		{
-			APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
-			Resources: []string{"gateways", "httproutes"},
-			Verbs:     []string{"*"},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""}, // Core APIs.
+				Resources: []string{"configmaps"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"net.gke.io"}, // Networking APIs.
+				Resources: []string{"serviceimports"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
+				Resources: []string{"gateways", "httproutes"},
+				Verbs:     []string{"*"},
+			},
 		},
 	}); err != nil {
+		return nil, "", err
+	}
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, controllerKubeServiceAccount, controllerIAMServiceAccount, nil /*labels*/, controllerKubeRole); err != nil {
 		return nil, "", err
 	}
 
@@ -954,75 +969,100 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 	}
 
 	// Setup the distributor/manager/application service accounts.
-	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, distributorKubeServiceAccount, distributorIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
-		{
-			APIGroups: []string{""}, // Core APIs.
-			Resources: []string{"services", "configmaps"},
-			Verbs:     []string{"*"},
+	if err := patchRole(ctx, cluster, patchOptions{}, &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      distributorKubeRole,
+			Namespace: namespaceName,
 		},
-		{
-			APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
-			Resources: []string{"gateways", "httproutes"},
-			Verbs:     []string{"*"},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""}, // Core APIs.
+				Resources: []string{"services", "configmaps"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"gateway.networking.k8s.io"}, // Gateway APIs.
+				Resources: []string{"gateways", "httproutes"},
+				Verbs:     []string{"*"},
+			},
 		},
 	}); err != nil {
 		return nil, "", err
 	}
-	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, managerKubeServiceAccount, managerIAMServiceAccount, nil /*labels*/, []rbacv1.PolicyRule{
-		{
-			APIGroups: []string{""}, // Core APIs.
-			Resources: []string{
-				"pods", "services", "configmaps", "serviceaccounts"},
-			Verbs: []string{"*"},
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, distributorKubeServiceAccount, distributorIAMServiceAccount, nil /*labels*/, distributorKubeRole); err != nil {
+		return nil, "", err
+	}
+	if err := patchRole(ctx, cluster, patchOptions{}, &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      managerKubeRole,
+			Namespace: namespaceName,
 		},
-		{
-			APIGroups: []string{"apps"}, // Application APIs.
-			Resources: []string{"deployments"},
-			Verbs:     []string{"*"},
-		},
-		{
-			APIGroups: []string{"rbac.authorization.k8s.io"}, // Auth
-			Resources: []string{"clusterrole", "rolebinding"},
-			Verbs:     []string{"*"},
-		},
-		{
-			APIGroups: []string{"batch"}, // Batch APIs.
-			Resources: []string{"jobs"},
-			Verbs:     []string{"*"},
-		},
-		{
-			APIGroups: []string{"autoscaling.gke.io"}, // Autoscaling APIs.
-			Resources: []string{"multidimpodautoscalers"},
-			Verbs:     []string{"*"},
-		},
-		{
-			APIGroups: []string{"net.gke.io"}, // Networking APIs.
-			Resources: []string{"serviceexports"},
-			Verbs:     []string{"*"},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""}, // Core APIs.
+				Resources: []string{
+					"pods", "services", "configmaps", "serviceaccounts"},
+				Verbs: []string{"*"},
+			},
+			{
+				APIGroups: []string{"apps"}, // Application APIs.
+				Resources: []string{"deployments"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"rbac.authorization.k8s.io"}, // Auth
+				Resources: []string{"rolebindings"},
+				Verbs:     []string{"delete", "deletecollection"},
+			},
+			{
+				APIGroups: []string{"batch"}, // Batch APIs.
+				Resources: []string{"jobs"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"autoscaling.gke.io"}, // Autoscaling APIs.
+				Resources: []string{"multidimpodautoscalers"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"net.gke.io"}, // Networking APIs.
+				Resources: []string{"serviceexports"},
+				Verbs:     []string{"*"},
+			},
 		},
 	}); err != nil {
+		return nil, "", err
+	}
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, managerKubeServiceAccount, managerIAMServiceAccount, nil /*labels*/, managerKubeRole); err != nil {
 		return nil, "", err
 	}
 
 	// Setup the service account used for spare capacity.
-	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, spareKubeServiceAccount, "" /*iamAccount*/, nil /*labels*/, nil /*policyRules*/); err != nil {
+	if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, spareKubeServiceAccount, "" /*iamAccount*/, nil /*labels*/, "" /*kubeRole*/); err != nil {
 		return nil, "", err
 	}
 
 	// Setup service accounts used for application replica sets.
-	for _, sa := range cfg.ComponentIdentity {
-		if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, sa, applicationIAMServiceAccount,
-			map[string]string{
-				appKey:     name{cfg.Deployment.App.Name}.DNSLabel(),
-				versionKey: name{cfg.Deployment.Id}.DNSLabel(),
+	if err := patchRole(ctx, cluster, patchOptions{}, &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      applicationKubeRole,
+			Namespace: namespaceName,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""}, // Core APIs.
+				Resources: []string{"pods"},
+				Verbs:     []string{"get", "list", "watch"},
 			},
-			[]rbacv1.PolicyRule{
-				{
-					APIGroups: []string{""}, // Core APIs.
-					Resources: []string{"pods"},
-					Verbs:     []string{"get", "list", "watch"},
-				},
-			}); err != nil {
+		},
+	}); err != nil {
+		return nil, "", err
+	}
+	for _, sa := range cfg.ComponentIdentity {
+		if err := ensureKubeServiceAccount(ctx, cluster, nil /*logger*/, sa, applicationIAMServiceAccount, map[string]string{
+			appKey:     name{cfg.Deployment.App.Name}.DNSLabel(),
+			versionKey: name{cfg.Deployment.Id}.DNSLabel(),
+		}, applicationKubeRole); err != nil {
 			return nil, "", err
 		}
 	}
