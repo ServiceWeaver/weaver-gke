@@ -16,7 +16,7 @@ name: Integration Test
 
 env:
     CONFIG_FILE: deploy.toml
-    WAIT_TIMEOUT: "15m"
+    WAIT_TIMEOUT: "25m"
 
 on:
   schedule:

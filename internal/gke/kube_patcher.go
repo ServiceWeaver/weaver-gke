@@ -293,12 +293,12 @@ func patchKubeServiceAccount(ctx context.Context, cluster *ClusterInfo, opts pat
 	}.Run(ctx, account)
 }
 
-// patchClusterRole updates the kubernetes cluser role with the new configuration.
-func patchClusterRole(ctx context.Context, cluster *ClusterInfo, opts patchOptions, role *rbacv1.ClusterRole) error {
-	cli := cluster.Clientset.RbacV1().ClusterRoles()
+// patchRole updates the kubernetes role with the new configuration.
+func patchRole(ctx context.Context, cluster *ClusterInfo, opts patchOptions, role *rbacv1.Role) error {
+	cli := cluster.Clientset.RbacV1().Roles(getNamespace(role.ObjectMeta))
 	return kubePatcher{
 		cluster: cluster,
-		desc:    "cluster role",
+		desc:    "role",
 		opts:    opts,
 		get: func(ctx context.Context) (metav1.Object, error) {
 			return cli.Get(ctx, role.Name, metav1.GetOptions{})
