@@ -16,6 +16,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 
 	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver/metrics"
@@ -29,6 +31,12 @@ var stringLength = metrics.NewHistogram(
 	metrics.NonNegativeBuckets,
 )
 
+type echoOptions struct {
+	// If non-empty, echo only strings that match the given regexp pattern,
+	// returning an error for the rest.
+	Pattern string
+}
+
 // Echoer component.
 type Echoer interface {
 	Echo(context.Context, string) (string, error)
@@ -37,9 +45,22 @@ type Echoer interface {
 // Implementation of the Echoer component.
 type echoer struct {
 	weaver.Implements[Echoer]
+	weaver.WithConfig[echoOptions]
 }
 
+// Echo implements the Echoer interface.
 func (e echoer) Echo(ctx context.Context, s string) (string, error) {
 	stringLength.Put(float64(len(s))) // Update the stringLength metric.
+	pattern := e.Config().Pattern
+	if pattern == "" {
+		return s, nil
+	}
+	matched, err := regexp.Match(pattern, []byte(s))
+	if err != nil {
+		return "", err
+	}
+	if !matched {
+		return "", fmt.Errorf("Input %q doesn't match the pattern %q", s, pattern)
+	}
 	return s, nil
 }
