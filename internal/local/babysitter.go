@@ -19,6 +19,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -34,7 +35,6 @@ import (
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/traces"
 	"github.com/google/uuid"
-	"golang.org/x/exp/slog"
 )
 
 // startBabysitter creates and starts a babysitter in a gke-local deployment.
@@ -123,7 +123,7 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, s *Starter, rep
 		return nil, err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr().String())
-	b, err := babysitter.Start(ctx, logger, cfg, replicaSet, projectName, podName, true /*useLocalhost*/, 0 /*internalPort*/, mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricExporter)
+	b, err := babysitter.Start(ctx, logger, cfg, replicaSet, projectName, podName, "localhost:0", mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricExporter)
 	if err != nil {
 		return nil, err
 	}

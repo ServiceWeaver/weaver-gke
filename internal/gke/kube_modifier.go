@@ -16,9 +16,9 @@ package gke
 
 import (
 	"context"
+	"log/slog"
 
 	"github.com/ServiceWeaver/weaver/runtime/retry"
-	"golang.org/x/exp/slog"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"

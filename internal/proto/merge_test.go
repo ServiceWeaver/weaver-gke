@@ -19,11 +19,11 @@ package proto_test
 import (
 	"testing"
 
+	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
+	proto_test "github.com/ServiceWeaver/weaver-gke/internal/proto/test"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/testing/protocmp"
-	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
-	proto_test "github.com/ServiceWeaver/weaver-gke/internal/proto/test"
 )
 
 func TestMerge(t *testing.T) {

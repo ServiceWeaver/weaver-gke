@@ -17,6 +17,7 @@ package gke
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -32,7 +33,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/traces"
 	"go.opentelemetry.io/otel/sdk/trace"
-	"golang.org/x/exp/slog"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -171,12 +171,13 @@ func RunBabysitter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	internalAddress := fmt.Sprintf("%s:%d", host, weaveletPort)
 	lis, err := net.Listen("tcp", fmt.Sprintf("%s:0", host))
 	if err != nil {
 		return err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr())
-	_, err = babysitter.Start(ctx, logger, cfg, replicaSet, meta.Project, meta.PodName, false /*useLocalhost*/, weaveletPort, mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricSaver)
+	_, err = babysitter.Start(ctx, logger, cfg, replicaSet, meta.Project, meta.PodName, internalAddress, mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}

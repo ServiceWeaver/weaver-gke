@@ -18,11 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/google/uuid"
-	"golang.org/x/exp/slog"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	apiv1 "k8s.io/api/core/v1"

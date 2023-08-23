@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -38,7 +39,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
-	"golang.org/x/exp/slog"
 )
 
 func getNannyContainerMetadata() (*ContainerMetadata, error) {
