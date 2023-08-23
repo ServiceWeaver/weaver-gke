@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
@@ -29,7 +30,6 @@ import (
 	"sync"
 
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
-	"golang.org/x/exp/slog"
 )
 
 const (

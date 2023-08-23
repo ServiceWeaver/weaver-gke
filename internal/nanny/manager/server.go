@@ -19,13 +19,13 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
-	"golang.org/x/exp/slog"
 	"google.golang.org/protobuf/proto"
 )
 

@@ -17,6 +17,7 @@ package local
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"sync"
@@ -28,7 +29,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slog"
 )
 
 // The interval beyond which we ignore metric values in the metric database.

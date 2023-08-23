@@ -18,13 +18,13 @@ package bench
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
-	"golang.org/x/exp/slog"
 )
 
 // StoreConfig configures the benchmark run by BenchStore.

@@ -35,6 +35,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -53,7 +54,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
-	"golang.org/x/exp/slog"
 )
 
 // URL on the controller where the metrics are exported in the Prometheus format.

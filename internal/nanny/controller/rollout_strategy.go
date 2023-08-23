@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"time"
 
-	"google.golang.org/protobuf/types/known/durationpb"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 // basicRolloutProcessor computes a rollout strategy as follows:

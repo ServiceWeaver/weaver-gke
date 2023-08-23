@@ -21,8 +21,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mattn/go-sqlite3"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
+	"github.com/mattn/go-sqlite3"
 )
 
 // SQLStore is a sqlite-backed implementation of a Store. All of the data in a

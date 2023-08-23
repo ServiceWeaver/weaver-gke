@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/x509"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"sync"
@@ -34,7 +35,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
-	"golang.org/x/exp/slog"
 )
 
 const (
@@ -87,8 +87,7 @@ func Start(
 	replicaSet string,
 	projectName string,
 	podName string,
-	useLocalhost bool,
-	internalPort int32,
+	internalAddress string,
 	mux *http.ServeMux,
 	selfAddr string,
 	manager endpoints.Manager,
@@ -109,13 +108,13 @@ func Start(
 	//     active by asking the Kubernetes API if the Pod with a given name
 	//     exists.
 	info := &protos.EnvelopeInfo{
-		App:          cfg.Deployment.App.Name,
-		DeploymentId: cfg.Deployment.Id,
-		Id:           podName,
-		Sections:     cfg.Deployment.App.Sections,
-		RunMain:      replicaSet == runtime.Main,
-		Mtls:         cfg.Mtls,
-		InternalPort: internalPort,
+		App:             cfg.Deployment.App.Name,
+		DeploymentId:    cfg.Deployment.Id,
+		Id:              podName,
+		Sections:        cfg.Deployment.App.Sections,
+		RunMain:         replicaSet == runtime.Main,
+		Mtls:            cfg.Mtls,
+		InternalAddress: internalAddress,
 	}
 	e, err := envelope.NewEnvelope(ctx, info, cfg.Deployment.App)
 	if err != nil {

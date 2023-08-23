@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 )
 
 func TestBasicRolloutProcessor(t *testing.T) {

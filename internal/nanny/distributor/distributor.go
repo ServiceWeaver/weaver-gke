@@ -23,6 +23,7 @@ package distributor
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"sort"
@@ -35,7 +36,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/profiling"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
-	"golang.org/x/exp/slog"
 )
 
 // A distributor oversees all of the deployments in a single location (e.g., a
