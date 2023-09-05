@@ -40,6 +40,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver-gke/internal/version"
+	wruntime "github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"google.golang.org/api/cloudresourcemanager/v1"
@@ -393,6 +394,9 @@ rolled out in all locations right away. Are you sure you want to proceed? [Y/n] 
 		}
 		allow.Component = append(allow.Component, dst)
 	}
+
+	// Ensure we have an identity for the main component.
+	addIdentity(wruntime.Main)
 
 	// Update the application binary path to point to a path inside the
 	// container.
