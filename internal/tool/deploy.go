@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/gke"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
@@ -185,6 +186,10 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 	if err != nil {
 		return fmt.Errorf("read versions: %w", err)
 	}
+	selfVersion, _, err := gke.ToolVersion()
+	if err != nil {
+		return fmt.Errorf("read weaver-gke version: %w", err)
+	}
 	if versions.DeployerVersion != version.DeployerVersion {
 		// Try to relativize the binary, defaulting to the absolute path if
 		// there are any errors..
@@ -207,8 +212,8 @@ updating the 'weaver-gke' command by running the following.
     go install github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@latest
 
 Then, re-build your code and re-run 'weaver-gke deploy'. If the problem
-persists, please file an issue at https://github.com/ServiceWeaver/weaver/issues.`,
-			binary, versions.ModuleVersion, version.ModuleVersion)
+persists, please file an issue at https://github.com/ServiceWeaver/weaver/issues`,
+			binary, versions.ModuleVersion, selfVersion)
 	}
 
 	// TODO(mwhittaker): Check that the controller is running the same version
