@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/version"
+	"github.com/ServiceWeaver/weaver-gke/internal/gke"
 	"github.com/ServiceWeaver/weaver/runtime/tool"
 )
 
@@ -30,7 +30,11 @@ var versionCmd = tool.Command{
 	Description: "Show weaver gke version",
 	Help:        "Usage:\n  weaver gke version",
 	Fn: func(context.Context, []string) error {
-		fmt.Printf("weaver gke v%d.%d.%d %s/%s\n", version.Major, version.Minor, version.Patch, runtime.GOOS, runtime.GOARCH)
+		v, _, err := gke.ToolVersion()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("weaver gke %s %s/%s\n", v, runtime.GOOS, runtime.GOARCH)
 		return nil
 	},
 }

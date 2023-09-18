@@ -39,7 +39,6 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
-	"github.com/ServiceWeaver/weaver-gke/internal/version"
 	wruntime "github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
@@ -210,28 +209,47 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 
 	fmt.Fprintln(os.Stderr, "Starting the application container build", appImageURL)
 
-	// Start the build in a separate goroutine.
-	buildDone := make(chan struct{})
-	files := []string{localBinary}
-	var goInstall []string
+	// Figure out which tool binary will run inside the container.
+	toCopy := []string{localBinary}
+	var toInstall []string
+	toolVersion, toolIsDev, err := ToolVersion()
+	if err != nil {
+		return nil, err
+	}
 	if runtime.GOOS == "linux" && runtime.GOARCH == "amd64" {
-		// Use the running weaver-gke tool binary.
+		// The running tool binary can run inside the container: copy it.
 		toolBinPath, err := os.Executable()
 		if err != nil {
 			return nil, err
 		}
-		files = append(files, toolBinPath)
+		toCopy = append(toCopy, toolBinPath)
+	} else if toolIsDev {
+		// Devel tool binary that's not linux/amd64: prompt the user.
+		scanner := bufio.NewScanner(os.Stdin)
+		fmt.Print(
+			`The running weaver-gke binary hasn't been cross-compiled for linux/amd64 and
+cannot run inside the container. Instead, the latest weaver-gke binary will be
+downloaded and installed in the container. Do you want to proceed? [Y/n] `)
+		scanner.Scan()
+		text := scanner.Text()
+		if text != "" && text != "y" && text != "Y" {
+			return nil, fmt.Errorf("user bailed out")
+		}
+		toInstall = append(toInstall, "github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@latest")
 	} else {
-		// Cross-compile the weaver-gke tool binary inside the container.
-		toolVersion := fmt.Sprintf("v%d.%d.%d", version.Major, version.Minor, version.Patch)
-		goInstall = append(goInstall, "github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@"+toolVersion)
+		// Released tool binary that's not compiled to linux/amd64. Re-install
+		// it inside the container.
+		toInstall = append(toInstall, "github.com/ServiceWeaver/weaver-gke/cmd/weaver-gke@"+toolVersion)
 	}
+
+	// Start the build in a separate goroutine.
+	buildDone := make(chan struct{})
 	go func() {
 		defer close(buildDone)
 		if err := buildImage(childCtx, buildSpec{
 			Tags:      []string{toolImageURL, appImageURL},
-			Files:     files,
-			GoInstall: goInstall,
+			Files:     toCopy,
+			GoInstall: toInstall,
 			Config:    config,
 		}); err != nil {
 			stop(err)
