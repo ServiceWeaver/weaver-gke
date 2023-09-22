@@ -39,8 +39,8 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
-	wruntime "github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
+	"github.com/ServiceWeaver/weaver/runtime/graph"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/dns/v1"
@@ -387,34 +387,30 @@ rolled out in all locations right away. Are you sure you want to proceed? [Y/n] 
 
 	// Generate per-component identities and use the call graph to compute
 	// the set of components each identity is allowed to invoke methods on.
-	callGraph, err := bin.ReadComponentGraph(gkeConfig.Deployment.App.Binary)
+	components, g, err := bin.ReadComponentGraph(gkeConfig.Deployment.App.Binary)
 	if err != nil {
 		return fmt.Errorf("cannot read the call graph from the application binary: %w", err)
 	}
 	gkeConfig.ComponentIdentity = map[string]string{}
 	gkeConfig.IdentityAllowlist = map[string]*config.GKEConfig_Components{}
-	addIdentity := func(component string) string {
+	g.PerNode(func(n graph.Node) {
+		// Assign an identity (i.e., a serviceAccount) to the component.
+		component := components[n]
 		dep := gkeConfig.Deployment
 		replicaSet := nanny.ReplicaSetForComponent(component, gkeConfig)
 		serviceAccount := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 		gkeConfig.ComponentIdentity[component] = serviceAccount
-		return serviceAccount
-	}
-	for _, edge := range callGraph {
-		src := edge[0]
-		dst := edge[1]
-		addIdentity(dst)
-		srcIdentity := addIdentity(src)
-		allow := gkeConfig.IdentityAllowlist[srcIdentity]
+
+		// Allow the identity to invoke methods on the target components.
+		allow := gkeConfig.IdentityAllowlist[serviceAccount]
 		if allow == nil {
 			allow = &config.GKEConfig_Components{}
-			gkeConfig.IdentityAllowlist[srcIdentity] = allow
+			gkeConfig.IdentityAllowlist[serviceAccount] = allow
 		}
-		allow.Component = append(allow.Component, dst)
-	}
-
-	// Ensure we have an identity for the main component.
-	addIdentity(wruntime.Main)
+		g.PerOutEdge(n, func(e graph.Edge) {
+			allow.Component = append(allow.Component, components[e.Dst])
+		})
+	})
 
 	// Update the application binary path to point to a path inside the
 	// container.

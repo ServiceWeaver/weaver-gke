@@ -26,6 +26,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
+	"github.com/ServiceWeaver/weaver/runtime/graph"
 )
 
 const (
@@ -56,31 +57,29 @@ func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.Rol
 
 	// Generate per-component identities and use the call graph to compute
 	// the set of components each identity is allowed to invoke methods on.
-	callGraph, err := bin.ReadComponentGraph(cfg.Deployment.App.Binary)
+	components, g, err := bin.ReadComponentGraph(cfg.Deployment.App.Binary)
 	if err != nil {
 		return nil, fmt.Errorf("cannot read the call graph from the application binary: %w", err)
 	}
 	cfg.ComponentIdentity = map[string]string{}
 	cfg.IdentityAllowlist = map[string]*config.GKEConfig_Components{}
-	addIdentity := func(component string) string {
-		// NOTE: we assign each replica set a unique identity, which is the name
-		// of the replica set itself, combined with the deployment id.
+	g.PerNode(func(n graph.Node) {
+		// Assign an identity to the component, which is a combination of
+		// the replica set name and the deployment id.
+		component := components[n]
 		replicaSet := nanny.ReplicaSetForComponent(component, cfg)
 		cfg.ComponentIdentity[component] = fmt.Sprintf("%s-%s", replicaSet, cfg.Deployment.Id)
-		return replicaSet
-	}
-	for _, edge := range callGraph {
-		src := edge[0]
-		dst := edge[1]
-		addIdentity(dst)
-		srcIdentity := addIdentity(src)
-		allow := cfg.IdentityAllowlist[srcIdentity]
+
+		// Allow the identity to invoke methods on the target components.
+		allow := cfg.IdentityAllowlist[replicaSet]
 		if allow == nil {
 			allow = &config.GKEConfig_Components{}
-			cfg.IdentityAllowlist[srcIdentity] = allow
+			cfg.IdentityAllowlist[replicaSet] = allow
 		}
-		allow.Component = append(allow.Component, dst)
-	}
+		g.PerOutEdge(n, func(e graph.Edge) {
+			allow.Component = append(allow.Component, components[e.Dst])
+		})
+	})
 
 	// Prepare the rollout request.
 	req := &controller.RolloutRequest{
