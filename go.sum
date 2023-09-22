@@ -69,8 +69,8 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/cloudmock v0.35.0/go.mod h1:/u5+zrOXintMHE97lVsaKZpwDIfGOBClYrCD/borbi8=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.35.0 h1:vjtrvX7B3S+uqTIOvOUfqsMCa3eEtEOOQWm7ERI1pxg=
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.35.0/go.mod h1:H785fvlgotVZqht+1rHhXSs8EJ8uPVmpBYkTYO3ccpc=
-github.com/ServiceWeaver/weaver v0.21.3-0.20230918223424-a8116a766c3a h1:6+w08SZRd5NW5evG1l4A1mbgrtxZ1tPDwmYsrc0QSgE=
-github.com/ServiceWeaver/weaver v0.21.3-0.20230918223424-a8116a766c3a/go.mod h1:/gQMZ/m0lS+2p75AVgHYSPuuxVMn0vOfbOMvDNtvovQ=
+github.com/ServiceWeaver/weaver v0.21.3-0.20230922172232-acf4cb9d1384 h1:V+Kw3VlFFEkdDC+Two7jJ8ubHUKDzIMJoMfRQpN4MjY=
+github.com/ServiceWeaver/weaver v0.21.3-0.20230922172232-acf4cb9d1384/go.mod h1:fnM1hRM9VlssXVTWiWizSMJ1wclydVfzWZGHusHih90=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
