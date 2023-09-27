@@ -23,3 +23,4 @@ package gen
 //go:generate ./dev/protoc.sh internal/store/store.proto
 //go:generate ./dev/protoc.sh internal/local/local.proto
 //go:generate ./dev/protoc.sh internal/local/proxy/proxy.proto
+//go:generate weaver generate ./internal/babysitter
