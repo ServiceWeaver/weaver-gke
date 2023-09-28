@@ -50,6 +50,7 @@ type echoer struct {
 
 // Echo implements the Echoer interface.
 func (e echoer) Echo(ctx context.Context, s string) (string, error) {
+	e.Logger(ctx).Debug("echo", "value", s)
 	stringLength.Put(float64(len(s))) // Update the stringLength metric.
 	pattern := e.Config().Pattern
 	if pattern == "" {

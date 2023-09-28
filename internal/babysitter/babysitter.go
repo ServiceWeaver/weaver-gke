@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"net"
 	"net/http"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime"
+	"github.com/ServiceWeaver/weaver/runtime/deployers"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
@@ -98,6 +101,21 @@ func Start(
 	traceSaver func(spans *protos.TraceSpans) error,
 	metricExporter func(metrics []*metrics.MetricSnapshot) error,
 ) (*Babysitter, error) {
+	// Custom logging component to receive log messages.
+	loggerComponent := &loggerImpl{dst: logSaver}
+
+	// Make Unix domain socket listener for serving hosted system components.
+	tmpDir, err := runtime.NewTempDir()
+	if err != nil {
+		return nil, err
+	}
+	// TODO(sanjay): Use runtime.OnExitSignal to cleanup when available.
+	udsPath := filepath.Join(tmpDir, "socket")
+	uds, err := net.Listen("unix", udsPath)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create the envelope.
 	//
 	// We use the PodName as a unique weavelet id for the following reasons:
@@ -115,6 +133,14 @@ func Start(
 		RunMain:         replicaSet == runtime.Main,
 		Mtls:            cfg.Mtls,
 		InternalAddress: internalAddress,
+		Redirects: []*protos.EnvelopeInfo_Redirect{
+			// Override the builtin logger.
+			{
+				Component: weaverLoggerName,
+				Target:    funcLoggerName,
+				Address:   "unix://" + udsPath,
+			},
+		},
 	}
 	e, err := envelope.NewEnvelope(ctx, info, cfg.Deployment.App)
 	if err != nil {
@@ -160,6 +186,16 @@ func Start(
 
 	// Start the envelope.
 	go b.envelope.Serve(b)
+
+	// Serve calls to system components.
+	go func() {
+		sys := map[string]any{
+			funcLoggerName: loggerComponent,
+		}
+		if err := deployers.ServeComponents(ctx, uds, logger, sys); err != nil {
+			panic(err)
+		}
+	}()
 
 	return b, nil
 }

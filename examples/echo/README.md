@@ -18,9 +18,7 @@ $ weaver gke deploy weaver.toml          # Run on GKE.
 
 ## How to interact with the application?
 
-If running locally, open `localhost:8000?s=foo` in a browser.
-
 ```console
-$ curl localhost:8000?s=foo
+$ curl --header 'Host: echo.example.com' 'http://localhost:8000/?s=foo'
 foo
 ```

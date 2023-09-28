@@ -50,7 +50,8 @@ func serve(ctx context.Context, s *server) error {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			w.Write([]byte(output))
+			w.Header().Set("Content-Type", "text/plain")
+			fmt.Fprintln(w, output)
 		}))
 	mux.HandleFunc(weaver.HealthzURL, weaver.HealthzHandler)
 
