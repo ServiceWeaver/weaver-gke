@@ -24,6 +24,7 @@ import (
 
 var (
 	distributorFlags       = flag.NewFlagSet("distributor", flag.ContinueOnError)
+	distributorId          = distributorFlags.String("id", "", "distributor unique id")
 	distributorRegion      = distributorFlags.String("region", "us-west1", "Simulated GKE region")
 	distributorPort        = distributorFlags.Int("port", 0, "Distributor port")
 	distributorManagerPort = distributorFlags.Int("manager_port", 0, "Local manager port")
@@ -39,7 +40,7 @@ var distributorCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return local.RunDistributor(ctx, *distributorRegion, *distributorPort, *distributorManagerPort)
+		return local.RunDistributor(ctx, *distributorId, *distributorRegion, *distributorPort, *distributorManagerPort)
 	},
 	Hidden: true,
 }

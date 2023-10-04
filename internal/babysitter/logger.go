@@ -16,8 +16,6 @@ package babysitter
 
 import (
 	"context"
-	"fmt"
-	"os"
 
 	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
@@ -40,7 +38,6 @@ type loggerImpl struct {
 var _ funcLogger = &loggerImpl{}
 
 func (l *loggerImpl) LogBatch(ctx context.Context, batch *protos.LogEntryBatch) error {
-	fmt.Fprintf(os.Stderr, "LogBatch %d\n", len(batch.Entries))
 	for _, e := range batch.Entries {
 		l.dst(e)
 	}

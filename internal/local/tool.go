@@ -15,8 +15,11 @@
 package local
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -27,6 +30,9 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/graph"
+	"github.com/ServiceWeaver/weaver/runtime/logging"
+	protos "github.com/ServiceWeaver/weaver/runtime/protos"
+	"github.com/google/uuid"
 )
 
 const (
@@ -100,6 +106,8 @@ func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.Rol
 // map that assigns the region of every distributor to the port it's listening
 // on.
 func ensureWeaverServices(ctx context.Context, cfg *config.GKEConfig) (map[string]int, error) {
+	rolloutId := cfg.Deployment.Id
+
 	// "weaver-gke-local deploy" launches Service Weaver applications. The
 	// "weaver-gke-local" tool also has subcommands to launch a proxy, a
 	// controller, and a distributor.
@@ -108,19 +116,20 @@ func ensureWeaverServices(ctx context.Context, cfg *config.GKEConfig) (map[strin
 		return nil, err
 	}
 
+	ls, err := logging.NewFileStore(LogDir)
+	if err != nil {
+		return nil, fmt.Errorf("cannot create log storage: %w", err)
+	}
+
 	// Launch the proxy.
-	proxy := exec.Command(ex, "proxy", "--port", fmt.Sprint(proxyPort))
-	proxy.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := proxy.Start(); err != nil {
+	if err := startSubProcess(ls, rolloutId, ex, "proxy", "--port", fmt.Sprint(proxyPort)); err != nil {
 		return nil, err
 	}
 
 	// Launch the controller.
-	controller := exec.Command(ex, "controller",
+	if err := startSubProcess(ls, rolloutId, ex, "controller",
 		"--region", "us-central1",
-		"--port", fmt.Sprint(controllerPort))
-	controller.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	if err := controller.Start(); err != nil {
+		"--port", fmt.Sprint(controllerPort)); err != nil {
 		return nil, err
 	}
 
@@ -140,24 +149,73 @@ func ensureWeaverServices(ctx context.Context, cfg *config.GKEConfig) (map[strin
 		distributorPorts[region] = distributorPort
 
 		// Start the distributor.
-		distributor := exec.Command(ex, "distributor",
+		if err := startSubProcess(ls, rolloutId, ex, "distributor",
 			"--region", region,
 			"--port", fmt.Sprint(distributorPort),
-			"--manager_port", fmt.Sprint(managerPort))
-		distributor.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := distributor.Start(); err != nil {
+			"--manager_port", fmt.Sprint(managerPort)); err != nil {
 			return nil, err
 		}
 
 		// Start the manager.
-		manager := exec.Command(ex, "manager",
+		if err := startSubProcess(ls, rolloutId, ex, "manager",
 			"--region", region,
 			"--port", fmt.Sprint(managerPort),
-			"--proxy_port", fmt.Sprint(proxyPort))
-		manager.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := manager.Start(); err != nil {
+			"--proxy_port", fmt.Sprint(proxyPort)); err != nil {
 			return nil, err
 		}
 	}
 	return distributorPorts, nil
+}
+
+func startSubProcess(ls *logging.FileStore, rolloutId, bin string, args ...string) error {
+	name := args[0] // E.g., "proxy", "manager", etc.
+	processId := uuid.New().String()
+	cmd := exec.Command(bin, append(args, "--id", processId)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	// Create pipes that capture child outputs.
+	outpipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("create stdout pipe: %w", err)
+	}
+	errpipe, err := cmd.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("create stderr pipe: %w", err)
+	}
+	go logLines(outpipe, ls, rolloutId, name, processId, "stdout")
+	go logLines(errpipe, ls, rolloutId, name, processId, "stderr")
+
+	return cmd.Start()
+}
+
+// logLines reads lines from src and writes to log storage.
+// level must be one of "stdout" or "stderr".
+func logLines(src io.Reader, ls *logging.FileStore, rolloutId, name, processId, level string) {
+	// Fill partial log entry.
+	entry := &protos.LogEntry{
+		App:       "gke-local",
+		Version:   rolloutId,
+		Component: name + "/" + level,
+		Node:      processId,
+		Level:     level,
+		File:      "",
+		Line:      -1,
+	}
+	rdr := bufio.NewReader(src)
+	for {
+		line, err := rdr.ReadBytes('\n')
+		// Note: both line and err may be present.
+		if len(line) > 0 {
+			entry.Msg = string(bytes.TrimSuffix(line, []byte{'\n'}))
+			entry.TimeMicros = 0 // Override any side-effect of earlier ls.Add() call
+			ls.Add(entry)
+		}
+		if err != nil {
+			entry.Msg = "sub-process read error"
+			entry.TimeMicros = 0
+			entry.Attrs = []string{"err", err.Error()}
+			ls.Add(entry)
+			return
+		}
+	}
 }
