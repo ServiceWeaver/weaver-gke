@@ -24,6 +24,7 @@ import (
 
 var (
 	proxyFlags = flag.NewFlagSet("proxy", flag.ContinueOnError)
+	proxyId    = proxyFlags.String("id", "", "proxy unique id")
 	proxyPort  = proxyFlags.Int("port", 0, "proxy port")
 )
 
@@ -31,13 +32,13 @@ var proxyCmd = tool.Command{
 	Name:        "proxy",
 	Description: "The gke-local proxy",
 	Help: `Usage:
-  weaver gke-local proxy --port=<port>
+  weaver gke-local proxy --id=<id> --port=<port>
 
 Flags:
   -h, --help   Print this help message.`,
 	Flags: proxyFlags,
 	Fn: func(ctx context.Context, _ []string) error {
-		return local.RunProxy(ctx, *proxyPort)
+		return local.RunProxy(ctx, *proxyId, *proxyPort)
 	},
 	Hidden: true,
 }

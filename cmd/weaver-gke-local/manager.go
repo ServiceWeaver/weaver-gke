@@ -24,6 +24,7 @@ import (
 
 var (
 	managerFlags     = flag.NewFlagSet("manager", flag.ContinueOnError)
+	managerId        = managerFlags.String("id", "", "manager unique id")
 	managerRegion    = managerFlags.String("region", "us-west1", "Simulated GKE region")
 	managerPort      = managerFlags.Int("port", 0, "Manager port")
 	managerProxyPort = managerFlags.Int("proxy_port", 0, "Proxy port")
@@ -39,7 +40,7 @@ var managerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return local.RunManager(ctx, *managerRegion, *managerPort, *managerProxyPort)
+		return local.RunManager(ctx, *managerId, *managerRegion, *managerPort, *managerProxyPort)
 	},
 	Hidden: true,
 }

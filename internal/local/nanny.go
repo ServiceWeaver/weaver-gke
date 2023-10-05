@@ -53,7 +53,6 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	protos "github.com/ServiceWeaver/weaver/runtime/protos"
-	"github.com/google/uuid"
 )
 
 // URL on the controller where the metrics are exported in the Prometheus format.
@@ -113,8 +112,7 @@ func runNannyServer(ctx context.Context, server *http.Server, lis net.Listener) 
 }
 
 // RunController creates and runs a controller.
-func RunController(ctx context.Context, region string, port int) error {
-	id := uuid.New().String()
+func RunController(ctx context.Context, id string, region string, port int) error {
 	logger, close, err := makeNannyLogger(id, "controller")
 	if err != nil {
 		return err
@@ -183,8 +181,7 @@ func RunController(ctx context.Context, region string, port int) error {
 }
 
 // RunDistributor creates and runs a distributor.
-func RunDistributor(ctx context.Context, region string, port, managerPort int) error {
-	id := uuid.New().String()
+func RunDistributor(ctx context.Context, id, region string, port, managerPort int) error {
 	name := "distributor-" + region
 	logger, close, err := makeNannyLogger(id, name)
 	if err != nil {
@@ -266,8 +263,7 @@ func RunDistributor(ctx context.Context, region string, port, managerPort int) e
 }
 
 // RunManager creates and runs a manager.
-func RunManager(ctx context.Context, region string, port, proxyPort int) error {
-	id := uuid.New().String()
+func RunManager(ctx context.Context, id, region string, port, proxyPort int) error {
 	name := "manager-" + region
 	logger, close, err := makeNannyLogger(id, name)
 	if err != nil {
@@ -353,8 +349,7 @@ func RunManager(ctx context.Context, region string, port, proxyPort int) error {
 }
 
 // RunProxy creates and runs a proxy listening on ":port".
-func RunProxy(ctx context.Context, port int) error {
-	id := uuid.New()
+func RunProxy(ctx context.Context, id string, port int) error {
 	ls, err := logging.NewFileStore(LogDir)
 	if err != nil {
 		return fmt.Errorf("cannot create log storage: %w", err)
@@ -363,9 +358,9 @@ func RunProxy(ctx context.Context, port int) error {
 	logger := slog.New(&logging.LogHandler{
 		Opts: logging.Options{
 			App:        "nanny",
-			Deployment: id.String(),
+			Deployment: id,
 			Component:  "proxy",
-			Weavelet:   id.String(),
+			Weavelet:   id,
 			Attrs:      []string{"serviceweaver/system", ""},
 		},
 		Write: ls.Add,

@@ -24,6 +24,7 @@ import (
 
 var (
 	controllerFlags  = flag.NewFlagSet("controller", flag.ContinueOnError)
+	controllerId     = controllerFlags.String("id", "", "controller unique id")
 	controllerRegion = controllerFlags.String("region", "us-central1", "Simulated GKE region")
 	controllerPort   = controllerFlags.Int("port", 0, "Controller port")
 )
@@ -38,7 +39,7 @@ var controllerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return local.RunController(ctx, *controllerRegion, *controllerPort)
+		return local.RunController(ctx, *controllerId, *controllerRegion, *controllerPort)
 	},
 	Hidden: true,
 }
