@@ -120,6 +120,7 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		Regions   []string
 		Listeners map[string]lisOpts
 		MTLS      bool
+		Rollout   time.Duration
 	}
 	parsed := &gkeConfigSchema{}
 	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app.Sections, parsed); err != nil {
@@ -157,7 +158,8 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 			App: app,
 			Id:  depID.String(),
 		},
-		Mtls: parsed.MTLS,
+		Mtls:         parsed.MTLS,
+		RolloutNanos: int64(parsed.Rollout),
 	}
 
 	return cfg, nil

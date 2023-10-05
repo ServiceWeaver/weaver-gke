@@ -218,7 +218,7 @@ func (c *controller) rollout(ctx context.Context, req *RolloutRequest) error {
 	}
 
 	// Compute the rollout strategy.
-	durationHint := time.Duration(req.Config.Deployment.App.RolloutNanos)
+	durationHint := time.Duration(req.Config.RolloutNanos)
 	rolloutLocs := make([]string, len(req.Locations))
 	for i := 0; i < len(req.Locations); i++ {
 		rolloutLocs[i] = req.Locations[i].Name

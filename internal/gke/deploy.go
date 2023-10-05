@@ -371,7 +371,7 @@ func enableMultiClusterServices(config CloudConfig) error {
 
 func finalizeConfig(cloudConfig CloudConfig, gkeConfig *config.GKEConfig) error {
 	// Finalize the rollout duration.
-	if gkeConfig.Deployment.App.RolloutNanos == 0 {
+	if gkeConfig.RolloutNanos == 0 {
 		scanner := bufio.NewScanner(os.Stdin)
 		fmt.Print(
 			`No rollout duration specified in the config: the app version will be

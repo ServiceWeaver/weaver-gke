@@ -1316,13 +1316,11 @@ func registerNewAppVersion(ctx context.Context, controller *controller, v versio
 	req := &RolloutRequest{
 		Config: &config.GKEConfig{
 			Deployment: &protos.Deployment{
-				App: &protos.AppConfig{
-					Name:         v.appName,
-					RolloutNanos: int64(rollout),
-				},
-				Id: v.id,
+				App: &protos.AppConfig{Name: v.appName},
+				Id:  v.id,
 			},
-			Listeners: v.listenerOpts,
+			Listeners:    v.listenerOpts,
+			RolloutNanos: int64(rollout),
 		},
 	}
 	for _, location := range v.locations {
