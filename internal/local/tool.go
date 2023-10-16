@@ -25,7 +25,6 @@ import (
 	"syscall"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
@@ -73,7 +72,7 @@ func PrepareRollout(ctx context.Context, cfg *config.GKEConfig) (*controller.Rol
 		// Assign an identity to the component, which is a combination of
 		// the replica set name and the deployment id.
 		component := components[n]
-		replicaSet := nanny.ReplicaSetForComponent(component, cfg)
+		replicaSet := config.ReplicaSetForComponent(component, cfg)
 		cfg.ComponentIdentity[component] = fmt.Sprintf("%s-%s", replicaSet, cfg.Deployment.Id)
 
 		// Allow the identity to invoke methods on the target components.

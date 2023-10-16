@@ -100,14 +100,6 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, s *Starter, rep
 		return selfCertPEM, selfKeyPEM, nil
 	}
 
-	getReplicaWatcher := func(ctx context.Context, replicaSet string) (babysitter.ReplicaWatcher, error) {
-		return &replicaWatcher{
-			cfg:        cfg,
-			replicaSet: replicaSet,
-			s:          s,
-		}, nil
-	}
-
 	// Connection to the manager.
 	m := &manager.HttpClient{
 		Addr:      cfg.ManagerAddr,
@@ -123,7 +115,7 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, s *Starter, rep
 		return nil, err
 	}
 	selfAddr := fmt.Sprintf("https://%s", lis.Addr().String())
-	b, err := babysitter.Start(ctx, logger, cfg, replicaSet, projectName, podName, "localhost:0", mux, selfAddr, m, caCert, getSelfCert, getReplicaWatcher, logSaver, traceSaver, metricExporter)
+	b, err := babysitter.Start(ctx, logger, cfg, replicaSet, projectName, podName, "localhost:0", mux, selfAddr, m, caCert, getSelfCert, logSaver, traceSaver, metricExporter)
 	if err != nil {
 		return nil, err
 	}
@@ -136,28 +128,4 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, s *Starter, rep
 	go server.ServeTLS(lis, "", "")
 
 	return b, nil
-}
-
-// replicaWatcher is an implementation of the babysitter.ReplicaWatcher
-// interface for the GKE local deployer.
-// The implementation is not thread safe.
-type replicaWatcher struct {
-	cfg        *config.GKEConfig
-	replicaSet string
-	s          *Starter
-	called     bool
-}
-
-var _ babysitter.ReplicaWatcher = &replicaWatcher{}
-
-// GetReplicas implements the babysitter.ReplicaWatcher interface.
-func (w *replicaWatcher) GetReplicas(ctx context.Context) ([]string, error) {
-	if w.called {
-		// Local replicas don't change, so we can just block until the context
-		// is canceled.
-		<-ctx.Done()
-		return nil, ctx.Err()
-	}
-	w.called = true
-	return w.s.getReplicas(ctx, w.cfg, w.replicaSet) // blocks
 }

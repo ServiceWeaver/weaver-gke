@@ -33,15 +33,13 @@ const (
 	// URL suffixes for various HTTP endpoints exported by the manager.
 
 	// These endpoints are called by the distributor.
-	deployURL             = "/manager/deploy"
-	stopURL               = "/manager/stop"
-	deleteURL             = "/manager/delete"
-	getReplicaSetStateURL = "/manager/get_replica_set_state"
+	deployURL         = "/manager/deploy"
+	stopURL           = "/manager/stop"
+	deleteURL         = "/manager/delete"
+	getReplicaSetsURL = "/manager/get_replica_sets"
 
 	// These endpoints are called by the babysitter.
 	activateComponentURL    = "/manager/activate_component"
-	registerReplicaURL      = "/manager/register_replica"
-	reportLoadURL           = "/manager/report_load"
 	getListenerAddressURL   = "/manager/get_listener_address"
 	exportListenerURL       = "/manager/export_listener"
 	getRoutingInfoURL       = "/manager/get_routing_info"
@@ -67,13 +65,11 @@ func (s httpServer) run() error {
 	mux.HandleFunc(deployURL, peerAuthorizationHandler(&s, "distributor", protomsg.HandlerDo(s.logger, s.m.Deploy)))
 	mux.HandleFunc(stopURL, peerAuthorizationHandler(&s, "distributor", protomsg.HandlerDo(s.logger, s.m.Stop)))
 	mux.HandleFunc(deleteURL, peerAuthorizationHandler(&s, "distributor", protomsg.HandlerDo(s.logger, s.m.Delete)))
-	mux.HandleFunc(getReplicaSetStateURL, peerAuthorizationHandler(&s, "distributor", protomsg.HandlerFunc(s.logger, s.m.GetReplicaSetState)))
+	mux.HandleFunc(getReplicaSetsURL, peerAuthorizationHandler(&s, "distributor", protomsg.HandlerFunc(s.logger, s.m.GetReplicaSets)))
 
 	// TODO(spetrovic): Implement authorization.
 	var babysitterAuthorizer func(string, *config.GKEConfig) error
 	mux.HandleFunc(activateComponentURL, configAuthorizationHandlerDo(&s, babysitterAuthorizer, s.m.ActivateComponent))
-	mux.HandleFunc(registerReplicaURL, configAuthorizationHandlerDo(&s, babysitterAuthorizer, s.m.RegisterReplica))
-	mux.HandleFunc(reportLoadURL, configAuthorizationHandlerDo(&s, babysitterAuthorizer, s.m.ReportLoad))
 	mux.HandleFunc(getListenerAddressURL, configAuthorizationHandlerFunc(&s, babysitterAuthorizer, s.m.GetListenerAddress))
 	mux.HandleFunc(exportListenerURL, configAuthorizationHandlerFunc(&s, babysitterAuthorizer, s.m.ExportListener))
 	mux.HandleFunc(getRoutingInfoURL, configAuthorizationHandlerFunc(&s, babysitterAuthorizer, s.m.GetRoutingInfo))

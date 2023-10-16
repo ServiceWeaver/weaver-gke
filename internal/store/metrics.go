@@ -137,6 +137,6 @@ func (m *metricsWrapper) Delete(ctx context.Context, key string) error {
 }
 
 // List implements the Store interface.
-func (m *metricsWrapper) List(ctx context.Context) ([]string, error) {
-	return m.store.List(ctx)
+func (m *metricsWrapper) List(ctx context.Context, opts ListOptions) ([]string, error) {
+	return m.store.List(ctx, opts)
 }

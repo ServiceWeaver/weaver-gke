@@ -16,18 +16,14 @@ package endpoints
 
 import (
 	"context"
-	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 )
 
-// Interval at which babysitters report load to the manager.
-const LoadReportInterval = 5 * time.Minute
-
 // Babysitter is an interface for a babysitter.
 type Babysitter interface {
-	CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error)
+	GetLoad(context.Context, *GetLoadRequest) (*GetLoadReply, error)
 	RunProfiling(context.Context, *protos.GetProfileRequest) (*protos.GetProfileReply, error)
 }
 
@@ -46,10 +42,8 @@ type Manager interface {
 	Deploy(context.Context, *nanny.ApplicationDeploymentRequest) error
 	Stop(context.Context, *nanny.ApplicationStopRequest) error
 	Delete(context.Context, *nanny.ApplicationDeleteRequest) error
-	GetReplicaSetState(context.Context, *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error)
+	GetReplicaSets(context.Context, *nanny.GetReplicaSetsRequest) (*nanny.GetReplicaSetsReply, error)
 	ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error
-	RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error
-	ReportLoad(context.Context, *nanny.LoadReport) error
 	GetListenerAddress(context.Context, *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error)
 	ExportListener(context.Context, *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error)
 	GetRoutingInfo(context.Context, *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error)

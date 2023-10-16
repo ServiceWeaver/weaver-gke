@@ -23,8 +23,8 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
 )
 
-// applyTraffic applies the traffic assignment on the proxy running at the given address.
-func applyTraffic(ctx context.Context, proxyAddress string, assignment *nanny.TrafficAssignment, region string) error {
+// ApplyTraffic applies the traffic assignment on the proxy running at the given address.
+func ApplyTraffic(ctx context.Context, proxyAddress string, assignment *nanny.TrafficAssignment, region string) error {
 	// Construct the route request for the proxy.
 	routes := map[string]*proxy.HostBackends{}
 	for host, hostAssignment := range assignment.HostAssignment {

@@ -18,11 +18,13 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"log/slog"
 	"sync"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/local/cond"
+	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 )
 
 const (
@@ -34,38 +36,38 @@ const (
 type Starter struct {
 	caCert *x509.Certificate
 	caKey  crypto.PrivateKey
+	logger *slog.Logger
 
 	mu          sync.Mutex
-	changed     *cond.Cond // broadcast on every change in deployments
-	deployments map[string]*deployment
+	appVersions map[string]*appVersion
 }
 
-type deployment struct {
+type appVersion struct {
 	replicaSets map[string]*replicaSet
 }
 
 type replicaSet struct {
-	replicas []replica
+	pods []pod
 }
 
-type replica struct {
+type pod struct {
 	cancel context.CancelFunc
 	b      *babysitter.Babysitter
 }
 
 // NewStarter creates a starter that runs all replicas of a colocation
 // group as OS processes on the local machine.
-func NewStarter() (*Starter, error) {
+func NewStarter(logger *slog.Logger) (*Starter, error) {
 	caCert, caKey, err := ensureCACert()
 	if err != nil {
 		return nil, err
 	}
 	s := &Starter{
-		deployments: map[string]*deployment{},
 		caCert:      caCert,
 		caKey:       caKey,
+		logger:      logger,
+		appVersions: map[string]*appVersion{},
 	}
-	s.changed = cond.NewCond(&s.mu)
 	return s, nil
 }
 
@@ -74,20 +76,20 @@ func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSetNa
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	d, ok := s.deployments[cfg.Deployment.Id]
+	v, ok := s.appVersions[cfg.Deployment.Id]
 	if !ok {
-		d = &deployment{
+		v = &appVersion{
 			replicaSets: map[string]*replicaSet{},
 		}
-		s.deployments[cfg.Deployment.Id] = d
+		s.appVersions[cfg.Deployment.Id] = v
 	}
-	rs, ok := d.replicaSets[replicaSetName]
+	rs, ok := v.replicaSets[replicaSetName]
 	if !ok {
 		rs = &replicaSet{}
-		d.replicaSets[replicaSetName] = rs
+		v.replicaSets[replicaSetName] = rs
 	}
 
-	if rs.replicas != nil {
+	if rs.pods != nil {
 		// Already started.
 		return nil
 	}
@@ -100,44 +102,48 @@ func (s *Starter) Start(ctx context.Context, cfg *config.GKEConfig, replicaSetNa
 			cancel()
 			return err
 		}
-		rs.replicas = append(rs.replicas, replica{
+		rs.pods = append(rs.pods, pod{
 			cancel: cancel,
 			b:      b,
 		})
 	}
 
-	s.changed.Broadcast()
 	return nil
 }
 
-// getReplicas returns addresses for all the replicas in a given replica set.
-// If the replica set hasn't yet been started, this method will block.
-func (s *Starter) getReplicas(ctx context.Context, cfg *config.GKEConfig, replicaSetName string) ([]string, error) {
-	// NOTE(spetrovic): The algorithm below may lead to a lot of unnecessary
-	// wakeups, but that's okay for GKE local.
+// getHealthyPods returns information for all healthy simulated pods in a given
+// replica set.
+func (s *Starter) getHealthyPods(ctx context.Context, cfg *config.GKEConfig, replicaSet string, newBabysitter func(string) endpoints.Babysitter) ([]*nanny.Pod, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for {
-		d, ok := s.deployments[cfg.Deployment.Id]
-		if !ok {
-			if err := s.changed.Wait(ctx); err != nil { // context canceled
-				return nil, err
-			}
-			continue
-		}
-		rs, ok := d.replicaSets[replicaSetName]
-		if !ok {
-			if err := s.changed.Wait(ctx); err != nil { // context canceled
-				return nil, err
-			}
-			continue
-		}
-		addrs := make([]string, len(rs.replicas))
-		for i, r := range rs.replicas {
-			addrs[i] = r.b.WeaveletInfo().DialAddr
-		}
-		return addrs, nil
+
+	v, ok := s.appVersions[cfg.Deployment.Id]
+	if !ok { // app version hasn't yet started
+		return nil, nil
 	}
+	rs, ok := v.replicaSets[replicaSet]
+	if !ok { // replica set hasn't yet started
+		return nil, nil
+	}
+	var healthyPods []*nanny.Pod
+	for _, r := range rs.pods {
+		babysitterAddr := r.b.SelfAddr()
+		weaveletAddr := r.b.WeaveletInfo().DialAddr
+		// NOTE: we could call r.b.GetLoad() directly here, but are instead
+		// choosing to exercise the same call path as GKE proper.
+		b := newBabysitter(babysitterAddr)
+		reply, err := b.GetLoad(ctx, &endpoints.GetLoadRequest{})
+		if err != nil {
+			s.logger.Debug("cannot get weavelet load: treating as unhealthy", "replica_set", replicaSet, "addr", weaveletAddr)
+			continue
+		}
+		healthyPods = append(healthyPods, &nanny.Pod{
+			BabysitterAddr: babysitterAddr,
+			WeaveletAddr:   weaveletAddr,
+			Load:           reply.Load,
+		})
+	}
+	return healthyPods, nil
 }
 
 // Stop kills processes in all of the versions' replica sets, blocking until all
@@ -147,17 +153,17 @@ func (s *Starter) Stop(_ context.Context, versions []*config.GKEConfig) error {
 	defer s.mu.Unlock()
 
 	for _, v := range versions {
-		d := s.deployments[v.Deployment.Id]
+		d := s.appVersions[v.Deployment.Id]
 		if d == nil {
 			// Already stopped.
 			return nil
 		}
 		for _, rs := range d.replicaSets {
-			for _, r := range rs.replicas {
+			for _, r := range rs.pods {
 				r.cancel() // Stops the babysitter process.
 			}
 		}
-		delete(s.deployments, v.Deployment.Id)
+		delete(s.appVersions, v.Deployment.Id)
 	}
 	return nil
 }

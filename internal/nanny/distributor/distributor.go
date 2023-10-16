@@ -493,7 +493,7 @@ func (d *Distributor) getTrafficAssignment(ctx context.Context, public bool) (*n
 // computes a representative profile for the application version.
 func (d *Distributor) RunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	// Get the ReplicaSet information for the given application version.
-	states, err := d.manager.GetReplicaSetState(ctx, &nanny.GetReplicaSetStateRequest{
+	reply, err := d.manager.GetReplicaSets(ctx, &nanny.GetReplicaSetsRequest{
 		AppName:   req.AppName,
 		VersionId: req.VersionId,
 	})
@@ -501,14 +501,11 @@ func (d *Distributor) RunProfiling(ctx context.Context, req *nanny.GetProfileReq
 		return nil, fmt.Errorf("cannot get ReplicaSet states for version %q of application %q: %w", req.AppName, req.VersionId, err)
 	}
 
-	groups := make([][]func() ([]byte, error), 0, len(states.ReplicaSets))
-	for _, rs := range states.ReplicaSets {
+	groups := make([][]func() ([]byte, error), 0, len(reply.ReplicaSets))
+	for _, rs := range reply.ReplicaSets {
 		// Compute a randomly ordered list of healthy babysitters.
 		replicaSets := make([]func() ([]byte, error), 0, len(rs.Pods))
 		for _, idx := range rand.Perm(len(rs.Pods)) {
-			if rs.Pods[idx].HealthStatus != protos.HealthStatus_HEALTHY {
-				continue
-			}
 			addr := rs.Pods[idx].BabysitterAddr
 			replicaSets = append(replicaSets, func() ([]byte, error) {
 				preq := &protos.GetProfileRequest{

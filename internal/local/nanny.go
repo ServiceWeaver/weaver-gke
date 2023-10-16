@@ -159,7 +159,7 @@ func RunController(ctx context.Context, id string, region string, port int) erro
 		10*time.Second, // applyAssignmentInterval
 		5*time.Second,  // manageAppInterval,
 		func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
-			return applyTraffic(ctx, proxyAddr, assignment, region)
+			return ApplyTraffic(ctx, proxyAddr, assignment, region)
 		},
 	); err != nil {
 		return fmt.Errorf("cannot start controller: %w", err)
@@ -242,10 +242,10 @@ func RunDistributor(ctx context.Context, id, region string, port, managerPort in
 		10*time.Second, // applyTrafficInterval
 		10*time.Second, // detectAppliedTrafficInterval
 		func(ctx context.Context, assignment *nanny.TrafficAssignment) error {
-			return applyTraffic(ctx, fmt.Sprintf("http://localhost:%d", proxyPort), assignment, region)
+			return ApplyTraffic(ctx, fmt.Sprintf("http://localhost:%d", proxyPort), assignment, region)
 		},
 		func(ctx context.Context, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
-			return getListeners(ctx, s, cfg)
+			return GetListeners(ctx, s, cfg)
 		},
 		func(ctx context.Context, metric string, labels ...string) ([]distributor.MetricCount, error) {
 			return getMetricCounts(ctx, metricDB, time.Now().Add(-2*time.Minute), time.Now().Add(-time.Minute), time.Now(), metric, labels...)
@@ -296,7 +296,7 @@ func RunManager(ctx context.Context, id, region string, port, proxyPort int) err
 		return fmt.Errorf("cannot get the store: %w", err)
 	}
 	s = store.WithMetrics(name, id, s)
-	starter, err := NewStarter()
+	starter, err := NewStarter(logger)
 	if err != nil {
 		return fmt.Errorf("cannot create starter: %w", err)
 	}
@@ -305,36 +305,41 @@ func RunManager(ctx context.Context, id, region string, port, proxyPort int) err
 		s,
 		logger,
 		fmt.Sprintf("https://%s", lis.Addr()),
-		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+		2*time.Second, /*updateRoutingInterval*/
+		// getHealthyPods
+		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) ([]*nanny.Pod, error) {
 			replicaSetIdentity, ok := cfg.ComponentIdentity[replicaSet]
 			if !ok { // should never happen
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
 			}
-			return &babysitter.HttpClient{
-				Addr:      addr,
-				TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, replicaSetIdentity),
-			}, nil
+			newBabysitter := func(addr string) endpoints.Babysitter {
+				return &babysitter.HttpClient{
+					Addr:      addr,
+					TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, replicaSetIdentity),
+				}
+			}
+			return starter.getHealthyPods(ctx, cfg, replicaSet, newBabysitter)
 		},
-		func(ctx context.Context, podName string) (bool, error) {
-			// For GKE local, the babysitter is aware when a weavelet is killed,
-			// so we don't need any external signal to check whether a weavelet still exists.
-			return true, nil
-		},
+		// getListenerPort
 		func(context.Context, *config.GKEConfig, string, string) (int, error) {
 			return 0, nil
 		},
+		// exportListener
 		func(ctx context.Context, cfg *config.GKEConfig, _ string, lis *nanny.Listener) (*protos.ExportListenerReply, error) {
 			if err := RecordListener(ctx, s, cfg, lis); err != nil {
 				return &protos.ExportListenerReply{}, err
 			}
 			return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
 		},
+		// startReplicaSet
 		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
 			return starter.Start(ctx, cfg, replicaSet)
 		},
+		// stopAppVersions
 		func(_ context.Context, _ string, appVersions []*config.GKEConfig) error {
 			return starter.Stop(ctx, appVersions)
 		},
+		// deleteAppVersions
 		func(context.Context, string, []*config.GKEConfig) error {
 			// We don't delete state for the older app versions.
 			return nil

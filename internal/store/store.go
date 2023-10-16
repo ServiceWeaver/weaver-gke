@@ -152,17 +152,10 @@ type Store interface {
 	// returned list. For example, store.List(ctx) can return ["a", "b"] or
 	// ["b", "a"] but not ["a", "a", "b"]. List is linearizable.
 	//
-	// Unlike Put, Get, and Delete which are core Store operations, List should
-	// only be used for debugging and introspection.
-	//
 	// TODO(mwhittaker): sanjay@ pointed out that List requires all keys to be
 	// present in memory. One alternative he suggested is to provide
 	// start/limit keys and constrain the returned keys to this range.
-	//
-	// TODO(mwhittaker): Implementing List in a linearizable way is
-	// challenging. Because List is only for debugging, we may want to
-	// guarantee a weaker form of consistency to make it easier to implement.
-	List(ctx context.Context) ([]string, error)
+	List(ctx context.Context, opts ListOptions) ([]string, error)
 }
 
 // Version is the version associated with a value in the store. Versions are
@@ -179,6 +172,12 @@ type Version struct {
 // Missing is the version associated with a value that does not exist in the
 // store.
 var Missing Version = Version{"__tombstone__"}
+
+// ListOptions holds options for the Store List operation.
+type ListOptions struct {
+	// If non-empty, only keys with the given prefix will be returned.
+	Prefix string
+}
 
 // Stale is the error returned when a versioned Put fails because of a stale
 // version. You can check to see if an error is Stale using errors.Is:

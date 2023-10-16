@@ -60,13 +60,13 @@ func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.GetProfileReq
 	return reply, err
 }
 
-// CheckHealth implements the endpoints.Babysitter interface.
-func (h *HttpClient) CheckHealth(ctx context.Context, req *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
-	reply := &protos.GetHealthReply{}
+// GetLoad implements the endpoints.Babysitter interface.
+func (h *HttpClient) GetLoad(ctx context.Context, req *endpoints.GetLoadRequest) (*endpoints.GetLoadReply, error) {
+	reply := &endpoints.GetLoadReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  h.client(),
 		Addr:    h.Addr,
-		URLPath: healthURL,
+		URLPath: loadURL,
 		Request: req,
 		Reply:   reply,
 	})

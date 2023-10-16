@@ -28,6 +28,8 @@ import (
 	"text/template"
 	"time"
 
+	"log/slog"
+
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
@@ -52,7 +54,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-	"log/slog"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
@@ -163,6 +164,9 @@ const (
 
 	// Port on which weavelets listen on for intra-weavelet communication.
 	weaveletPort = 12121
+
+	// Port on which babysitters listen on communication from the manager.
+	babysitterPort = 23232
 )
 
 var (
@@ -199,21 +203,6 @@ var (
 func multiplyQuantity(mult int64, x resource.Quantity) resource.Quantity {
 	x.Set(x.Value() * mult)
 	return x
-}
-
-// podExists returns true iff a Pod with the given name exists in the Service Weaver
-// namespace. It returns an error if the Pod information cannot be retrieved.
-func podExists(ctx context.Context, cluster *ClusterInfo, name string) (bool, error) {
-	cli := cluster.Clientset.CoreV1().Pods(namespaceName)
-	_, err := cli.Get(ctx, name, metav1.GetOptions{})
-	if err == nil { // confirmed exists
-		return true, nil
-	}
-	if kerrors.IsNotFound(err) { // confirmed doesn't exist
-		return false, nil
-	}
-	// Not sure.
-	return true, err
 }
 
 // deploy deploys the Kubernetes ReplicaSet in the given cluster.

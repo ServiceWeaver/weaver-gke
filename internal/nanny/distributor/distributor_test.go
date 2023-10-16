@@ -612,16 +612,21 @@ func TestAnneal(t *testing.T) {
 }
 
 func TestGetDistributorState(t *testing.T) {
-	replicaSets := replicaSetStates{
-		"rs1": {
-			replicas:   []string{"replica1:healthy"},
-			components: []string{"component1", "component2"},
-			listeners:  []string{"l1"},
+	pod := func(addr string) *nanny.Pod {
+		return &nanny.Pod{WeaveletAddr: addr}
+	}
+	replicaSets := []*nanny.ReplicaSet{
+		{
+			Name:       "rs1",
+			Pods:       []*nanny.Pod{pod("replica1")},
+			Components: []string{"component1", "component2"},
+			Listeners:  []string{"l1"},
 		},
-		"rs2": {
-			replicas:   []string{"replica1:healthy"},
-			components: []string{"component3"},
-			listeners:  []string{"l2", "l3"},
+		{
+			Name:       "rs2",
+			Pods:       []*nanny.Pod{pod("replica1")},
+			Components: []string{"component3"},
+			Listeners:  []string{"l2", "l3"},
 		},
 	}
 	type testCase struct {
@@ -686,14 +691,14 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 						{
 							VersionId:                  toUUID(2),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -739,28 +744,28 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 						{
 							VersionId:                  toUUID(3),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 						{
 							VersionId:                  toUUID(4),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 						{
 							VersionId:                  toUUID(1),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -820,14 +825,14 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 						{
 							VersionId:                  toUUID(2),
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -882,7 +887,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -893,7 +898,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -961,7 +966,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -972,7 +977,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -1028,7 +1033,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -1039,7 +1044,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -1098,7 +1103,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -1109,7 +1114,7 @@ func TestGetDistributorState(t *testing.T) {
 							LastTrafficFractionApplied: 1.0,
 							RolloutCompleted:           true,
 							IsDeployed:                 true,
-							ReplicaSets:                replicaSets.toProto(),
+							ReplicaSets:                replicaSets,
 						},
 					},
 				},
@@ -1208,7 +1213,6 @@ func TestGetDistributorState(t *testing.T) {
 			// Verify that the rollout status is as expected.
 			opts = []cmp.Option{
 				protocmp.Transform(),
-				protocmp.SortRepeatedFields(&nanny.ReplicaSetState{}, "replica_sets"),
 			}
 			if diff := cmp.Diff(c.expectedState, gotAppsState, opts...); diff != "" {
 				t.Fatalf("bad state (-want, +got):\n%s", diff)
@@ -1218,6 +1222,12 @@ func TestGetDistributorState(t *testing.T) {
 }
 
 func TestRunProfiling(t *testing.T) {
+	pod := func(addr string) *nanny.Pod {
+		return &nanny.Pod{
+			WeaveletAddr:   addr,
+			BabysitterAddr: addr,
+		}
+	}
 	prof := func(dur time.Duration, numSamples int64) *profile.Profile {
 		cpuM := &profile.Mapping{
 			ID:              1,
@@ -1261,22 +1271,21 @@ func TestRunProfiling(t *testing.T) {
 	}
 
 	type testCase struct {
-		name       string
-		procStates replicaSetStates            // proc_name -> ReplicaSet state
-		profiles   map[string]*profile.Profile // proc_name:replica -> profile
-		expect     *profile.Profile
-		expectErr  string
+		name        string
+		replicaSets []*nanny.ReplicaSet
+		profiles    map[string]*profile.Profile // replica_set:replica->profile
+		expect      *profile.Profile
+		expectErr   string
 	}
 	for _, c := range []testCase{
 		{
 			// Test plan: Single ReplicaSet with a single healthy replica. The
 			// returned profile should be the profile of that single replica.
 			name: "one_replica_set",
-			procStates: replicaSetStates{
-				"rs1": {
-					replicas: []string{"replica1:healthy", "replica2:unhealthy"},
-				},
-			},
+			replicaSets: []*nanny.ReplicaSet{{
+				Name: "rs1",
+				Pods: []*nanny.Pod{pod("rs1:replica1")},
+			}},
 			profiles: map[string]*profile.Profile{
 				"rs1:replica1": prof(time.Second, 100),
 			},
@@ -1287,21 +1296,14 @@ func TestRunProfiling(t *testing.T) {
 			// replicas. The returned profile should be the scaled combination
 			// of the two ReplicaSets' profiles.
 			name: "two_replica_sets",
-			procStates: replicaSetStates{
-				"rs1": {
-					replicas: []string{
-						"replica1:healthy",
-						"replica2:unhealthy",
-						"replica3:healthy",
-					},
+			replicaSets: []*nanny.ReplicaSet{
+				{
+					Name: "rs1",
+					Pods: []*nanny.Pod{pod("rs1:replica1"), pod("rs1:replica3")},
 				},
-				"rs2": {
-					replicas: []string{
-						"replica1:healthy",
-						"replica2:healthy",
-						"replica3:healthy",
-						"replica4:unhealthy",
-					},
+				{
+					Name: "rs2",
+					Pods: []*nanny.Pod{pod("rs2:replica1"), pod("rs2:replica2"), pod("rs2:replica3")},
 				},
 			},
 			profiles: map[string]*profile.Profile{
@@ -1314,27 +1316,19 @@ func TestRunProfiling(t *testing.T) {
 			expect: prof(2*time.Second, 3200),
 		},
 		{
-			// Test plan: Two ReplicaSets where one has a healthy replica and the
-			// other doesn't. The returned profile should be the profile of
-			// the healthy ReplicaSet.
-			name: "two_replica_sets_one_unhealthy",
-			procStates: replicaSetStates{
-				"rs1": {replicas: []string{"replica1:healthy"}},
-				"rs2": {replicas: []string{"replica1:unhealthy"}},
-			},
-			profiles: map[string]*profile.Profile{
-				"rs1:replica1": prof(time.Second, 100),
-			},
-			expect: prof(time.Second, 100),
-		},
-		{
-			// Test plan: Two ReplicaSets, both healthy. Profile collection fails
-			// at one of the two ReplicaSets. The returned profile should be the
-			// profile of the other ReplicaSet, but with an error.
+			// Test plan: Two ReplicaSets, both healthy. Profile collection
+			// fails at one of the two ReplicaSets. The returned profile should
+			// be the profile of the other ReplicaSet, but with an error.
 			name: "two_replica_sets_one_failed",
-			procStates: replicaSetStates{
-				"rs1": {replicas: []string{"replica1:healthy"}},
-				"rs2": {replicas: []string{"replica1:healthy"}},
+			replicaSets: []*nanny.ReplicaSet{
+				{
+					Name: "rs1",
+					Pods: []*nanny.Pod{pod("rs1:replica1")},
+				},
+				{
+					Name: "rs2",
+					Pods: []*nanny.Pod{pod("rs2:replica1")},
+				},
 			},
 			profiles: map[string]*profile.Profile{
 				"rs1:replica1": prof(time.Second, 100),
@@ -1343,19 +1337,15 @@ func TestRunProfiling(t *testing.T) {
 			expectErr: "no profile found",
 		},
 		{
-			// Test plan: Two ReplicaSets, both unhealthy. The returned profile
-			// data should be empty, with no errors.
-			name: "two_replica_sets_both_unhealthy",
-			procStates: replicaSetStates{
-				"rs1": {replicas: []string{"replica1:unhealthy"}},
-				"rs2": {replicas: []string{"replica1:unhealthy"}},
-			},
+			// Test plan: No healthy replicas. The returned profile data should
+			// be empty, with no errors.
+			name:   "no_healthy_replicas",
 			expect: nil,
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx := context.Background()
-			manager := &mockManagerClient{nil, nil, nil, c.procStates}
+			manager := &mockManagerClient{nil, nil, nil, c.replicaSets}
 			babysitterConstructor := func(_ *config.GKEConfig, _, addr string) (endpoints.Babysitter, error) {
 				return &mockBabysitterClient{c.profiles[addr], nil /*metrics*/}, nil
 			}
@@ -1470,45 +1460,13 @@ func registerNewAppVersion(d *Distributor, v version) error {
 	return d.Distribute(context.Background(), req)
 }
 
-type replicaSetStates map[string]struct {
-	replicas   []string
-	components []string
-	listeners  []string
-}
-
-func (s replicaSetStates) toProto() *nanny.ReplicaSetState {
-	var ret nanny.ReplicaSetState
-	for proc, state := range s {
-		rs := &nanny.ReplicaSetState_ReplicaSet{Name: proc, Components: state.components}
-		for _, replica := range state.replicas {
-			parts := strings.Split(replica, ":")
-			if len(parts) != 2 {
-				panic(fmt.Errorf("invalid replica format %q", replica))
-			}
-			healthStatus := protos.HealthStatus_UNHEALTHY
-			if parts[1] == "healthy" {
-				healthStatus = protos.HealthStatus_HEALTHY
-			}
-			addr := fmt.Sprintf("%s:%s", proc, parts[0])
-			rs.Pods = append(rs.Pods, &nanny.ReplicaSetState_ReplicaSet_Pod{
-				WeaveletAddr:   addr,
-				BabysitterAddr: addr,
-				HealthStatus:   healthStatus,
-			})
-		}
-		rs.Listeners = state.listeners
-		ret.ReplicaSets = append(ret.ReplicaSets, rs)
-	}
-	return &ret
-}
-
 // mockManagerClient is a mock manager.Client that returns the provided
 // errors/values for the corresponding methods.
 type mockManagerClient struct {
-	deploy      error            // returned by Deploy
-	stop        error            // returned by Stop
-	delete      error            // returned by Delete
-	replicaSets replicaSetStates // returned by GetReplicaSetState
+	deploy      error               // returned by Deploy
+	stop        error               // returned by Stop
+	delete      error               // returned by Delete
+	replicaSets []*nanny.ReplicaSet // returned by GetReplicaSets
 }
 
 var _ endpoints.Manager = &mockManagerClient{}
@@ -1529,22 +1487,12 @@ func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequ
 }
 
 // GetReplicaSetState implements the endpoints.Manager interface.
-func (m *mockManagerClient) GetReplicaSetState(_ context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
-	return m.replicaSets.toProto(), nil
+func (m *mockManagerClient) GetReplicaSets(_ context.Context, req *nanny.GetReplicaSetsRequest) (*nanny.GetReplicaSetsReply, error) {
+	return &nanny.GetReplicaSetsReply{ReplicaSets: m.replicaSets}, nil
 }
 
 // StartComponent implements the endpoints.Manager interface.
 func (m *mockManagerClient) ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error {
-	panic("implement me")
-}
-
-// RegisterReplica implements the endpoints.Manager interface.
-func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error {
-	panic("implement me")
-}
-
-// ReportLoad implements the endpoints.Manager interface.
-func (m *mockManagerClient) ReportLoad(context.Context, *nanny.LoadReport) error {
 	panic("implement me")
 }
 
@@ -1591,6 +1539,6 @@ func (b mockBabysitterClient) RunProfiling(_ context.Context, req *protos.GetPro
 }
 
 // CheckHealth implements the endpoints.Babysitter interface.
-func (b mockBabysitterClient) CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
+func (b mockBabysitterClient) GetLoad(context.Context, *endpoints.GetLoadRequest) (*endpoints.GetLoadReply, error) {
 	panic("implement me")
 }

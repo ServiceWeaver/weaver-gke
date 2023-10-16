@@ -12,13 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package nanny
-
-import "github.com/ServiceWeaver/weaver-gke/internal/config"
+package config
 
 // ReplicaSetForComponent returns the name of the Kubernetes ReplicaSet that
 // should host the given component.
-func ReplicaSetForComponent(component string, config *config.GKEConfig) string {
+func ReplicaSetForComponent(component string, config *GKEConfig) string {
 	for _, group := range config.Deployment.App.Colocate {
 		for _, c := range group.Components {
 			if c == component {

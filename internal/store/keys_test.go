@@ -51,13 +51,13 @@ func TestKeys(t *testing.T) {
 		},
 		{
 			name: "Deployment",
-			got:  DeploymentKey(cfg("collatz", id), "key"),
-			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/key",
+			got:  AppVersionKey(cfg("collatz", id), "key"),
+			want: "/app/collatz/version/11111111-1111-1111-1111-111111111111/key",
 		},
 		{
 			name: "ReplicaSet",
 			got:  ReplicaSetKey(cfg("collatz", id), "OddEven", "key"),
-			want: "/app/collatz/deployment/11111111-1111-1111-1111-111111111111/replica_set/OddEven/key",
+			want: "/app/collatz/version/11111111-1111-1111-1111-111111111111/replica_set/OddEven/key",
 		},
 	}
 

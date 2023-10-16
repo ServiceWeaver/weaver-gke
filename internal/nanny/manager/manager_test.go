@@ -18,10 +18,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
@@ -49,18 +49,42 @@ func nextEvent(events chan string) string {
 	}
 }
 
-func newTestManager(t *testing.T) (endpoints.Manager, chan string) {
+// testState stores the testState for a given test.
+type testState struct {
+	mu sync.Mutex
+	// Set of healthy pods, keyed by replica set name.
+	pods map[string][]*nanny.Pod
+}
+
+func (s *testState) registerPod(replicaSet, addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pods == nil {
+		s.pods = map[string][]*nanny.Pod{}
+	}
+	s.pods[replicaSet] = append(s.pods[replicaSet], &nanny.Pod{WeaveletAddr: addr})
+}
+
+func (s *testState) getHealthyPods(replicaSet string) ([]*nanny.Pod, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pods[replicaSet], nil
+}
+
+func newTestManager(t *testing.T) (endpoints.Manager, *testState, chan string) {
 	t.Helper()
 	ctx := context.Background()
 	events := make(chan string, 100)
+	s := &testState{}
 	m := NewManager(ctx,
 		store.NewFakeStore(),
 		logging.NewTestSlogger(t, testing.Verbose()),
-		"", // dialAddr
-		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
-			return &babysitter.HttpClient{Addr: addr}, nil
+		"",               // dialAddr
+		time.Millisecond, /*updateRoutingInterval*/
+		func(_ context.Context, _ *config.GKEConfig, replicaSet string) ([]*nanny.Pod, error) {
+			events <- "getHealthyPods " + replicaSet
+			return s.getHealthyPods(replicaSet)
 		},
-		func(context.Context, string) (bool, error) { return true, nil },
 		func(_ context.Context, _ *config.GKEConfig, replicaSet string, listener string) (int, error) {
 			events <- "getListenerPort " + replicaSet + " " + listener
 			return testListenerPort, nil
@@ -74,15 +98,14 @@ func newTestManager(t *testing.T) (endpoints.Manager, chan string) {
 		},
 		func(context.Context, string, []*config.GKEConfig) error { return nil },
 		func(context.Context, string, []*config.GKEConfig) error { return nil })
-	return m, events
+	return m, s, events
 }
 
-func makeConfig(colocate ...string) *config.GKEConfig {
+func makeConfig() *config.GKEConfig {
 	return &config.GKEConfig{
 		Deployment: &protos.Deployment{
 			App: &protos.AppConfig{
-				Name:     "todo",
-				Colocate: []*protos.ComponentGroup{{Components: colocate}},
+				Name: "todo",
 			},
 			Id: "11111111-1111-1111-1111-111111111111",
 		},
@@ -90,7 +113,7 @@ func makeConfig(colocate ...string) *config.GKEConfig {
 }
 
 func TestDeploy(t *testing.T) {
-	m, events := newTestManager(t)
+	m, _, events := newTestManager(t)
 
 	cfg := makeConfig()
 	if err := m.Deploy(context.Background(), &nanny.ApplicationDeploymentRequest{
@@ -106,8 +129,9 @@ func TestDeploy(t *testing.T) {
 
 	// Activate the component and check that it has started.
 	if err := m.ActivateComponent(context.Background(), &nanny.ActivateComponentRequest{
-		Component: "bar",
-		Config:    makeConfig(),
+		Component:  "bar",
+		ReplicaSet: "bar",
+		Config:     makeConfig(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +141,7 @@ func TestDeploy(t *testing.T) {
 }
 
 func TestGetListenerAddress(t *testing.T) {
-	m, events := newTestManager(t)
+	m, _, events := newTestManager(t)
 
 	actual, err := m.GetListenerAddress(context.Background(), &nanny.GetListenerAddressRequest{
 		ReplicaSet: "bar",
@@ -140,39 +164,49 @@ func TestGetListenerAddress(t *testing.T) {
 }
 
 func TestGetRoutingInfo(t *testing.T) {
-	m, _ := newTestManager(t)
-	cfg := makeConfig("sharded", "unsharded")
+	m, s, events := newTestManager(t)
+	cfg := makeConfig()
+	const replicaSet = "single"
 
-	// registerReplica registers a replica with a given weavelet address.
-	registerReplica := func(addr string) {
-		if err := m.RegisterReplica(context.Background(), &nanny.RegisterReplicaRequest{
-			ReplicaSet:        "sharded",
-			PodName:           "unused",
-			BabysitterAddress: "unused",
-			WeaveletAddress:   addr,
-			Config:            cfg,
-		}); err != nil {
-			t.Fatal(err)
+	// waitNewEvent ignores all of the existing events and blocks until a
+	// next event is generated.
+	waitNewEvent := func() {
+		for {
+			select {
+			case <-events: // drain
+			default:
+				<-events
+				return
+			}
 		}
 	}
 
-	// activateComponent activates the given component.
+	// registerPod register a new pod of the (single) replica set.
+	registerPod := func(addr string) {
+		s.registerPod(replicaSet, addr)
+	}
+
+	// activateComponent activates the given component inside the (single)
+	// replica set.
 	activateComponent := func(component string, isRouted bool) {
 		if err := m.ActivateComponent(context.Background(), &nanny.ActivateComponentRequest{
-			Component: component,
-			Routed:    isRouted,
-			Config:    cfg,
+			Component:  component,
+			ReplicaSet: replicaSet,
+			Routed:     isRouted,
+			Config:     cfg,
 		}); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// getRouting returns the routing information for a given component.
-	getRouting := func(version, component string) *nanny.GetRoutingReply {
+	// getRouting returns the routing information for a given component inside
+	// the single replica set.
+	getRouting := func(component string) *nanny.GetRoutingReply {
 		reply, err := m.GetRoutingInfo(context.Background(), &nanny.GetRoutingRequest{
-			Component: component,
-			Version:   version,
-			Config:    cfg,
+			Component:  component,
+			ReplicaSet: replicaSet,
+			Version:    "",
+			Config:     cfg,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -181,7 +215,7 @@ func TestGetRoutingInfo(t *testing.T) {
 		return reply
 	}
 
-	routingInfo := getRouting("", "nonexistent")
+	routingInfo := getRouting("nonexistent")
 	if len(routingInfo.Routing.Replicas) != 0 {
 		t.Fatalf("resolve(empty) = %v; want []", routingInfo.Routing.Replicas)
 	}
@@ -195,15 +229,18 @@ func TestGetRoutingInfo(t *testing.T) {
 		"tcp://foo:3",
 	}
 
-	// All existing values returned.
-	registerReplica(testData[0])
-	registerReplica(testData[1])
-
 	// Register two components to start.
 	activateComponent("sharded", true)
 	activateComponent("unsharded", false)
 
-	routingInfo = getRouting("", "unsharded")
+	s.registerPod(replicaSet, testData[0])
+	s.registerPod(replicaSet, testData[1])
+
+	// Wait for two new anneal events, to make sure the latest anneal takes
+	// all of the components and pods into account.
+	waitNewEvent()
+	waitNewEvent()
+	routingInfo = getRouting("unsharded")
 	if diff := cmp.Diff(testData[:2], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
 	}
@@ -213,7 +250,7 @@ func TestGetRoutingInfo(t *testing.T) {
 	if routingInfo.Routing.Assignment != nil {
 		t.Fatalf("want empty assignment, got %v", prototext.Format(routingInfo.Routing.Assignment))
 	}
-	routingInfo = getRouting("", "sharded")
+	routingInfo = getRouting("sharded")
 	if diff := cmp.Diff(testData[:2], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
 	}
@@ -233,20 +270,14 @@ func TestGetRoutingInfo(t *testing.T) {
 		t.Fatalf("unexpected assignment version; want: 1; got: %d\n", assignment.GetVersion())
 	}
 
-	// Add a new replica. Check that resolver hangs until there is a change.
-	const delay = time.Millisecond * 500
-	start := time.Now()
-	go func() {
-		time.Sleep(delay)
-		registerReplica(testData[2]) // Delayed change that should make resolve call succeed.
-	}()
-	routingInfo = getRouting(routingInfo.Version, "sharded")
-	finish := time.Now()
+	// Add a new pod and wait for two new anneal events to make sure the
+	// latest anneal takes that pod into account.
+	registerPod(testData[2])
+	waitNewEvent()
+	waitNewEvent()
+	routingInfo = getRouting("sharded")
 	if diff := cmp.Diff(testData[:3], routingInfo.Routing.Replicas); diff != "" {
 		t.Fatalf("unexpected resolver result (-want,+got):\n%s", diff)
-	}
-	if elapsed := finish.Sub(start); elapsed < delay {
-		t.Fatalf("resolver returned in %v; expecting >= %v", elapsed, delay)
 	}
 	if routingInfo.Routing.Component != "sharded" {
 		t.Fatal("assignments should contain an assignment for sharded")

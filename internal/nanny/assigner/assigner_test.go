@@ -18,11 +18,11 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
@@ -30,34 +30,72 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
+	"golang.org/x/exp/slices"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
-func testConfig(app, version string) *config.GKEConfig {
+func makeConfig(app, id string) *config.GKEConfig {
 	return &config.GKEConfig{
 		Deployment: &protos.Deployment{
-			App: &protos.AppConfig{
-				Name: app,
-			},
-			Id: version,
+			App: &protos.AppConfig{Name: app},
+			Id:  id,
 		},
 	}
 }
 
-// op is an operation performed against an assigner.
-type op interface {
-	do(context.Context, *Assigner) error
+func pod(addr string) *nanny.Pod {
+	return &nanny.Pod{WeaveletAddr: addr}
 }
 
-type registerReplica struct {
+type replicaSetKey struct {
 	app, id, replicaSet string
-	replica             string
+}
+
+// testState stores the testState for a given test.
+type testState struct {
+	mu sync.Mutex
+	// Set of healthy pods, keyed by replica set name.
+	pods map[replicaSetKey][]*nanny.Pod
+}
+
+func (s *testState) registerPod(cfg *config.GKEConfig, replicaSet, addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pods == nil {
+		s.pods = map[replicaSetKey][]*nanny.Pod{}
+	}
+	key := replicaSetKey{cfg.Deployment.App.Name, cfg.Deployment.Id, replicaSet}
+	s.pods[key] = append(s.pods[key], pod(addr))
+}
+
+func (s *testState) unregisterPod(cfg *config.GKEConfig, replicaSet, addr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pods == nil {
+		return
+	}
+	key := replicaSetKey{cfg.Deployment.App.Name, cfg.Deployment.Id, replicaSet}
+	s.pods[key] = slices.DeleteFunc(s.pods[key], func(pod *nanny.Pod) bool {
+		return pod.WeaveletAddr == addr
+	})
+}
+
+func (s *testState) getHealthyPods(_ context.Context, cfg *config.GKEConfig, replicaSet string) ([]*nanny.Pod, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pods[replicaSetKey{cfg.Deployment.App.Name, cfg.Deployment.Id, replicaSet}], nil
+}
+
+// op is an operation performed against an assigner.
+type op interface {
+	do(context.Context, *Assigner, *testState) error
 }
 
 type registerComponent struct {
 	app, id    string
 	component  string
 	routed     bool
-	replicaSet string // ReplicaSet name, if different from component.
+	replicaSet string // if empty, assumed to be same as component name
 }
 
 type registerListener struct {
@@ -65,46 +103,41 @@ type registerListener struct {
 	listener            string
 }
 
-type reportHealth struct {
+type startPod struct {
 	app, id, replicaSet string
-	replica             string
-	health              []protos.HealthStatus
+	pod                 string
+}
+
+type stopPod struct {
+	app, id, replicaSet string
+	pod                 string
 }
 
 type checkRoutingInfo struct {
 	app, id, component string
-	replicaSet         string // ReplicaSet name, if different from component.
-	replicas           []string
+	replicaSet         string // if empty, assumed to be same as component name
+	wantAssignment     bool
+	pods               []string
 }
 
-type checkReplicaSetState struct {
+type checkReplicaSets struct {
 	app, id     string
-	replicaSets map[string]replicaSetState
+	replicaSets []*nanny.ReplicaSet
 }
 
-type replicaSetState struct {
-	Replicas   []string
-	Components []string
-	Listeners  []string
-}
-
-func (r registerReplica) do(ctx context.Context, assigner *Assigner) error {
-	return assigner.RegisterReplica(ctx, &nanny.RegisterReplicaRequest{
-		ReplicaSet:      r.replicaSet,
-		WeaveletAddress: r.replica,
-		Config:          makeConfig(r.app, r.id),
+func (r registerComponent) do(ctx context.Context, assigner *Assigner, _ *testState) error {
+	if r.replicaSet == "" {
+		r.replicaSet = r.component
+	}
+	return assigner.RegisterComponent(ctx, &nanny.ActivateComponentRequest{
+		Component:  r.component,
+		Routed:     r.routed,
+		ReplicaSet: r.replicaSet,
+		Config:     makeConfig(r.app, r.id),
 	})
 }
 
-func (r registerComponent) do(ctx context.Context, assigner *Assigner) error {
-	return assigner.RegisterActiveComponent(ctx, &nanny.ActivateComponentRequest{
-		Component: r.component,
-		Routed:    r.routed,
-		Config:    makeConfig(r.app, r.id, r.replicaSet, r.component),
-	})
-}
-
-func (r registerListener) do(ctx context.Context, assigner *Assigner) error {
+func (r registerListener) do(ctx context.Context, assigner *Assigner, _ *testState) error {
 	return assigner.RegisterListener(ctx, &nanny.ExportListenerRequest{
 		ReplicaSet: r.replicaSet,
 		Listener:   &nanny.Listener{Name: r.listener},
@@ -112,121 +145,74 @@ func (r registerListener) do(ctx context.Context, assigner *Assigner) error {
 	})
 }
 
-func (r reportHealth) do(ctx context.Context, assigner *Assigner) error {
-	// Give the assigner a chance to learn about weavelets and create probers
-	// for them. It's pointless to report the health for a ReplicaSet that a
-	// weavelet doesn't know about.
-	if err := assigner.annealCheckers(ctx); err != nil {
-		return err
-	}
-	for _, h := range r.health {
-		rid := &ReplicaSetId{Config: testConfig(r.app, r.id), Name: r.replicaSet}
-		if err := reportHealthStatus(ctx, assigner, rid, r.replica, h); err != nil {
-			return err
-		}
-	}
+func (r startPod) do(ctx context.Context, _ *Assigner, s *testState) error {
+	s.registerPod(makeConfig(r.app, r.id), r.replicaSet, r.pod)
 	return nil
 }
 
-func (c checkRoutingInfo) do(_ context.Context, assigner *Assigner) error {
+func (r stopPod) do(ctx context.Context, assigner *Assigner, s *testState) error {
+	s.unregisterPod(makeConfig(r.app, r.id), r.replicaSet, r.pod)
+	return nil
+}
+
+func (c checkRoutingInfo) do(_ context.Context, assigner *Assigner, _ *testState) error {
+	if c.replicaSet == "" {
+		c.replicaSet = c.component
+	}
 	info, err := assigner.GetRoutingInfo(&nanny.GetRoutingRequest{
-		Component: c.component,
-		Version:   "",
-		Config:    makeConfig(c.app, c.id, c.replicaSet, c.component),
+		Component:  c.component,
+		Version:    "",
+		ReplicaSet: c.replicaSet,
+		Config:     makeConfig(c.app, c.id),
 	})
 	if err != nil {
 		return err
 	}
-	if info == nil || info.Routing == nil {
-		return fmt.Errorf("nil routing info")
+	var actualPods []string
+	var actualAssignment *Assignment
+	if info != nil && info.Routing != nil {
+		actualPods = info.Routing.Replicas
+		actualAssignment, err = FromProto(info.Routing.Assignment)
+		if err != nil {
+			return err
+		}
 	}
 
-	// Check the replicas.
+	// Check the pods.
 	less := func(x, y string) bool { return x < y }
-	if diff := cmp.Diff(c.replicas, info.Routing.Replicas, cmpopts.SortSlices(less)); diff != "" {
-		return fmt.Errorf("bad replicas (-want +got)\n%s", diff)
+	if diff := cmp.Diff(c.pods, actualPods, cmpopts.SortSlices(less)); diff != "" {
+		return fmt.Errorf("bad pods for component %s: (-want +got)\n%s", c.component, diff)
 	}
 
 	// Check the assignment.
-	if info.Routing.Assignment == nil {
-		if c.replicas == nil {
-			return nil
-		}
-		return fmt.Errorf("bad replicas, want %v, got nil", c.replicas)
+	gotAssignment := actualAssignment != nil
+	if c.wantAssignment != gotAssignment {
+		return fmt.Errorf("component %s has assignment diff, want %v, got %v", c.component, c.wantAssignment, actualAssignment)
 	}
-	assignment, err := FromProto(info.Routing.Assignment)
-	if err != nil {
-		return err
+	if !c.wantAssignment {
+		return nil
 	}
-	if diff := cmp.Diff(c.replicas, AssignedResources(assignment), cmpopts.SortSlices(less)); diff != "" {
-		return fmt.Errorf("bad replicas (-want +got)\n%s", diff)
+	if diff := cmp.Diff(c.pods, AssignedResources(actualAssignment), cmpopts.SortSlices(less)); diff != "" {
+		return fmt.Errorf("bad pods (-want +got)\n%s", diff)
 	}
 	return nil
 }
 
-func (c checkReplicaSetState) do(ctx context.Context, assigner *Assigner) error {
-	state, err := assigner.GetReplicaSetState(ctx, &nanny.GetReplicaSetStateRequest{
+func (c checkReplicaSets) do(ctx context.Context, assigner *Assigner, _ *testState) error {
+	reply, err := assigner.GetReplicaSets(ctx, &nanny.GetReplicaSetsRequest{
 		AppName:   c.app,
 		VersionId: c.id,
 	})
 	if err != nil {
 		return err
 	}
-	if state == nil {
-		return fmt.Errorf("nil ReplicaSet state")
+	if reply == nil {
+		return fmt.Errorf("nil GetReplicaSetsReply")
 	}
-	got := map[string]replicaSetState{}
-	for _, rs := range state.ReplicaSets {
-		var replicas []string
-		for _, replica := range rs.Pods {
-			health := "healthy"
-			if replica.HealthStatus != protos.HealthStatus_HEALTHY {
-				health = "un" + health
-			}
-			replicas = append(replicas, fmt.Sprintf("%s:%s", replica.WeaveletAddr, health))
-		}
-		got[rs.Name] = replicaSetState{
-			Replicas:   replicas,
-			Components: rs.Components,
-			Listeners:  rs.Listeners,
-		}
-	}
-	less := func(x, y string) bool { return x < y }
-	if diff := cmp.Diff(c.replicaSets, got, cmpopts.SortSlices(less)); diff != "" {
-		return fmt.Errorf("bad ReplicaSets (-want +got)\n%s", diff)
+	if diff := cmp.Diff(c.replicaSets, reply.ReplicaSets, protocmp.Transform()); diff != "" {
+		return fmt.Errorf("replica sets diff (-want +got)\n%s", diff)
 	}
 	return nil
-}
-
-type mockBabysitterClient struct{}
-
-var _ endpoints.Babysitter = &mockBabysitterClient{}
-
-func (b mockBabysitterClient) CheckHealth(context.Context, *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
-	return &protos.GetHealthReply{Status: protos.HealthStatus_HEALTHY}, nil
-}
-
-func (b mockBabysitterClient) RunProfiling(context.Context, *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
-	panic("implement me")
-}
-
-func makeConfig(app, id string, colocate ...string) *config.GKEConfig {
-	var coloc []string
-	for _, c := range colocate {
-		if c == "" {
-			continue
-		}
-		coloc = append(coloc, c)
-	}
-	return &config.GKEConfig{
-		Deployment: &protos.Deployment{
-			App: &protos.AppConfig{
-				Name:     app,
-				Colocate: []*protos.ComponentGroup{{Components: coloc}},
-			},
-			Id: id,
-		},
-	}
 }
 
 func TestAssigner(t *testing.T) {
@@ -237,103 +223,72 @@ func TestAssigner(t *testing.T) {
 		operations []op
 	}{
 		{
-			// Test plan: Register a started component. Verify that no routing
-			// info is generated because no replica was started to manage the
-			// component.
+			// Test plan: Register a component but don't start its pods.
+			// Verify that no routing info is generated.
+			name: "register_component_no_pods",
+			operations: []op{
+				registerComponent{
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+				},
+				checkRoutingInfo{
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+				},
+			},
+		},
+		{
+			// Test plan: Register a component and start its pod. Verify
+			// the routing info.
 			name: "register_component",
 			operations: []op{
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					routed:    true,
 				},
-				checkRoutingInfo{
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-				},
-			},
-		},
-		{
-			// Test plan: Register a component and a replica. Verify that
-			// routing info is generated with assignments.
-			name: "register_replica",
-			operations: []op{
-				registerComponent{
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					routed:    true,
-				},
-				registerReplica{
+				startPod{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component1",
-					replica:    "replica1",
+					pod:        "pod1",
 				},
 				checkRoutingInfo{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					replicas:  []string{"replica1"},
+					pods:      []string{"pod1"},
 				},
 			},
 		},
 		{
-			// Test plan: Register a replica before the component . Verify that
-			// routing info is generated with assignments.
-			name: "register_replica_before_component",
+			// Test plan: Register two components in different replica sets.
+			// Start a pod of one replica set and verify routing info.
+			name: "register_component_multiple_replica_sets",
 			operations: []op{
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					routed:    true,
-				},
-				registerReplica{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-				},
-				checkRoutingInfo{
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica1"},
-				},
-			},
-		},
-		{
-			// Test plan: Register a replica for a ReplicaSet 1 and a component
-			// to start but for a different ReplicaSet 2. Verify that routing
-			// info is generated for ReplicaSet 1 but not for ReplicaSet 2.
-			name: "register_component_for_different_replica_sets",
-			operations: []op{
-				registerComponent{
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					routed:    true,
 				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component2",
-					routed:    true,
 				},
-				registerReplica{
+				startPod{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component1",
-					replica:    "replica1",
+					pod:        "pod1",
 				},
 				checkRoutingInfo{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					replicas:  []string{"replica1"},
+					pods:      []string{"pod1"},
 				},
 				checkRoutingInfo{
 					app:       "app1",
@@ -343,31 +298,11 @@ func TestAssigner(t *testing.T) {
 			},
 		},
 		{
-			// Test plan: Register a ReplicaSet to start and a corresponding
-			// unrouted component. Verify that no routing information is
-			// generated, because the replica set has no routed components.
-			name: "register_replica_set_to_start_register_unrouted_component",
-			operations: []op{
-				registerComponent{
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					routed:    false,
-				},
-				checkRoutingInfo{
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-				},
-			},
-		},
-		{
-			// Test plan: Register a replica for a given ReplicaSet, along with an
-			// unrouted and a routed component. Verify that routing information is
-			// generated that contains one assignment for the routed component.
-			// Next, register a new replica and verify that new routing info is
-			// generated to reflect the new replica.
-			name: "register_replica_to_start_register_routed_unrouted_components",
+			// Test plan: Register two components in the same replica set.
+			// One component is routed and the other is unrouted. Start a
+			// single pod of that replica set, verify the routing info,
+			// then start another pod and re-verify the routing info.
+			name: "routing_info",
 			operations: []op{
 				registerComponent{ // unrouted component
 					app:       "app1",
@@ -382,226 +317,210 @@ func TestAssigner(t *testing.T) {
 					replicaSet: "component1",
 					routed:     true,
 				},
-				registerReplica{
+				startPod{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component1",
-					replica:    "replica1",
+					pod:        "pod1",
 				},
 				checkRoutingInfo{
-					app:        "app1",
-					id:         depId,
-					component:  "component2",
-					replicaSet: "component1",
-					replicas:   []string{"replica1"},
-				},
-				registerReplica{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica2",
+					app:            "app1",
+					id:             depId,
+					component:      "component1",
+					wantAssignment: false,
+					pods:           []string{"pod1"},
 				},
 				checkRoutingInfo{
+					app:            "app1",
+					id:             depId,
+					component:      "component2",
+					replicaSet:     "component1",
+					wantAssignment: true,
+					pods:           []string{"pod1"},
+				},
+				startPod{
 					app:        "app1",
 					id:         depId,
-					component:  "component2",
 					replicaSet: "component1",
-					replicas:   []string{"replica1", "replica2"},
+					pod:        "pod2",
+				},
+				checkRoutingInfo{
+					app:       "app1",
+					id:        depId,
+					component: "component1",
+					pods:      []string{"pod1", "pod2"},
+				},
+				checkRoutingInfo{
+					app:            "app1",
+					id:             depId,
+					component:      "component2",
+					replicaSet:     "component1",
+					wantAssignment: true,
+					pods:           []string{"pod1", "pod2"},
 				},
 			},
 		},
 		{
-			// Test plan: Register two replicas for a given ReplicaSet, along with
-			// a routed component. Verify that routing information considers both
-			// replicas. Next, make one of the replicas unhealthy. Verify that
-			// a new assignment is generated only for the healthy replica.
-			// Next, the unhealthy replica becomes healthy again. Verify that a
-			// new assignment is generated and contains both replicas.
-			name: "register_replica_to_start_resurrected_replica",
+			// Test plan: Register a routed component, and two pods
+			// of its containing replica sets. Verify the routing info.
+			// Next, make one of the pods unhealthy and re-verify the
+			// routing info.
+			// Finally, make the unhealthy pod healthy again, and re-verify
+			// the routing info.
+			name: "routing_info_resurrected_pod",
 			operations: []op{
-				registerReplica{ // replica 1
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-				},
-				registerReplica{ // replica 2
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica2",
-				},
-				registerComponent{ // routed component
+				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
 					routed:    true,
 				},
-				checkRoutingInfo{ // an assignment is generated that contains both replicas
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica1", "replica2"},
-				},
-				reportHealth{ // replica 1 becomes unhealthy
+				startPod{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component1",
-					replica:    "replica1",
-					health: []protos.HealthStatus{
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						protos.HealthStatus_UNHEALTHY},
+					pod:        "pod1",
 				},
-				checkRoutingInfo{ // an assignment is generated that contains only the healthy replica 2
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica2"},
-				},
-				reportHealth{ // replica 1 becomes healthy again
+				startPod{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component1",
-					replica:    "replica1",
-					health: []protos.HealthStatus{
-						protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-						protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-						protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-						protos.HealthStatus_HEALTHY},
+					pod:        "pod2",
 				},
 				checkRoutingInfo{ // an assignment is generated that contains both replicas
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica1", "replica2"},
+					app:            "app1",
+					id:             depId,
+					component:      "component1",
+					wantAssignment: true,
+					pods:           []string{"pod1", "pod2"},
+				},
+				stopPod{
+					app:        "app1",
+					id:         depId,
+					replicaSet: "component1",
+					pod:        "pod1",
+				},
+				checkRoutingInfo{ // an assignment is generated that contains only the healthy pod2
+					app:            "app1",
+					id:             depId,
+					component:      "component1",
+					wantAssignment: true,
+					pods:           []string{"pod2"},
+				},
+				startPod{
+					app:        "app1",
+					id:         depId,
+					replicaSet: "component1",
+					pod:        "pod1",
+				},
+				checkRoutingInfo{ // an assignment is generated that contains both replicas
+					app:            "app1",
+					id:             depId,
+					component:      "component1",
+					wantAssignment: true,
+					pods:           []string{"pod1", "pod2"},
 				},
 			},
 		},
 		{
-			// Test plan: Register a ReplicaSet replica to start for two
-			// applications. Verify that routing info is generated for both.
+			// Test plan: Start a component and a pod of the containing
+			// replica set in two different applications. Verify the routing
+			// info.
 			name: "register_two_apps",
 			operations: []op{
 				registerComponent{
 					app:       "app1",
 					id:        depId,
-					component: "component1",
-					routed:    true,
+					component: "component",
 				},
 				registerComponent{
 					app:       "app2",
 					id:        depId,
-					component: "component1",
-					routed:    true,
+					component: "component",
 				},
-				registerReplica{
+				startPod{
 					app:        "app1",
 					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
+					replicaSet: "component",
+					pod:        "pod1",
 				},
-				registerReplica{
+				startPod{
 					app:        "app2",
 					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-				},
-				reportHealth{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-					health: []protos.HealthStatus{
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY},
+					replicaSet: "component",
+					pod:        "pod2",
 				},
 				checkRoutingInfo{
 					app:       "app1",
 					id:        depId,
-					component: "component1",
-					replicas:  nil,
+					component: "component",
+					pods:      []string{"pod1"},
 				},
 				checkRoutingInfo{
 					app:       "app2",
 					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica1"},
+					component: "component",
+					pods:      []string{"pod2"},
 				},
 			},
 		},
 		{
-			// Test plan: Register a number of ReplicaSet replicas, and verify
+			// Test plan: Register a number of ReplicaSet pods, and verify
 			// that the ReplicaSet state is as expected.
-			name: "replica_set_state",
+			name: "pods_set_state",
 			operations: []op{
-				registerReplica{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-				},
-				registerReplica{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica2",
-				},
-				registerReplica{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component3",
-					replica:    "replica1",
-				},
-				registerReplica{
-					app:        "app1",
-					id:         uuid.New().String(),
-					replicaSet: "empty1",
-					replica:    "replica1",
-				},
-				registerReplica{
-					app:        "app2",
-					id:         depId,
-					replicaSet: "component4",
-					replica:    "replica1",
-				},
-				registerReplica{
-					app:        "app2",
-					id:         uuid.New().String(),
-					replicaSet: "empty2",
-					replica:    "replica2",
-				},
 				registerComponent{
 					app:       "app1",
 					id:        depId,
 					component: "component1",
-					routed:    true,
+				},
+				startPod{
+					app:        "app1",
+					id:         depId,
+					replicaSet: "component1",
+					pod:        "pod1",
+				},
+				checkReplicaSets{
+					app: "app1",
+					id:  depId,
+					replicaSets: []*nanny.ReplicaSet{{
+						Name:       "component1",
+						Config:     makeConfig("app1", depId),
+						Pods:       []*nanny.Pod{pod("pod1")},
+						Components: []string{"component1"},
+					}},
 				},
 				registerComponent{
 					app:        "app1",
 					id:         depId,
 					component:  "component2",
 					replicaSet: "component1",
-					routed:     true,
 				},
-				registerComponent{
-					app:       "app1",
-					id:        depId,
-					component: "component3",
-					routed:    true,
+				checkReplicaSets{
+					app: "app1",
+					id:  depId,
+					replicaSets: []*nanny.ReplicaSet{{
+						Name:       "component1",
+						Config:     makeConfig("app1", depId),
+						Pods:       []*nanny.Pod{pod("pod1")},
+						Components: []string{"component1", "component2"},
+					}},
 				},
-				registerComponent{
-					app:       "app2",
-					id:        depId,
-					component: "component4",
-					routed:    true,
+				startPod{
+					app:        "app1",
+					id:         depId,
+					replicaSet: "component1",
+					pod:        "pod2",
 				},
-				registerComponent{
-					app:       "app1",
-					id:        depId,
-					component: "component4",
-					routed:    false,
+				checkReplicaSets{
+					app: "app1",
+					id:  depId,
+					replicaSets: []*nanny.ReplicaSet{{
+						Name:       "component1",
+						Config:     makeConfig("app1", depId),
+						Pods:       []*nanny.Pod{pod("pod1"), pod("pod2")},
+						Components: []string{"component1", "component2"},
+					}},
 				},
 				registerListener{
 					app:        "app1",
@@ -609,162 +528,89 @@ func TestAssigner(t *testing.T) {
 					replicaSet: "component1",
 					listener:   "listener1",
 				},
+				checkReplicaSets{
+					app: "app1",
+					id:  depId,
+					replicaSets: []*nanny.ReplicaSet{{
+						Name:       "component1",
+						Config:     makeConfig("app1", depId),
+						Pods:       []*nanny.Pod{pod("pod1"), pod("pod2")},
+						Components: []string{"component1", "component2"},
+						Listeners:  []string{"listener1"},
+					}},
+				},
+				registerComponent{
+					app:       "app1",
+					id:        depId,
+					component: "component3",
+				},
 				registerListener{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component3",
 					listener:   "listener2",
 				},
-				registerListener{
+				checkReplicaSets{
+					app: "app1",
+					id:  depId,
+					replicaSets: []*nanny.ReplicaSet{
+						{
+							Name:       "component1",
+							Config:     makeConfig("app1", depId),
+							Pods:       []*nanny.Pod{pod("pod1"), pod("pod2")},
+							Components: []string{"component1", "component2"},
+							Listeners:  []string{"listener1"},
+						},
+						{
+							Name:       "component3",
+							Config:     makeConfig("app1", depId),
+							Components: []string{"component3"},
+							Listeners:  []string{"listener2"},
+						},
+					},
+				},
+				startPod{
 					app:        "app1",
 					id:         depId,
 					replicaSet: "component3",
-					listener:   "listener3",
+					pod:        "pod4",
 				},
-				reportHealth{
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-					health: []protos.HealthStatus{
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY},
-				},
-				checkReplicaSetState{
+				checkReplicaSets{
 					app: "app1",
 					id:  depId,
-					replicaSets: map[string]replicaSetState{
-						"component1": {
-							Replicas:   []string{"replica1:unhealthy", "replica2:healthy"},
+					replicaSets: []*nanny.ReplicaSet{
+						{
+							Name:       "component1",
+							Config:     makeConfig("app1", depId),
+							Pods:       []*nanny.Pod{pod("pod1"), pod("pod2")},
 							Components: []string{"component1", "component2"},
 							Listeners:  []string{"listener1"},
 						},
-						"component3": {
-							Replicas:   []string{"replica1:healthy"},
+						{
+							Name:       "component3",
+							Config:     makeConfig("app1", depId),
+							Pods:       []*nanny.Pod{pod("pod4")},
 							Components: []string{"component3"},
-							Listeners:  []string{"listener2", "listener3"},
+							Listeners:  []string{"listener2"},
 						},
 					},
-				},
-				checkReplicaSetState{
-					app: "app2",
-					id:  depId,
-					replicaSets: map[string]replicaSetState{
-						"component4": {
-							Replicas:   []string{"replica1:healthy"},
-							Components: []string{"component4"},
-						},
-					},
-				},
-				checkReplicaSetState{
-					app: "app1",
-					// id intentionally empty
-					replicaSets: map[string]replicaSetState{
-						"component1": {
-							Replicas:   []string{"replica1:unhealthy", "replica2:healthy"},
-							Components: []string{"component1", "component2"},
-							Listeners:  []string{"listener1"},
-						},
-						"component3": {
-							Replicas:   []string{"replica1:healthy"},
-							Components: []string{"component3"},
-							Listeners:  []string{"listener2", "listener3"},
-						},
-						"empty1": {
-							Replicas:   []string{"replica1:healthy"},
-							Components: []string{},
-						},
-					},
-				},
-				checkReplicaSetState{
-					// app and id intentionally empty
-					replicaSets: map[string]replicaSetState{
-						"component1": {
-							Replicas:   []string{"replica1:unhealthy", "replica2:healthy"},
-							Components: []string{"component1", "component2"},
-							Listeners:  []string{"listener1"},
-						},
-						"component3": {
-							Replicas:   []string{"replica1:healthy"},
-							Components: []string{"component3"},
-							Listeners:  []string{"listener2", "listener3"},
-						},
-						"empty1": {
-							Replicas:   []string{"replica1:healthy"},
-							Components: []string{},
-						},
-						"component4": {
-							Replicas:   []string{"replica1:healthy"},
-							Components: []string{"component4"},
-						},
-						"empty2": {
-							Replicas:   []string{"replica2:healthy"},
-							Components: []string{},
-						},
-					},
-				},
-			},
-		},
-		{
-			// Test plan: Register two replicas for a given ReplicaSet, along with
-			// a routed component. Verify that routing information considers both
-			// replicas. Next, make one of the replicas terminated. Verify that
-			// a new assignment is generated only for the healthy replica.
-			name: "register_replica_to_start_terminated_replica",
-			operations: []op{
-				registerReplica{ // replica 1
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-				},
-				registerReplica{ // replica 2
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica2",
-				},
-				registerComponent{ // routed component
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					routed:    true,
-				},
-				checkRoutingInfo{ // an assignment is generated that contains both replicas
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica1", "replica2"},
-				},
-				reportHealth{ // replica 1 becomes terminated
-					app:        "app1",
-					id:         depId,
-					replicaSet: "component1",
-					replica:    "replica1",
-					health:     []protos.HealthStatus{protos.HealthStatus_TERMINATED},
-				},
-				checkRoutingInfo{ // an assignment is generated that contains only the healthy replica 2
-					app:       "app1",
-					id:        depId,
-					component: "component1",
-					replicas:  []string{"replica2"},
 				},
 			},
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			babysitterConstructor := func(*config.GKEConfig, string, string) (endpoints.Babysitter, error) {
-				return &mockBabysitterClient{}, nil
-			}
 			ctx := context.Background()
+			s := &testState{}
 			assigner := NewAssigner(ctx, store.NewFakeStore(),
 				logging.NewTestSlogger(t, testing.Verbose()),
-				EqualDistributionAlgorithm, babysitterConstructor,
-				func(context.Context, string) (bool, error) { return true, nil })
+				EqualDistributionAlgorithm, 0, /*updateRoutingInterval*/
+				s.getHealthyPods)
 			for i, operation := range c.operations {
 				t.Logf("> Operation %d: %T%+v", i, operation, operation)
-				if err := operation.do(ctx, assigner); err != nil {
+				if err := operation.do(ctx, assigner, s); err != nil {
+					t.Fatal(err)
+				}
+				if err := assigner.annealRouting(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -779,30 +625,11 @@ func TestConcurrentAssigners(t *testing.T) {
 	// Finally, check that the routing info is what we expect.
 	depId := uuid.New().String()
 	for _, c := range []struct {
-		name  string
-		ops   [][]op
-		check checkRoutingInfo
+		name   string
+		ops    [][]op
+		checks []checkRoutingInfo
 	}{
-		// Test plan: register a single replica.
-		{
-			name: "register_replica",
-			ops: [][]op{
-				{
-					registerReplica{
-						app:        "app1",
-						id:         depId,
-						replicaSet: "component1",
-						replica:    "replica1",
-					},
-				},
-			},
-			check: checkRoutingInfo{
-				app:       "app1",
-				id:        depId,
-				component: "component1",
-			},
-		},
-		// Test plan: register a single component.
+		// Test plan: register a single component pod.
 		{
 			name: "register_component",
 			ops: [][]op{
@@ -811,341 +638,253 @@ func TestConcurrentAssigners(t *testing.T) {
 						app:       "app1",
 						id:        depId,
 						component: "component1",
-						routed:    true,
+					},
+					startPod{
+						app:        "app1",
+						id:         depId,
+						replicaSet: "component1",
+						pod:        "pod1",
 					},
 				},
 			},
-			check: checkRoutingInfo{
+			checks: []checkRoutingInfo{{
 				app:       "app1",
 				id:        depId,
 				component: "component1",
-			},
+				pods:      []string{"pod1"},
+			}},
 		},
-		// Test plan: register a single component and replica.
+		// Test plan: register a single component but no pods.
 		{
-			name: "register_component_and_replica",
+			name: "register_component_no_pods",
 			ops: [][]op{
 				{
 					registerComponent{
 						app:       "app1",
 						id:        depId,
 						component: "component1",
-						routed:    true,
-					},
-					registerReplica{
-						app:        "app1",
-						id:         depId,
-						replicaSet: "component1",
-						replica:    "replica1",
 					},
 				},
 			},
-			check: checkRoutingInfo{
+			checks: []checkRoutingInfo{{
 				app:       "app1",
 				id:        depId,
 				component: "component1",
-				replicas:  []string{"replica1"},
-			},
+			}},
 		},
-		// Test plan: register a replica before the component
+		// Test plan: register multiple pods.
 		{
-			name: "register_replica_before_component",
+			name: "multiple_pods",
 			ops: [][]op{
 				{
-					registerReplica{
-						app:        "app1",
-						id:         depId,
-						replicaSet: "component1",
-						replica:    "replica1",
-					},
 					registerComponent{
-						app:       "app1",
+						app:       "a1",
 						id:        depId,
-						component: "component1",
-						routed:    true,
+						component: "c1",
 					},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r3"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r4"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r5"},
 				},
 			},
-			check: checkRoutingInfo{
-				app:       "app1",
-				id:        depId,
-				component: "component1",
-				replicas:  []string{"replica1"},
-			},
-		},
-		// Test plan: register multiple replicas.
-		{
-			name: "multiple_replicas",
-			ops: [][]op{
-				{
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r5"},
-				},
-			},
-			check: checkRoutingInfo{
+			checks: []checkRoutingInfo{{
 				app:       "a1",
 				id:        depId,
 				component: "c1",
-			},
+				pods:      []string{"r1", "r2", "r3", "r4", "r5"},
+			}},
 		},
-		// Test plan: register one component and multiple replicas.
+		// Test plan: register one component and multiple pods.
 		{
-			name: "one_component_multiple_replicas",
+			name: "one_component_multiple_pods",
 			ops: [][]op{
 				{
 					registerComponent{app: "a1", id: depId, component: "c1", routed: true},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r5"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r3"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r4"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r5"},
 				},
 			},
-			check: checkRoutingInfo{
-				app:       "a1",
-				id:        depId,
-				component: "c1",
-				replicas:  []string{"r1", "r2", "r3", "r4", "r5"},
-			},
+			checks: []checkRoutingInfo{{
+				app:            "a1",
+				id:             depId,
+				component:      "c1",
+				wantAssignment: true,
+				pods:           []string{"r1", "r2", "r3", "r4", "r5"},
+			}},
 		},
-		// Test plan: register multiple components and multiple replicas.
+		// Test plan: register multiple components and multiple pods.
 		{
-			name: "multiple_components_multiple_replicas",
+			name: "multiple_components_multiple_pods",
 			ops: [][]op{
 				{
 					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
-					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c2", routed: true},
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c2", routed: false},
 					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c3", routed: true},
-					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c4", routed: true},
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c4", routed: false},
 					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c5", routed: true},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r5"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r3"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r4"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r5"},
 				},
 			},
-			check: checkRoutingInfo{
-				app:       "a1",
-				id:        depId,
-				component: "c1",
-				replicas:  []string{"r1", "r2", "r3", "r4", "r5"},
+			checks: []checkRoutingInfo{
+				{
+					app:            "a1",
+					id:             depId,
+					component:      "c1",
+					wantAssignment: true,
+					pods:           []string{"r1", "r2", "r3", "r4", "r5"},
+				},
+				{
+					app:            "a1",
+					id:             depId,
+					component:      "c2",
+					replicaSet:     "c1",
+					wantAssignment: false,
+					pods:           []string{"r1", "r2", "r3", "r4", "r5"},
+				},
+				{
+					app:            "a1",
+					id:             depId,
+					component:      "c3",
+					replicaSet:     "c1",
+					wantAssignment: true,
+					pods:           []string{"r1", "r2", "r3", "r4", "r5"},
+				},
+				{
+					app:            "a1",
+					id:             depId,
+					component:      "c4",
+					replicaSet:     "c1",
+					wantAssignment: false,
+					pods:           []string{"r1", "r2", "r3", "r4", "r5"},
+				},
+				{
+					app:            "a1",
+					id:             depId,
+					component:      "c5",
+					replicaSet:     "c1",
+					wantAssignment: true,
+					pods:           []string{"r1", "r2", "r3", "r4", "r5"},
+				},
 			},
 		},
-		// Test plan: register one replica and have it become unhealthy.
+		// Test plan: register one pod and have it become unhealthy.
 		{
-			name: "one_replica_die",
+			name: "one_pod_die",
 			ops: [][]op{
 				{
 					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
 				},
 				{
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r1",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						},
-					},
+					stopPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
 				},
 			},
-			check: checkRoutingInfo{
-				app:       "a1",
-				id:        depId,
-				component: "c1",
-				replicas:  nil,
-			},
+			checks: []checkRoutingInfo{{
+				app:            "a1",
+				id:             depId,
+				component:      "c1",
+				wantAssignment: true,
+			}},
 		},
-		// Test plan: register one replica and have it become unhealthy and
+		// Test plan: register one pod and have it become unhealthy and
 		// then healthy again.
 		{
-			name: "one_replica_resurrect",
+			name: "one_pod_resurrect",
 			ops: [][]op{
 				{
-					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: false},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
 				},
 				{
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r1",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						},
-					},
+					stopPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
 				},
 				{
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r1",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-						},
-					},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
 				},
 			},
-			check: checkRoutingInfo{
+			checks: []checkRoutingInfo{{
 				app:       "a1",
 				id:        depId,
 				component: "c1",
-				replicas:  []string{"r1"},
-			},
+				pods:      []string{"r1"},
+			}},
 		},
-		// Test plan: register multiple replicas and have multiple become
+		// Test plan: register multiple pods and have multiple become
 		// unhealthy.
 		{
-			name: "multiple_replicas_die",
+			name: "multiple_pods_die",
 			ops: [][]op{
 				{
 					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r5"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r3"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r4"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r5"},
 				},
 				{
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r1",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY,
-						},
-					},
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r2",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						},
-					},
+					stopPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					stopPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
 				},
 			},
-			check: checkRoutingInfo{
-				app:       "a1",
-				id:        depId,
-				component: "c1",
-				replicas:  []string{"r3", "r4", "r5"},
-			},
+			checks: []checkRoutingInfo{{
+				app:            "a1",
+				id:             depId,
+				component:      "c1",
+				pods:           []string{"r3", "r4", "r5"},
+				wantAssignment: true,
+			}},
 		},
-		// Test plan: register multiple replicas and have some become unhealthy
+		// Test plan: register multiple pods and have some become unhealthy
 		// and some become healthy again.
 		{
-			name: "multiple_replicas_health_changes",
+			name: "multiple_pods_resurrect",
 			ops: [][]op{
 				{
-					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: true},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r1"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r2"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r3"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r4"},
-					registerReplica{app: "a1", id: depId, replicaSet: "c1", replica: "r5"},
+					registerComponent{app: "a1", id: depId, replicaSet: "c1", component: "c1", routed: false},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r3"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r4"},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r5"},
 				},
 				{
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r1",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						},
-					},
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r2",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-							protos.HealthStatus_UNHEALTHY, protos.HealthStatus_UNHEALTHY,
-						},
-					},
+					stopPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
+					stopPod{app: "a1", id: depId, replicaSet: "c1", pod: "r2"},
 				},
 				{
-					reportHealth{
-						app:        "a1",
-						id:         depId,
-						replicaSet: "c1",
-						replica:    "r1",
-						health: []protos.HealthStatus{
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-							protos.HealthStatus_HEALTHY, protos.HealthStatus_HEALTHY,
-						},
-					},
+					startPod{app: "a1", id: depId, replicaSet: "c1", pod: "r1"},
 				},
 			},
-			check: checkRoutingInfo{
+			checks: []checkRoutingInfo{{
 				app:       "a1",
 				id:        depId,
 				component: "c1",
-				replicas:  []string{"r1", "r3", "r4", "r5"},
-			},
+				pods:      []string{"r1", "r3", "r4", "r5"},
+			}},
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			babysitterConstructor := func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
-				return &mockBabysitterClient{}, nil
-			}
 			// Construct n assigners.
 			const n = 3
 			ctx := context.Background()
 			store := store.NewFakeStore()
 			var assigners [n]*Assigner
+			var state testState // share the load state across assigners
 			for i := 0; i < n; i++ {
 				assigners[i] = NewAssigner(ctx, store,
 					logging.NewTestSlogger(t, testing.Verbose()),
-					EqualDistributionAlgorithm, babysitterConstructor,
-					func(context.Context, string) (bool, error) { return true, nil })
+					EqualDistributionAlgorithm, 0, /*updateRoutingInterval*/
+					state.getHealthyPods)
 			}
 
 			// Execute the operations, batch by batch.
@@ -1159,135 +898,84 @@ func TestConcurrentAssigners(t *testing.T) {
 				})
 
 				for _, op := range batch {
-					if _, ok := op.(reportHealth); ok {
-						// If different assigners disagree on the health of a
-						// replica, it can lead to oscillations in the routing
-						// assignment. We deliver health reports to all
-						// assigners so that they agree.
-						for j, assigner := range assigners {
-							t.Logf("> Operation %d on Assigner %d: %T%+v", i, j, op, op)
-							if err := op.do(ctx, assigner); err != nil {
-								t.Fatal(err)
-							}
-						}
-					} else {
-						j := r.Intn(n)
-						t.Logf("> Operation %d on Assigner %d: %T%+v", i, j, op, op)
-						if err := op.do(ctx, assigners[j]); err != nil {
+					j := r.Intn(n)
+					t.Logf("> Operation %d on Assigner %d: %T%+v", i, j, op, op)
+					if err := op.do(ctx, assigners[j], &state); err != nil {
+						t.Fatal(err)
+					}
+					i++
+
+					// Anneal all assigners.
+					for k, assigner := range assigners {
+						t.Logf("> Anneal on Assigner %d", k)
+						if err := assigner.annealRouting(ctx); err != nil {
 							t.Fatal(err)
 						}
 					}
-					i++
 				}
+
 			}
 
 			// Check the final routing info.
 			for i, assigner := range assigners {
-				t.Logf("> Check on Assigner %d: %T%+v", i, c.check, c.check)
-				if err := c.check.do(ctx, assigner); err != nil {
-					t.Fatal(err)
+				for _, check := range c.checks {
+					t.Logf("> Check on Assigner %d: %+v", i, check)
+					if err := check.do(ctx, assigner, &state); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
 		})
 	}
 }
 
-func TestUnregisterReplicaSets(t *testing.T) {
+func TestStopAppVersion(t *testing.T) {
 	ctx := context.Background()
-	babysitterConstructor := func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
-		return &mockBabysitterClient{}, nil
-	}
+	s := &testState{}
 	assigner := NewAssigner(ctx, store.NewFakeStore(),
 		logging.NewTestSlogger(t, testing.Verbose()),
-		EqualDistributionAlgorithm, babysitterConstructor,
-		func(context.Context, string) (bool, error) { return true, nil })
+		EqualDistributionAlgorithm, 0, /*updateRoutingInterval*/
+		s.getHealthyPods)
 
-	// Register a component with two replicas for two versions.
+	// Register a component with two pods for two versions.
 	v1 := uuid.New().String()
 	v2 := uuid.New().String()
 	for i, op := range []op{
 		registerComponent{app: "a", id: v1, component: "c1", routed: true},
-		registerReplica{app: "a", id: v1, replicaSet: "c1", replica: "r1"},
-		registerReplica{app: "a", id: v1, replicaSet: "c1", replica: "r2"},
+		startPod{app: "a", id: v1, replicaSet: "c1", pod: "r1"},
+		startPod{app: "a", id: v1, replicaSet: "c1", pod: "r2"},
 		registerComponent{app: "a", id: v2, component: "c1", routed: true},
-		registerReplica{app: "a", id: v2, replicaSet: "c1", replica: "r1"},
-		registerReplica{app: "a", id: v2, replicaSet: "c1", replica: "r2"},
+		startPod{app: "a", id: v2, replicaSet: "c1", pod: "r1"},
+		startPod{app: "a", id: v2, replicaSet: "c1", pod: "r2"},
 	} {
 		t.Logf("> Operation %d: %T%+v", i, op, op)
-		if err := op.do(ctx, assigner); err != nil {
+		if err := op.do(ctx, assigner, s); err != nil {
+			t.Fatal(err)
+		}
+		if err := assigner.annealRouting(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	// Unregister one of the versions.
-	if err := assigner.UnregisterReplicaSets(ctx, "a", []*config.GKEConfig{testConfig("a", v1)}); err != nil {
+	if err := assigner.StopAppVersion(ctx, "a", v1); err != nil {
 		t.Fatal(err)
 	}
 
 	// Check that v1's routing info was deleted, but v2's wasn't.
-	checks := []checkRoutingInfo{
-		{
-			app:       "a",
-			id:        v1,
-			component: "c1",
-			replicas:  nil,
-		},
-		{
-			app:       "a",
-			id:        v2,
-			component: "c1",
-			replicas:  []string{"r1", "r2"},
-		},
-	}
-	for i, check := range checks {
-		t.Logf("> Check %d: %T%+v", i, check, check)
-		if err := check.do(ctx, assigner); err != nil {
+	for i, op := range []op{
+		checkRoutingInfo{app: "a", id: v1, component: "c1", pods: nil},
+		checkRoutingInfo{app: "a", id: v2, component: "c1", wantAssignment: true, pods: []string{"r1", "r2"}},
+		checkReplicaSets{app: "a", id: v2, replicaSets: []*nanny.ReplicaSet{{
+			Name:       "c1",
+			Config:     makeConfig("a", v2),
+			Pods:       []*nanny.Pod{pod("r1"), pod("r2")},
+			Components: []string{"c1"},
+		}}},
+	} {
+		t.Logf("> Operation %d: %T%+v", i, op, op)
+		if err := op.do(ctx, assigner, s); err != nil {
 			t.Fatal(err)
 		}
 	}
-
-	// Check that v1's ReplicaSet info was deleted.
-	rid := &ReplicaSetId{Config: testConfig("a", v1), Name: "c1"}
-	_, version, err := assigner.loadReplicaSetInfo(ctx, rid)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if *version != store.Missing {
-		t.Fatalf("bad ReplicaSet info version: got %v, want Missing", *version)
-	}
-
-	// Check that the assigner's health checkers were deleted.
-	assigner.mu.Lock()
-	defer assigner.mu.Unlock()
-	if _, found := assigner.replicas[unprotoRid(rid)]; found {
-		t.Fatalf("ReplicaSet %v health checkers not deleted", rid)
-	}
-}
-
-// reportHealthStatus reports the provided health status for the provided
-// replica. Normally, an assigner checks an envelope to determine its
-// health status. reportHealthStatus allows us to fake these checks.
-func reportHealthStatus(ctx context.Context, a *Assigner, rid *ReplicaSetId, addr string, status protos.HealthStatus) error {
-	updateHealth := func() (bool, error) {
-		// Pull this code into a function so that we can defer Unlock.
-		a.mu.Lock()
-		defer a.mu.Unlock()
-		replicas, ok := a.replicas[unprotoRid(rid)]
-		if !ok {
-			return false, fmt.Errorf("ReplicaSet %v not found", rid)
-		}
-		replica, ok := replicas[addr]
-		if !ok {
-			return false, fmt.Errorf("replica %q not found", addr)
-		}
-		return replica.health.report(status), nil
-	}
-	changed, err := updateHealth()
-	if err != nil {
-		return err
-	}
-	if changed {
-		return a.mayGenerateNewRoutingInfo(ctx, rid)
-	}
-	return nil
 }

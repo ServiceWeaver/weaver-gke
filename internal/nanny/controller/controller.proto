@@ -99,7 +99,7 @@ message AppVersionDistributorState {
 
   // All running Kubernetes ReplicaSets for this application version at the
   // distributor.
-  nanny.ReplicaSetState replica_sets = 3;
+  repeated nanny.ReplicaSet replica_sets = 3;
 }
 
 // rolloutStrategy contains the strategy for rolling out an application version.

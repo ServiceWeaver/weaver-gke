@@ -26,11 +26,13 @@ import (
 )
 
 var (
-	msg_1 = &nanny.RegisterReplicaRequest{
-		ReplicaSet:        "replicaset",
-		PodName:           "pod",
-		BabysitterAddress: "host:9999",
-		WeaveletAddress:   "host:9998",
+	msg_1 = &nanny.ReplicaSet{
+		Name: "replicaset",
+		Pods: []*nanny.Pod{{
+			BabysitterAddr: "host:9999",
+			WeaveletAddr:   "host:9998",
+			Load:           &protos.LoadReport{},
+		}},
 		Config: &config.GKEConfig{
 			Deployment: &protos.Deployment{
 				App: &protos.AppConfig{
