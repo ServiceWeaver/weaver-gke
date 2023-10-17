@@ -1398,22 +1398,12 @@ func (m *mockManagerClient) Delete(context.Context, *nanny.ApplicationDeleteRequ
 }
 
 // GetReplicaSetState implements the endpoints.Manager interface.
-func (m *mockManagerClient) GetReplicaSetState(context.Context, *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
+func (m *mockManagerClient) GetReplicaSets(context.Context, *nanny.GetReplicaSetsRequest) (*nanny.GetReplicaSetsReply, error) {
 	return nil, fmt.Errorf("unimplemented")
 }
 
 // ActivateComponent implements the endpoints.Manager interface.
 func (m *mockManagerClient) ActivateComponent(context.Context, *nanny.ActivateComponentRequest) error {
-	panic("implement me")
-}
-
-// RegisterReplica implements the endpoints.Manager interface.
-func (m *mockManagerClient) RegisterReplica(context.Context, *nanny.RegisterReplicaRequest) error {
-	panic("implement me")
-}
-
-// ReportLoad implements the endpoints.Manager interface.
-func (m *mockManagerClient) ReportLoad(context.Context, *nanny.LoadReport) error {
 	panic("implement me")
 }
 

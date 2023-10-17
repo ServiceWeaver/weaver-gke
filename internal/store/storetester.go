@@ -56,6 +56,7 @@ type StoreTester struct {
 }
 
 func (s StoreTester) Run(t *testing.T) {
+	t.Helper()
 	t.Run("BasicOps", s.TestBasicOps)
 	t.Run("BlindPuts", s.TestBlindPuts)
 	t.Run("GetMissing", s.TestGetMissing)
@@ -76,6 +77,7 @@ func (s StoreTester) Run(t *testing.T) {
 }
 
 func (s StoreTester) TestBasicOps(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -112,6 +114,7 @@ func (s StoreTester) TestBasicOps(t *testing.T) {
 }
 
 func (s StoreTester) TestBlindPuts(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -135,6 +138,7 @@ func (s StoreTester) TestBlindPuts(t *testing.T) {
 }
 
 func (s StoreTester) TestGetMissing(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -172,6 +176,7 @@ func (s StoreTester) TestGetMissing(t *testing.T) {
 }
 
 func (s StoreTester) TestPutConflict(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -201,6 +206,7 @@ func (s StoreTester) TestPutConflict(t *testing.T) {
 }
 
 func (s StoreTester) TestCreateConflict(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -216,6 +222,7 @@ func (s StoreTester) TestCreateConflict(t *testing.T) {
 }
 
 func (s StoreTester) TestDeleteMissing(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -241,6 +248,7 @@ func (s StoreTester) TestDeleteMissing(t *testing.T) {
 }
 
 func (s StoreTester) TestPutChain(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -274,6 +282,7 @@ func (s StoreTester) TestPutChain(t *testing.T) {
 }
 
 func (s StoreTester) TestBytes(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -299,6 +308,7 @@ func (s StoreTester) TestBytes(t *testing.T) {
 }
 
 func (s StoreTester) TestList(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 	less := func(x, y string) bool { return x < y }
@@ -313,14 +323,23 @@ func (s StoreTester) TestList(t *testing.T) {
 				t.Fatal(err)
 			}
 
+			// Match without prefix.
 			want = append(want, key)
-			got, err := store.List(ctx)
+			got, err := store.List(ctx, ListOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
-
 			if diff := cmp.Diff(want, got, cmpopts.SortSlices(less)); diff != "" {
 				t.Fatalf("bad List (-want +got):\n%s", diff)
+			}
+
+			// Match with prefix.
+			got, err = store.List(ctx, ListOptions{Prefix: key})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff([]string{key}, got); diff != "" {
+				t.Fatalf("bad List with prefix (-want +got):\n%s", diff)
 			}
 		}
 
@@ -330,7 +349,7 @@ func (s StoreTester) TestList(t *testing.T) {
 			}
 
 			want = want[1:]
-			got, err := store.List(ctx)
+			got, err := store.List(ctx, ListOptions{})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -348,6 +367,7 @@ func (s StoreTester) TestList(t *testing.T) {
 // goroutines have terminated, we check to make sure the value of the key is n.
 // This test checks that Store implementations are thread-safe.
 func (s StoreTester) TestConcurrentIncrements(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -423,6 +443,7 @@ func (s StoreTester) TestConcurrentIncrements(t *testing.T) {
 // reaches consensus on the same value. It also checks that Store
 // implementations are thread-safe.
 func (s StoreTester) TestConcurrentCreates(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -501,6 +522,7 @@ func pipeErrs(errs chan error, f func() error) {
 // that is never updated. This get blocks and should only return when its
 // context has expired.
 func (s StoreTester) TestBlockedVersionedGet(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -530,6 +552,7 @@ func (s StoreTester) TestBlockedVersionedGet(t *testing.T) {
 // it received from the putter. This test tests that versioned Gets properly
 // notice updates.
 func (s StoreTester) TestVersionedGetUpdated(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -642,6 +665,7 @@ func (s StoreTester) TestVersionedGetUpdated(t *testing.T) {
 // and the putter creates the key. This test tests that versioned Gets properly
 // notice the creation of a key.
 func (s StoreTester) TestVersionedGetCreated(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -712,6 +736,7 @@ func (s StoreTester) TestVersionedGetCreated(t *testing.T) {
 // key. This test tests that versioned Gets properly notice the deletion of a
 // key.
 func (s StoreTester) TestVersionedGetDeleted(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -766,6 +791,7 @@ func (s StoreTester) TestVersionedGetDeleted(t *testing.T) {
 // TestVersionedGetMissing tests that a stale versioned get on a value that's
 // currently missing returns the value immediately as missing.
 func (s StoreTester) TestVersionedGetMissing(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx := context.Background()
 
@@ -795,6 +821,7 @@ func (s StoreTester) TestVersionedGetMissing(t *testing.T) {
 // This test tests that multiple goroutines can simultaneously watch the same
 // key without any problems.
 func (s StoreTester) TestConcurrentVersionedGets(t *testing.T) {
+	t.Helper()
 	store := s.Make(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -171,7 +171,7 @@ func watch(ctx context.Context, s store.Store, key string) error {
 }
 
 func list(ctx context.Context, s store.Store) error {
-	keys, err := s.List(ctx)
+	keys, err := s.List(ctx, store.ListOptions{})
 	if err != nil {
 		return err
 	}

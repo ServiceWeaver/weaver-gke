@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package local_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/local"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/google/go-cmp/cmp"
@@ -48,13 +49,13 @@ func TestRecordGetListeners(t *testing.T) {
 
 	// Report the listeners.
 	for _, lis := range version.listeners {
-		if err := RecordListener(ctx, store, version.config, lis); err != nil {
+		if err := local.RecordListener(ctx, store, version.config, lis); err != nil {
 			t.Fatalf("RecordListener(%v, %v): %v", version.config, lis, err)
 		}
 	}
 
 	// Fetch the listeners.
-	listeners, err := getListeners(ctx, store, version.config)
+	listeners, err := local.GetListeners(ctx, store, version.config)
 	if err != nil {
 		t.Fatalf("GetListeners: %v", err)
 	}

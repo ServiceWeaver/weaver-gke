@@ -35,7 +35,6 @@ import (
 	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
@@ -397,7 +396,7 @@ rolled out in all locations right away. Are you sure you want to proceed? [Y/n] 
 		// Assign an identity (i.e., a serviceAccount) to the component.
 		component := components[n]
 		dep := gkeConfig.Deployment
-		replicaSet := nanny.ReplicaSetForComponent(component, gkeConfig)
+		replicaSet := config.ReplicaSetForComponent(component, gkeConfig)
 		serviceAccount := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 		gkeConfig.ComponentIdentity[component] = serviceAccount
 

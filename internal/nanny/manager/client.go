@@ -78,12 +78,12 @@ func (h *HttpClient) Delete(ctx context.Context, req *nanny.ApplicationDeleteReq
 }
 
 // GetReplicaSetState implements the endpoints.Manager interface.
-func (h *HttpClient) GetReplicaSetState(ctx context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
-	reply := &nanny.ReplicaSetState{}
+func (h *HttpClient) GetReplicaSets(ctx context.Context, req *nanny.GetReplicaSetsRequest) (*nanny.GetReplicaSetsReply, error) {
+	reply := &nanny.GetReplicaSetsReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
 		Client:  h.client(),
 		Addr:    h.Addr,
-		URLPath: getReplicaSetStateURL,
+		URLPath: getReplicaSetsURL,
 		Request: req,
 		Reply:   reply,
 	})
@@ -96,26 +96,6 @@ func (h *HttpClient) ActivateComponent(ctx context.Context, req *nanny.ActivateC
 		Client:  h.client(),
 		Addr:    h.Addr,
 		URLPath: activateComponentURL,
-		Request: req,
-	})
-}
-
-// RegisterReplica implements the endpoints.Manager interface.
-func (h *HttpClient) RegisterReplica(ctx context.Context, req *nanny.RegisterReplicaRequest) error {
-	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
-		Addr:    h.Addr,
-		URLPath: registerReplicaURL,
-		Request: req,
-	})
-}
-
-// ReportLoad implements the endpoints.Manager interface.
-func (h *HttpClient) ReportLoad(ctx context.Context, req *nanny.LoadReport) error {
-	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
-		Addr:    h.Addr,
-		URLPath: reportLoadURL,
 		Request: req,
 	})
 }

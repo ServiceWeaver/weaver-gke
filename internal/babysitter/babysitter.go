@@ -19,7 +19,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"math/rand"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -42,38 +41,27 @@ import (
 
 const (
 	// URL suffixes for various HTTP endpoints exported by the babysitter.
-	healthURL       = "/healthz"
+	loadURL         = "/load"
 	runProfilingURL = "/run_profiling"
-	fetchMetricsURL = "/fetch_metrics"
 )
-
-// ReplicaWatcher maintains an up-to-date information about replicas in
-// a ReplicaSet.
-type ReplicaWatcher interface {
-	// GetReplicas returns addresses of all replicas in a given replica set.
-	// If there have been no changes since the last call to GetReplicas(),
-	// this method will block.
-	GetReplicas(context.Context) ([]string, error)
-}
 
 // Babysitter starts and manages a weavelet inside the Pod.
 type Babysitter struct {
-	ctx               context.Context
-	mux               *http.ServeMux
-	selfAddr          string // HTTP address for the listener
-	cfg               *config.GKEConfig
-	replicaSet        string
-	projectName       string
-	podName           string
-	envelope          *envelope.Envelope
-	manager           endpoints.Manager
-	caCert            *x509.Certificate
-	getSelfCert       func() ([]byte, []byte, error)
-	newReplicaWatcher func(context.Context, string) (ReplicaWatcher, error)
-	logger            *slog.Logger
-	logSaver          func(*protos.LogEntry)
-	traceSaver        func(spans *protos.TraceSpans) error
-	metricExporter    func(metrics []*metrics.MetricSnapshot) error
+	ctx            context.Context
+	mux            *http.ServeMux
+	selfAddr       string // HTTP address for the listener
+	cfg            *config.GKEConfig
+	replicaSet     string
+	projectName    string
+	podName        string
+	envelope       *envelope.Envelope
+	manager        endpoints.Manager
+	caCert         *x509.Certificate
+	getSelfCert    func() ([]byte, []byte, error)
+	logger         *slog.Logger
+	logSaver       func(*protos.LogEntry)
+	traceSaver     func(spans *protos.TraceSpans) error
+	metricExporter func(metrics []*metrics.MetricSnapshot) error
 
 	mu                  sync.Mutex
 	watchingRoutingInfo map[string]struct{}
@@ -96,7 +84,6 @@ func Start(
 	manager endpoints.Manager,
 	caCert *x509.Certificate,
 	getSelfCert func() ([]byte, []byte, error),
-	newReplicaWatcher func(context.Context, string) (ReplicaWatcher, error),
 	logSaver func(*protos.LogEntry),
 	traceSaver func(spans *protos.TraceSpans) error,
 	metricExporter func(metrics []*metrics.MetricSnapshot) error,
@@ -149,43 +136,37 @@ func Start(
 
 	// Create the babysitter.
 	b := &Babysitter{
-		ctx:               ctx,
-		mux:               mux,
-		cfg:               cfg,
-		replicaSet:        replicaSet,
-		projectName:       projectName,
-		podName:           podName,
-		envelope:          e,
-		selfAddr:          selfAddr,
-		manager:           manager,
-		caCert:            caCert,
-		getSelfCert:       getSelfCert,
-		newReplicaWatcher: newReplicaWatcher,
-		logger:            logger,
-		logSaver:          logSaver,
-		traceSaver:        traceSaver,
-		metricExporter:    metricExporter,
+		ctx:            ctx,
+		mux:            mux,
+		cfg:            cfg,
+		replicaSet:     replicaSet,
+		projectName:    projectName,
+		podName:        podName,
+		envelope:       e,
+		selfAddr:       selfAddr,
+		manager:        manager,
+		caCert:         caCert,
+		getSelfCert:    getSelfCert,
+		logger:         logger,
+		logSaver:       logSaver,
+		traceSaver:     traceSaver,
+		metricExporter: metricExporter,
 	}
 
 	// Register babysitter handlers.
-	mux.HandleFunc(healthURL, protomsg.HandlerFunc(b.logger, b.CheckHealth))
+	mux.HandleFunc(loadURL, protomsg.HandlerFunc(b.logger, b.GetLoad))
 	mux.HandleFunc(runProfilingURL, protomsg.HandlerFunc(b.logger, b.RunProfiling))
-
-	// Register the weavelet.
-	if err := b.registerReplica(); err != nil {
-		return nil, err
-	}
 
 	// Start a goroutine to periodically export metrics.
 	if b.metricExporter != nil {
 		go b.exportMetrics()
 	}
 
-	// Start a goroutine to periodically report components' load.
-	go b.reportLoad()
-
 	// Start the envelope.
 	go b.envelope.Serve(b)
+
+	// Watch for components to start.
+	go b.watchComponentsToStart()
 
 	// Serve calls to system components.
 	go func() {
@@ -205,6 +186,10 @@ func Start(
 func (b *Babysitter) WeaveletInfo() *protos.WeaveletInfo {
 	return b.envelope.WeaveletInfo()
 }
+
+// SelfAddr returns the address on which the babysitter is listening on
+// for incoming requests.
+func (b *Babysitter) SelfAddr() string { return b.selfAddr }
 
 // exportMetrics periodically exports metrics.
 func (b *Babysitter) exportMetrics() {
@@ -234,49 +219,20 @@ func (b *Babysitter) exportMetrics() {
 	}
 }
 
-// reportLoad periodically exports components' load information.
-func (b *Babysitter) reportLoad() error {
-	// pick samples a time uniformly from [0.95i, 1.05i] where i is
-	// LoadReportInterval. We introduce jitter to avoid processes that start
-	// around the same time from storming to update their load.
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	pick := func() time.Duration {
-		const i = float64(endpoints.LoadReportInterval)
-		const low = int64(i * 0.95)
-		const high = int64(i * 1.05)
-		return time.Duration(r.Int63n(high-low+1) + low)
+// GetLoad implements the endpoints.Babysitter interface.
+func (b *Babysitter) GetLoad(_ context.Context, req *endpoints.GetLoadRequest) (*endpoints.GetLoadReply, error) {
+	status := b.envelope.GetHealth()
+	if status != protos.HealthStatus_HEALTHY {
+		return nil, fmt.Errorf("weavelet unhealthy")
 	}
-
-	ticker := time.NewTicker(pick())
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			ticker.Reset(pick())
-			load, err := b.envelope.GetLoad()
-			if err != nil {
-				b.logger.Error("Get weavelet load", "err", err)
-				continue
-			}
-			if err := b.manager.ReportLoad(b.ctx, &nanny.LoadReport{
-				Load:         load,
-				ReplicaSet:   b.replicaSet,
-				PodName:      b.podName,
-				WeaveletAddr: b.envelope.WeaveletInfo().DialAddr,
-				Config:       b.cfg,
-			}); err != nil {
-				b.logger.Error("ReportLoad", "err", err)
-			}
-		case <-b.ctx.Done():
-			return b.ctx.Err()
-		}
+	load, err := b.envelope.GetLoad()
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get weavelet load")
 	}
-}
-
-// CheckHealth implements the endpoints.Babysitter interface.
-func (b *Babysitter) CheckHealth(_ context.Context, req *protos.GetHealthRequest) (*protos.GetHealthReply, error) {
-	return &protos.GetHealthReply{Status: b.envelope.GetHealth()}, nil
+	return &endpoints.GetLoadReply{
+		Load:         load,
+		WeaveletAddr: b.WeaveletInfo().DialAddr,
+	}, nil
 }
 
 // RunProfiling implements the endpoints.Babysitter interface.
@@ -291,16 +247,17 @@ func (b *Babysitter) RunProfiling(_ context.Context, req *protos.GetProfileReque
 
 // ActivateComponent implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) ActivateComponent(ctx context.Context, req *protos.ActivateComponentRequest) (*protos.ActivateComponentReply, error) {
+	targetReplicaSet := config.ReplicaSetForComponent(req.Component, b.cfg)
 	if err := b.manager.ActivateComponent(ctx, &nanny.ActivateComponentRequest{
-		Component: req.Component,
-		Routed:    req.Routed,
-		Config:    b.cfg,
+		Component:  req.Component,
+		Routed:     req.Routed,
+		ReplicaSet: targetReplicaSet,
+		Config:     b.cfg,
 	}); err != nil {
 		return nil, err
 	}
 
 	// Continuously collect routing info the activated component.
-	targetReplicaSet := replicaSetForComponent(req.Component, b.cfg)
 	local := targetReplicaSet == b.replicaSet
 	if local && !req.Routed {
 		// Local non-routed component. The routing will never change and hence
@@ -324,31 +281,28 @@ func (b *Babysitter) ActivateComponent(ctx context.Context, req *protos.Activate
 	}
 	if _, ok := b.watchingRoutingInfo[req.Component]; !ok {
 		b.watchingRoutingInfo[req.Component] = struct{}{}
-		if req.Routed {
-			go b.watchRouted(b.ctx, req.Component)
-		} else {
-			go b.watchNonRouted(b.ctx, req.Component, targetReplicaSet)
-		}
+		go b.watchRoutingInfo(b.ctx, req.Component, targetReplicaSet)
 	}
 	return &protos.ActivateComponentReply{}, nil
 }
 
-// watchRouted watches and updates the routing information for a routed
-// component.
-func (b *Babysitter) watchRouted(ctx context.Context, component string) {
+// watchRoutingInfo watches and updates the routing information for a given
+// non-local component.
+func (b *Babysitter) watchRoutingInfo(ctx context.Context, targetComponent, targetReplicaSet string) {
 	version := ""
 	for r := retry.Begin(); r.Continue(ctx); {
 		reply, err := b.manager.GetRoutingInfo(ctx, &nanny.GetRoutingRequest{
-			Component: component,
-			Version:   version,
-			Config:    b.cfg,
+			Component:  targetComponent,
+			Version:    version,
+			ReplicaSet: targetReplicaSet,
+			Config:     b.cfg,
 		})
 		if err != nil {
-			b.logger.Error("cannot get routing info for a routed component; will retry", "err", err, "component", component)
+			b.logger.Error("cannot get routing info for a component; will retry", "err", err, "component", targetComponent)
 			continue
 		}
 		if err := b.envelope.UpdateRoutingInfo(reply.Routing); err != nil {
-			b.logger.Error("cannot update routing info for a routed component; will retry", "err", err, "component", component)
+			b.logger.Error("cannot update routing info for a component; will retry", "err", err, "component", targetComponent)
 			continue
 		}
 		version = reply.Version
@@ -356,54 +310,9 @@ func (b *Babysitter) watchRouted(ctx context.Context, component string) {
 	}
 }
 
-// watchNonRouted watches and updates the routing information for an component
-// that isn't routed.
-// TODO(spetrovic): Re-consider the decision to move watching into the
-// babysitter. Currently, we watch from two places (i.e., here and the
-// assigner).
-func (b *Babysitter) watchNonRouted(ctx context.Context, component, replicaSet string) {
-outer:
-	for r := retry.Begin(); r.Continue(ctx); {
-		watcher, err := b.newReplicaWatcher(ctx, replicaSet)
-		if err != nil {
-			b.logger.Error("cannot create replica watcher for an unrouted component; will retry", "err", err, "component", component)
-			continue
-		}
-		for {
-			replicas, err := watcher.GetReplicas(ctx)
-			if err != nil {
-				b.logger.Error("cannot get replicas for an unrouted component; will retry", "err", err, "component", component)
-				continue outer
-			}
-			r.Reset()
-			if err := b.envelope.UpdateRoutingInfo(&protos.RoutingInfo{
-				Component: component,
-				Replicas:  replicas,
-			}); err != nil {
-				b.logger.Error("cannot update routing info for an unrouted component; will retry", "err", err, "component", component)
-			}
-		}
-	}
-}
-
-// registerReplica registers the information about a colocation group replica
-// (i.e., a weavelet).
-func (b *Babysitter) registerReplica() error {
-	if err := b.manager.RegisterReplica(b.ctx, &nanny.RegisterReplicaRequest{
-		ReplicaSet:        b.replicaSet,
-		PodName:           b.podName,
-		BabysitterAddress: b.selfAddr,
-		WeaveletAddress:   b.envelope.WeaveletInfo().DialAddr,
-		Config:            b.cfg,
-	}); err != nil {
-		return err
-	}
-
-	go b.watchComponents()
-	return nil
-}
-
-func (b *Babysitter) watchComponents() {
+// watchComponentsToStart watches and updates the set of components the local
+// weavelet should start.
+func (b *Babysitter) watchComponentsToStart() {
 	version := ""
 	for r := retry.Begin(); r.Continue(b.ctx); {
 		components, newVersion, err := b.getComponentsToStart(version)
@@ -456,6 +365,7 @@ func (b *Babysitter) ExportListener(ctx context.Context, req *protos.ExportListe
 	})
 }
 
+// GetSelfCertificate implements the envelope.EnvelopeHandler interface.
 func (b *Babysitter) GetSelfCertificate(context.Context, *protos.GetSelfCertificateRequest) (*protos.GetSelfCertificateReply, error) {
 	certPEM, keyPEM, err := b.getSelfCert()
 	if err != nil {
@@ -506,17 +416,4 @@ func (b *Babysitter) HandleTraceSpans(_ context.Context, traces *protos.TraceSpa
 		return nil
 	}
 	return b.traceSaver(traces)
-}
-
-// replicaSetForComponent returns the name of the Kubernetes ReplicaSet that
-// should host the given component.
-func replicaSetForComponent(component string, config *config.GKEConfig) string {
-	for _, group := range config.Deployment.App.Colocate {
-		for _, c := range group.Components {
-			if c == component {
-				return group.Components[0]
-			}
-		}
-	}
-	return component
 }

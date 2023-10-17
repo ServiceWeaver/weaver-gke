@@ -22,11 +22,11 @@ import (
 
 const (
 	// HistoryKey is the key where we store the set of keys belonging to a
-	// particular deployment. The key should be scoped to a deployment. For
-	// example:
+	// particular application version. The key should be scoped to an
+	// application version. For example:
 	//
-	//     /app/collatz/deployment/a47e1a97/key_history
-	//     /app/todo/deployment/fd578a20/key_history
+	//     /app/collatz/version/a47e1a97/key_history
+	//     /app/todo/version/fd578a20/key_history
 	HistoryKey = "key_history"
 )
 
@@ -35,23 +35,23 @@ const (
 // collisions. For example, a todo app and chat app can both use the same key
 // "status" without a collision:
 //
-//     // "status" gets converted to "/app/todo/deployment/123/status"
+//     // "status" gets converted to "/app/todo/version/123/status"
 //     id := uuid.MustParse("123")
-//     key := DeploymentKey("todo", id, "status")
+//     key := AppVersionKey("todo", id, "status")
 //     store.Put(ctx, key, "running", nil)
 //
-//     // "status" gets converted to "/app/chat/deployment/456/status"
+//     // "status" gets converted to "/app/chat/version/456/status"
 //     id := uuid.MustParse("456")
-//     key := DeploymentKey("chat", id, "status")
+//     key := AppVersionKey("chat", id, "status")
 //     store.Put(ctx, key, "terminating", nil)
 //
-// We have the following Key functions. Assume an app named collatz, a
-// deployment id 123, and a ReplicaSet named OddEven.
+// We have the following Key functions. Assume an app named collatz, an
+// application version 123, and a ReplicaSet named OddEven.
 //
 //     1. GlobalKey:      "/key".
-//     2. ApplicationKey: "/app/collatz/key".
-//     3. DeploymentKey:  "/app/collatz/deployment/123/key".
-//     4. ReplicaSetKey:  "/app/collatz/deployment/123/replica_set/OddEven/key".
+//     2. AppKey:         "/app/collatz/key".
+//     3. AppVersionKey:  "/app/collatz/version/123/key".
+//     4. ReplicaSetKey:  "/app/collatz/version/123/replica_set/OddEven/key".
 
 func join(elements ...string) string {
 	// Note that we don't use path.Join because we allow empty keys and
@@ -73,18 +73,18 @@ func AppKey(app string, key string) string {
 	return join("app", app, key)
 }
 
-// DeploymentKey returns keys in the format "/app/collatz/deployment/123/key",
-// where "collatz" is the application name and 123 is the deployment id.
-func DeploymentKey(cfg *config.GKEConfig, key string) string {
+// AppVersionKey returns keys in the format "/app/collatz/version/123/key",
+// where "collatz" is the application name and 123 is the application version id.
+func AppVersionKey(cfg *config.GKEConfig, key string) string {
 	dep := cfg.Deployment
-	return join("app", dep.App.Name, "deployment", dep.Id, key)
+	return join("app", dep.App.Name, "version", dep.Id, key)
 }
 
 // ReplicaSetKey returns keys in the format
-// "/app/collatz/deployment/123/replica_set/OddEven/key", where "collatz" is the
-// application name, 123 is the deployment id, and OddEven is the Kubernetes
-// ReplicaSet name.
+// "/app/collatz/version/123/replica_set/OddEven/key", where "collatz" is the
+// application name, 123 is the application version id, and OddEven is the
+// Kubernetes ReplicaSet name.
 func ReplicaSetKey(cfg *config.GKEConfig, replicaSet string, key string) string {
 	dep := cfg.Deployment
-	return join("app", dep.App.Name, "deployment", dep.Id, "replica_set", replicaSet, key)
+	return join("app", dep.App.Name, "version", dep.Id, "replica_set", replicaSet, key)
 }

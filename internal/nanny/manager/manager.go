@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
@@ -68,8 +69,8 @@ func NewManager(ctx context.Context,
 	store store.Store,
 	logger *slog.Logger,
 	dialAddr string,
-	babysitterConstructor func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error),
-	replicaExists func(context.Context, string) (bool, error),
+	updateRoutingInterval time.Duration,
+	getHealthyPods func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) ([]*nanny.Pod, error),
 	getListenerPort func(context.Context, *config.GKEConfig, string, string) (int, error),
 	exportListener func(context.Context, *config.GKEConfig, string, *nanny.Listener) (*protos.ExportListenerReply, error),
 	startReplicaSet func(context.Context, *config.GKEConfig, string) error,
@@ -78,7 +79,7 @@ func NewManager(ctx context.Context,
 	return &manager{
 		ctx:               ctx,
 		store:             store,
-		assigner:          assigner.NewAssigner(ctx, store, logger, assigner.EqualDistributionAlgorithm, babysitterConstructor, replicaExists),
+		assigner:          assigner.NewAssigner(ctx, store, logger, assigner.EqualDistributionAlgorithm, updateRoutingInterval, getHealthyPods),
 		logger:            logger,
 		selfAddr:          dialAddr,
 		getListenerPort:   getListenerPort,
@@ -95,7 +96,7 @@ func (m *manager) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRe
 	for i, cfg := range req.Versions {
 		versionStrs[i] = cfg.Deployment.Id
 	}
-	m.logger.Info("Starting", "versions", versionStrs, "app", req.AppName)
+	m.logger.Debug("Deploy", "versions", versionStrs, "app", req.AppName)
 	var errs []error
 	for _, cfg := range req.Versions {
 		if err := m.deploy(ctx, cfg); err != nil {
@@ -107,7 +108,6 @@ func (m *manager) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRe
 		m.logger.Error("Error starting", "err", err, "versions", versionStrs, "app", req.AppName)
 		return err
 	}
-	m.logger.Info("Success starting", "versions", versionStrs, "app", req.AppName, "err", errs)
 	return nil
 }
 
@@ -116,11 +116,15 @@ func (m *manager) deploy(ctx context.Context, cfg *config.GKEConfig) error {
 	// reach the local manager.
 	cfg.ManagerAddr = m.selfAddr
 
+	// Find the replica set that hosts the main component.
+	rs := config.ReplicaSetForComponent(runtime.Main, cfg)
+
 	// Activate the main component.
 	return m.ActivateComponent(ctx, &nanny.ActivateComponentRequest{
-		Component: runtime.Main,
-		Routed:    false,
-		Config:    cfg,
+		Component:  runtime.Main,
+		ReplicaSet: rs,
+		Routed:     false,
+		Config:     cfg,
 	})
 }
 
@@ -135,11 +139,11 @@ func (m *manager) deploy(ctx context.Context, cfg *config.GKEConfig) error {
 // immediately once all versions are deleted, in which case the reply to the
 // distributor will be successful.
 func (m *manager) Stop(_ context.Context, req *nanny.ApplicationStopRequest) error {
-	m.logger.Info("Stopping versions", "versions", req.Versions, "app", req.AppName)
+	m.logger.Debug("Stop", "versions", req.Versions, "app", req.AppName)
 	if err := m.stop(req); err != nil {
-		return fmt.Errorf("cannot stop versions %v of application %q: %w", req.Versions, req.AppName, err)
+		m.logger.Error("Stop", "versions", req.Versions, "app", req.AppName, "error", err)
+		return err
 	}
-	m.logger.Info("Successfully stopped", "versions", req.Versions, "app", req.AppName)
 	return nil
 }
 
@@ -147,66 +151,38 @@ func (m *manager) stop(req *nanny.ApplicationStopRequest) error {
 	if err := m.stopAppVersions(m.ctx, req.AppName, req.Versions); err != nil {
 		return err
 	}
-	if err := m.assigner.UnregisterReplicaSets(m.ctx, req.AppName, req.Versions); err != nil {
-		return err
-	}
-
-	// Garbage collect store entries.
-	//
-	// TODO(mwhittaker): This garbage collection races any operation that
-	// writes to the store. We should make sure that every operation that could
-	// potentially write to the store first checks to see if the version has
-	// been stopped. This is complicated by the fact that the store writes are
-	// spread between the assigner, manager, the gke deployer, and the
-	// gke-local deployer.
 	var errs []error
 	for _, version := range req.Versions {
-		if err := m.gcVersion(m.ctx, version); err != nil {
+		if err := m.assigner.StopAppVersion(m.ctx, req.AppName, version.Deployment.Id); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// gcVersion garbage collects all the store entries for the provided version.
-func (m *manager) gcVersion(_ context.Context, cfg *config.GKEConfig) error {
-	// Get all keys recorded under histKey in the store.
-	histKey := store.DeploymentKey(cfg, store.HistoryKey)
-	keys, _, err := store.GetSet(m.ctx, m.store, histKey, nil)
-	if err != nil {
-		return fmt.Errorf("cannot get history for %q: %v", cfg.Deployment.Id, err)
-	}
-
-	for _, key := range keys {
-		if err := m.store.Delete(m.ctx, key); err != nil {
-			return fmt.Errorf("cannot delete key %q for %q: %v", key, cfg.Deployment.Id, err)
-		}
-	}
-
-	// Don't forget to delete the history as well. We make sure to delete
-	// the history last so that if any previous delete fails, the history
-	// remains.
-	if err := m.store.Delete(m.ctx, histKey); err != nil {
-		return fmt.Errorf("cannot delete key %q for %q: %v", histKey, cfg.Deployment.Id, err)
-	}
-	return nil
-}
-
-// Delete deletes all the groups associated with a list of applications
+// Delete deletes all replica sets associated with a given list of application
 // versions.
 func (m *manager) Delete(_ context.Context, req *nanny.ApplicationDeleteRequest) error {
+	versionStrs := make([]string, len(req.Versions))
+	for i, cfg := range req.Versions {
+		versionStrs[i] = cfg.Deployment.Id
+	}
+	m.logger.Info("Delete", "versions", versionStrs, "app", req.AppName)
 	if err := m.deleteAppVersions(m.ctx, req.AppName, req.Versions); err != nil {
-		return fmt.Errorf("cannot delete versions %v: %w", req.Versions, err)
+		m.logger.Error("Delete", "versions", versionStrs, "app", req.AppName, "error", err)
+		return err
 	}
 	return nil
 }
 
-// GetReplicaSetState returns ReplicaSet information for an application version
+// GetReplicaSets returns ReplicaSet information for an application version
 // or a set of application versions.
-func (m *manager) GetReplicaSetState(ctx context.Context, req *nanny.GetReplicaSetStateRequest) (*nanny.ReplicaSetState, error) {
-	reply, err := m.assigner.GetReplicaSetState(ctx, req)
+func (m *manager) GetReplicaSets(ctx context.Context, req *nanny.GetReplicaSetsRequest) (*nanny.GetReplicaSetsReply, error) {
+	m.logger.Debug("GetReplicaSets", "app", req.AppName, "version", req.VersionId)
+	reply, err := m.assigner.GetReplicaSets(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get group state: %w", err)
+		m.logger.Error("GetReplicaSets", "app", req.AppName, "version", req.VersionId, "error", err)
+		return nil, err
 	}
 	return reply, nil
 }
@@ -214,68 +190,58 @@ func (m *manager) GetReplicaSetState(ctx context.Context, req *nanny.GetReplicaS
 // ActivateComponent ensures that the given component is hosted by a running
 // Kubernetes ReplicaSet.
 func (m *manager) ActivateComponent(ctx context.Context, req *nanny.ActivateComponentRequest) error {
+	m.logger.Debug("ActivateComponent", "component", req.Component, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id)
 	// Register the component with the assigner, which will generate
 	// routing information for the component.
-	if err := m.assigner.RegisterActiveComponent(ctx, req); err != nil {
-		return fmt.Errorf("cannot register component to start for deployment version %q of application %q: %w",
-			req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+	if err := m.assigner.RegisterComponent(ctx, req); err != nil {
+		m.logger.Error("ActivateComponent", "component", req.Component, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id, "error", err)
+		return err
 	}
 
 	// Ensure that the Kubernetes ReplicaSet, which hosts the component, is
 	// started.
-	rs := nanny.ReplicaSetForComponent(req.Component, req.Config)
-	if err := m.startReplicaSet(m.ctx, req.Config, rs); err != nil {
-		return fmt.Errorf("cannot start ReplicaSet %q in version %q: %w", rs, req.Config.Deployment.Id, err)
-	}
-	return nil
-}
-
-func (m *manager) RegisterReplica(ctx context.Context, req *nanny.RegisterReplicaRequest) error {
-	if err := m.assigner.RegisterReplica(ctx, req); err != nil {
-		return fmt.Errorf(
-			"cannot register pod %q in version %v of application %q: %w",
-			req.PodName, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
-	}
-	return nil
-}
-
-func (m *manager) ReportLoad(ctx context.Context, req *nanny.LoadReport) error {
-	if err := m.assigner.OnNewLoadReport(ctx, req); err != nil {
-		return fmt.Errorf("cannot handle load report of pod %q in version %v of application %q: %w", req.PodName, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+	if err := m.startReplicaSet(m.ctx, req.Config, req.ReplicaSet); err != nil {
+		m.logger.Error("ActivateComponent", "component", req.Component, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id, "error", err)
+		return err
 	}
 	return nil
 }
 
 func (m *manager) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
+	m.logger.Debug("GetListenerAddress", "listener", req.Listener, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id)
 	port, err := m.getListenerPort(ctx, req.Config, req.ReplicaSet, req.Listener)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get address for ReplicaSset %s listener %s in version %v of application %q: %w", req.ReplicaSet, req.Listener, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+		m.logger.Error("GetListenerAddress", "listener", req.Listener, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id, "error", err)
+		return nil, err
 	}
 	return &protos.GetListenerAddressReply{Address: fmt.Sprintf(":%d", port)}, nil
 }
 
 func (m *manager) ExportListener(ctx context.Context, req *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error) {
-	lis := req.Listener
+	m.logger.Debug("ExportListener", "listener", req.Listener, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id)
 	if err := m.assigner.RegisterListener(ctx, req); err != nil {
-		return nil, fmt.Errorf("cannot register listener %q in version %v of application %q: %w", lis.Name, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+		m.logger.Error("ExportListener", "listener", req.Listener, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id, "error", err)
+		return nil, err
 	}
 	return m.exportListener(ctx, req.Config, req.ReplicaSet, req.Listener)
 }
 
 func (m *manager) GetRoutingInfo(_ context.Context, req *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
+	m.logger.Debug("GetRoutingInfo", "component", req.Component, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id)
 	reply, err := m.assigner.GetRoutingInfo(req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get routing info for component %q in version %v of application %q: %v",
-			req.Component, req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+		m.logger.Error("GetRoutingInfo", "component", req.Component, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id, "error", err)
+		return nil, err
 	}
 	return reply, nil
 }
 
 func (m *manager) GetComponentsToStart(_ context.Context, req *nanny.GetComponentsRequest) (*nanny.GetComponentsReply, error) {
+	m.logger.Debug("GetComponentsToStart", "replica_set", req.ReplicaSet, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id)
 	reply, err := m.assigner.GetComponentsToStart(req)
 	if err != nil {
-		return nil, fmt.Errorf("cannot get components to start for deployment version %q of application %q: %w",
-			req.Config.Deployment.Id, req.Config.Deployment.App.Name, err)
+		m.logger.Error("GetComponentsToStart", "replica_set", req.ReplicaSet, "app", req.Config.Deployment.App.Name, "version", req.Config.Deployment.Id, "error", err)
+		return nil, err
 	}
 	return reply, nil
 }

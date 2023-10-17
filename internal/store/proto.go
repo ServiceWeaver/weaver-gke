@@ -22,8 +22,7 @@ import (
 
 // PutProto calls proto.Marshal on a value and then puts it into the underlying
 // store. See Store.Put for details.
-func PutProto(ctx context.Context, store Store, key string,
-	value proto.Message, version *Version) (*Version, error) {
+func PutProto(ctx context.Context, store Store, key string, value proto.Message, version *Version) (*Version, error) {
 	bytes, err := proto.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -33,8 +32,7 @@ func PutProto(ctx context.Context, store Store, key string,
 
 // GetProto gets a value from the store and then calls proto.Unmarshal on it.
 // If the value is missing, value is left untouched. See Store.Get for details.
-func GetProto(ctx context.Context, store Store, key string, value proto.Message,
-	version *Version) (*Version, error) {
+func GetProto(ctx context.Context, store Store, key string, value proto.Message, version *Version) (*Version, error) {
 	bytes, version, err := store.Get(ctx, key, version)
 	if err != nil {
 		return nil, err
@@ -83,7 +81,7 @@ func UpdateProto(ctx context.Context, store Store, key string, obj proto.Message
 		if err := proto.Unmarshal([]byte(value), obj); err != nil {
 			return "", err
 		}
-		if err := edit(version); err != nil { // May often by ErrUnchanged
+		if err := edit(version); err != nil { // May often return ErrUnchanged
 			return "", err
 		}
 		bytes, err := proto.Marshal(obj)

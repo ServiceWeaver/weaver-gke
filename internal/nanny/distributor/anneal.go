@@ -137,7 +137,7 @@ func (d *Distributor) ManageAppStates(ctx context.Context) error {
 		if err := d.getListenerState(ctx, app); err != nil {
 			errs = append(errs, fmt.Errorf("error getting listener state for app %v: %w", app, err))
 		}
-		if err := d.getReplicaSetState(ctx, app); err != nil {
+		if err := d.getReplicaSets(ctx, app); err != nil {
 			errs = append(errs, fmt.Errorf("error getting ReplicaSet state for app %v: %w", app, err))
 		}
 	}
@@ -348,9 +348,9 @@ func (d *Distributor) getListenerState(ctx context.Context, app string) error {
 	return errors.Join(errs...)
 }
 
-// getReplicaSetState retrieve the latest ReplicaSet state for the application
+// getReplicaSets retrieves the latest ReplicaSet state for the application
 // from the manager.
-func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error {
+func (d *Distributor) getReplicaSets(ctx context.Context, app string) error {
 	state, version, err := d.loadAppState(ctx, app)
 	if err != nil {
 		return err
@@ -359,7 +359,7 @@ func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error 
 	var errs []error
 	for _, version := range state.Versions {
 		// Get ReplicaSet state for the application version.
-		replicaSets, err := d.manager.GetReplicaSetState(ctx, &nanny.GetReplicaSetStateRequest{
+		reply, err := d.manager.GetReplicaSets(ctx, &nanny.GetReplicaSetsRequest{
 			AppName:   app,
 			VersionId: version.Config.Deployment.Id,
 		})
@@ -367,7 +367,7 @@ func (d *Distributor) getReplicaSetState(ctx context.Context, app string) error 
 			errs = append(errs, err)
 			continue
 		}
-		version.ReplicaSets = replicaSets
+		version.ReplicaSets = reply.ReplicaSets
 	}
 
 	if _, err := d.saveAppState(ctx, app, state, version); err != nil {

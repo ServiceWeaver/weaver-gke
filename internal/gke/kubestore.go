@@ -18,6 +18,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"strings"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	v1 "k8s.io/api/core/v1"
@@ -415,7 +416,7 @@ func (f *KubeStore) Delete(ctx context.Context, key string) error {
 	return err
 }
 
-func (f *KubeStore) List(ctx context.Context) ([]string, error) {
+func (f *KubeStore) List(ctx context.Context, opts store.ListOptions) ([]string, error) {
 	// Note that performing a List with an unset ResourceVersion is
 	// linearizable. From [1]:
 	//
@@ -434,6 +435,11 @@ func (f *KubeStore) List(ctx context.Context) ([]string, error) {
 		key, ok := configMap.BinaryData["key"]
 		if !ok {
 			return nil, fmt.Errorf("ConfigMap %q has no key", configMap.Name)
+		}
+		// TODO(spetrovic): Consider encoding key prefixes as labels, so that
+		// they can be more efficiently retrieved.
+		if opts.Prefix != "" && !strings.HasPrefix(string(key), opts.Prefix) {
+			continue
 		}
 		keys = append(keys, string(key))
 	}

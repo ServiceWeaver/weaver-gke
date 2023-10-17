@@ -161,9 +161,9 @@ func (s *SQLStore) Delete(ctx context.Context, key string) error {
 	return ctx.Err()
 }
 
-func (s *SQLStore) List(ctx context.Context) ([]string, error) {
+func (s *SQLStore) List(ctx context.Context, opts ListOptions) ([]string, error) {
 	for r := retry.Begin(); r.Continue(ctx); {
-		keys, err := s.list(ctx)
+		keys, err := s.list(ctx, opts)
 		if isLocked(err) {
 			continue
 		}
@@ -409,14 +409,15 @@ func (s *SQLStore) delete(ctx context.Context, key string) error {
 }
 
 // list returns the list of keys currently present in the store.
-func (s *SQLStore) list(ctx context.Context) ([]string, error) {
+func (s *SQLStore) list(ctx context.Context, opts ListOptions) ([]string, error) {
 	tx, err := s.db.BeginTx(ctx, txOpts())
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
 
-	rows, err := tx.QueryContext(ctx, "SELECT key FROM data;")
+	query := `SELECT key FROM data WHERE key LIKE '` + opts.Prefix + `%'`
+	rows, err := tx.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}

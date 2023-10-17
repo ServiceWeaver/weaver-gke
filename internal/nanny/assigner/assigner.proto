@@ -17,114 +17,16 @@ syntax = "proto3";
 option go_package = "github.com/ServiceWeaver/weaver-gke/internal/nanny/assigner";
 
 package assigner;
-import "runtime/protos/runtime.proto";
-import "internal/config/config.proto";
-
-// AppVersionState contains state managed for an application version by
-// the assigner.
-message AppVersionState {
-  // The set of activated ReplicaSets, keyed by their name.
-  map<string, ReplicaSetState> replica_sets = 2;
-}
+import "internal/nanny/nanny.proto";
 
 // ReplicaSetState stores information about a Kubernetes ReplicaSet, i.e.,
-// a set of Pods that host the same set of components.
+// a set of pods that host the same set of components.
 message ReplicaSetState {
-  string name = 1;
+  nanny.ReplicaSet replica_set = 1;
 
-  // Set of activated components in the ReplicaSet, along with their routing
-  // status (i.e., whether a component is routed).
-  map<string, bool> components = 2;
-
-  // Addresses of weavelets that run inside the ReplicaSet.
-  repeated string weavelet_addrs = 3;
-
-  // Network listeners exported by the ReplicaSet, if any.
-  repeated string listeners = 4;
-
-  // TODO(rgrandl): should we also track the routing info here?
-}
-
-// AssignerState stores the assigners' state.
-message AssignerState {
-  repeated string applications = 1;
-}
-
-// AppState stores the state for a single Service Weaver application.
-message AppState {
-  // The list of app's running replica sets.
-  repeated ReplicaSetId replica_set_ids = 1;
-}
-
-// ReplicaSetId uniquely identifies a Kubernetes ReplicaSet.
-message ReplicaSetId {
-  config.GKEConfig config = 1;  // config for the replica set
-  string Name = 2;              // replica set name (e.g., Cache)
-  bool has_routed = 3;          // replica set hosts a routed component?
-}
-
-// ReplicaSetInfo contains information for each Kubernetes ReplicaSet that
-// requires routing.
-message ReplicaSetInfo {
-  // Every time (1) the set of replica changes, or (2) the set of healthy
-  // replicas changes, or (3) any assignment changes, a GroupInfo's version
-  // should be incremented. An assignment's load may change without incrementing
-  // the version.
-  //
-  // This version is used to avoid races between writing a GroupInfo and
-  // writing the corresponding RoutingInfo.
-  uint64 version = 3;
-
-  // Routed components and their assignments
-  map<string, Assignment> components = 1;
-
-  // Pods in the replica set, keyed by weavelet address.
-  map<string, Pod> pods = 2;
-
-  // Network listeners exported by the ReplicaSet, if any.
-  repeated string listeners = 4;
-}
-
-// Pod contains information for a Pod that hosts the weavelet.
-message Pod {
-  string name = 1;  // Pod's unique name
-
-  // Address of babysitter that manages the replica.
-  string babysitter_address = 2;
-
-  // Is the replica healthy? Note that every assigner individually decides the
-  // health status of every replica. When an assigner writes a GroupInfo, it
-  // also records the set of replicas it thought were healthy.
-  runtime.HealthStatus health_status = 3;
-}
-
-// VersionedRoutingInfo stores a versioned RoutingInfo for a Kubernetes
-// ReplicaSet. The version should be a version of a written ReplicaSetInfo,
-// and the info should be derived from ReplicaSetInfo. Versions should only
-// ever increase over time.
-// TODO(mwhittaker): See if there is a need to have this separate struct.
-message VersionedRoutingInfo {
-  uint64 version = 1;
-
-  // Addresses of the healthy weavelets in the ReplicaSet.
-  repeated string weavelet_addrs = 2;
-
-  // Routing assignments (without load), keyed by component name.
-  map<string, runtime.Assignment> assignments = 3;
-}
-
-// SliceKey is an abstraction for keys used in slices.
-message SliceKey {
-  uint64 val = 1;
-}
-
-// Slice contains the allocation of a key range to a set of resources.
-//
-// The range covers [startInclusive, endExclusive).
-message Slice {
-  SliceKey start_inclusive = 1;
-  SliceKey end_exclusive = 2;
-  LoadTracker load_info = 3;
+  // Routing assignments for all components that use routing/sharding, keyed
+  // by component name.
+  map<string, Assignment> routing_assignments = 2;
 }
 
 // Assignment is a wrapper class that creates and decodes assignment protos.
@@ -134,6 +36,20 @@ message Assignment {
   map<string, bool> candidate_resources = 3;
   AlgoConstraints constraints = 4;
   Statistics stats = 5;
+}
+
+// SliceKey is an abstraction for routing keys used in slices.
+message SliceKey {
+  uint64 val = 1;
+}
+
+// Slice contains the allocation of a routing key range to a set of resources.
+//
+// The range covers [startInclusive, endExclusive).
+message Slice {
+  SliceKey start_inclusive = 1;
+  SliceKey end_exclusive = 2;
+  LoadTracker load_info = 3;
 }
 
 // loadTracker tracks load information for a given slice across all the assigned

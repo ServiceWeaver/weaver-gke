@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	sync "sync"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
@@ -39,6 +40,8 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
 	"github.com/google/uuid"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 func getNannyContainerMetadata() (*ContainerMetadata, error) {
@@ -320,19 +323,22 @@ func RunManager(ctx context.Context, port int) error {
 		s,
 		logger,
 		fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region),
-		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
+		2*time.Second, /*updateRoutingInterval*/
+		// getHealthyPods
+		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) ([]*nanny.Pod, error) {
 			replicaSetIdentity, ok := cfg.ComponentIdentity[replicaSet]
 			if !ok { // should never happen
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
 			}
-			return &babysitter.HttpClient{
-				Addr:      addr,
-				TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity),
-			}, nil
+			newBabysitter := func(addr string) endpoints.Babysitter {
+				return &babysitter.HttpClient{
+					Addr:      addr,
+					TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity),
+				}
+			}
+			return getHealthyPods(ctx, cfg, logger, cluster, replicaSet, newBabysitter)
 		},
-		func(ctx context.Context, podName string) (bool, error) {
-			return podExists(ctx, cluster, podName)
-		},
+		// getListenerPort
 		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis string) (int, error) {
 			port, err := getListenerPort(ctx, s, logger, cluster, cfg, replicaSet, lis)
 			if err != nil {
@@ -340,6 +346,7 @@ func RunManager(ctx context.Context, port int) error {
 			}
 			return port, nil
 		},
+		// exportListener
 		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string, lis *nanny.Listener) (*protos.ExportListenerReply, error) {
 			if err := ensureListenerService(ctx, cluster, logger, cfg, replicaSet, lis); err != nil {
 				return nil, err
@@ -349,9 +356,11 @@ func RunManager(ctx context.Context, port int) error {
 			const proxyAddr = ""
 			return &protos.ExportListenerReply{ProxyAddress: proxyAddr}, nil
 		},
+		// startReplicaSet
 		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) error {
 			return deploy(ctx, cluster, logger, cfg, replicaSet)
 		},
+		// stopAppVersions
 		func(_ context.Context, app string, versions []*config.GKEConfig) error {
 			for _, version := range versions {
 				id := version.Deployment.Id
@@ -361,6 +370,7 @@ func RunManager(ctx context.Context, port int) error {
 			}
 			return nil
 		},
+		// deleteAppVersions
 		func(_ context.Context, app string, versions []*config.GKEConfig) error {
 			for _, version := range versions {
 				id := version.Deployment.Id
@@ -386,7 +396,7 @@ func RunManager(ctx context.Context, port int) error {
 func getListenerPort(ctx context.Context, s store.Store, logger *slog.Logger, cluster *ClusterInfo, cfg *config.GKEConfig, replicaSet string, listener string) (int, error) {
 	dep := cfg.Deployment
 	key := store.AppKey(dep.App.Name, "ports")
-	histKey := store.DeploymentKey(cfg, store.HistoryKey)
+	histKey := store.AppVersionKey(cfg, store.HistoryKey)
 	err := store.AddToSet(ctx, s, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.
@@ -397,6 +407,58 @@ func getListenerPort(ctx context.Context, s store.Store, logger *slog.Logger, cl
 		return -1, fmt.Errorf("error picking port for listener %q: %w", listener, err)
 	}
 	return targetPort, nil
+}
+
+func getHealthyPods(ctx context.Context, cfg *config.GKEConfig, logger *slog.Logger, cluster *ClusterInfo, replicaSet string, newBabysitter func(string) endpoints.Babysitter) ([]*nanny.Pod, error) {
+	// Get the current set of pods in the replica set.
+	selector := labels.SelectorFromSet(labels.Set{
+		appKey:        name{cfg.Deployment.App.Name}.DNSLabel(),
+		versionKey:    name{cfg.Deployment.Id}.DNSLabel(),
+		replicaSetKey: name{replicaSet}.DNSLabel(),
+	})
+	opts := metav1.ListOptions{LabelSelector: selector.String()}
+	pods, err := cluster.Clientset.CoreV1().Pods(namespaceName).List(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check the health of all the pods and get their load information.
+	const maxParallelism = 32
+	ch := make(chan struct{}, maxParallelism)
+	var wait sync.WaitGroup
+	var mu sync.Mutex
+	var healthyPods []*nanny.Pod
+	for _, pod := range pods.Items {
+		pod := pod
+		ip := pod.Status.PodIP
+		if ip == "" { // no IP address assigned yet
+			continue
+		}
+		ch <- struct{}{}
+		wait.Add(1)
+		go func() {
+			defer func() {
+				<-ch
+				wait.Done()
+			}()
+			babysitterAddr := fmt.Sprintf("https://%s:%d", ip, babysitterPort)
+			babysitter := newBabysitter(babysitterAddr)
+			reply, err := babysitter.GetLoad(ctx, &endpoints.GetLoadRequest{})
+			if err != nil {
+				logger.Debug("cannot get weavelet load: treating as unhealthy", "replica_set", replicaSet, "pod", pod.Name, "addr", babysitterAddr, "error", err)
+				return
+			}
+			mu.Lock()
+			healthyPods = append(healthyPods, &nanny.Pod{
+				BabysitterAddr: babysitterAddr,
+				WeaveletAddr:   reply.WeaveletAddr,
+				Load:           reply.Load,
+			})
+			mu.Unlock()
+		}()
+	}
+	wait.Wait()
+	return healthyPods, nil
 }
 
 // pickPort assigns to a listener a unique port, or returns the assigned port if

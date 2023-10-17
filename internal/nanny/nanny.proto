@@ -86,22 +86,12 @@ message ApplicationDeleteRequest {
   repeated config.GKEConfig versions = 2;
 }
 
-// ActivateComponentRequest is a request to ensure that the provided
-// component is running somewhere.
+// ActivateComponentRequest is a request to activate a given component.
 message ActivateComponentRequest {
   string component = 1;        // Component that needs to be activated.
   bool routed = 2;             // Is the component routed?
-  config.GKEConfig config = 3;
-}
-
-// RegisterReplicaRequest is a request to the manager to register the weavelet
-// running in the given babysitter.
-message RegisterReplicaRequest {
-  string replica_set = 1;        // ReplicaSet name (e.g., "main")
-  string pod_name = 2;           // Pod name (e.g., main-012345-6789)
-  string babysitter_address = 3; // babysitter address, e.g., host:1234
-  string weavelet_address = 4;   // weavelet address, e.g., host:1234
-  config.GKEConfig config = 5;
+  string replica_set = 3;      // ReplicaSet of the above component.
+  config.GKEConfig config = 4;
 }
 
 // GetComponentsRequest is a request to the manager to get the latest set of
@@ -121,9 +111,10 @@ message GetComponentsReply {
 // GetRoutingInfo is a request to the manager to retrieve routing information
 // for a given component.
 message GetRoutingRequest {
-  string component = 1;         // Component that needs to be activated.
-  string version = 2;           // Version of the latest fetched component set.
-  config.GKEConfig config = 3;
+  string component = 1;         // Component whose routing information is needed.
+  string version = 2;           // Version of the latest fetched routing info.
+  string replica_set = 3;       // Replica set of the above component.
+  config.GKEConfig config = 4;
 }
 
 // RoutingInfo is a manager's reply to GetRoutingRequest.
@@ -195,50 +186,48 @@ message VersionStateAtDistributor {
   bool is_deployed = 4;
 
   // All known Kubernetes ReplicaSets for this application version.
-  ReplicaSetState replica_sets = 5;
+  repeated ReplicaSet replica_sets = 5;
 }
 
-// GetReplicaSetStateRequest is a request to fetch the state of Kubernetes
+// GetReplicaSetsRequest is a request to fetch the state of Kubernetes
 // ReplicaSets for the given application version or a collection of
 // applications and their versions.
-message GetReplicaSetStateRequest {
+message GetReplicaSetsRequest {
   // Application name and version.
   //
   // If the application name is non-empty, the request is for retrieving
-  // ReplicaSet state only for the given application; otherwise, the request is
-  // for retrieving ReplicaSet state for all active applications.
+  // replica sets only for the given application; otherwise, the request is
+  // for retrieving replica sets for all active applications.
   // If the application version is non-empty, the request is for retrieving
-  // ReplicaSet state only for a particular version of an application;
-  // otherwise, the request is for retrieving ReplicaSet state for all versions
+  // replica sets only for a particular version of an application;
+  // otherwise, the request is for retrieving replica sets for all versions
   // of an application (or a collection of applications).
   // It is illegal to specify the version and not the application name.
   string app_name = 1;
   string version_id = 2;
 }
 
-// ReplicaSetState stores information about Kubernetes ReplicaSets.
-message ReplicaSetState {
-  // ReplicaSet stores information about an application version ReplicaSet.
-  message ReplicaSet {
-    string name = 1;
-    config.GKEConfig config = 5;
+// GetReplicaSetsReply is a reply to a GetReplicaSetsRequest.
+message GetReplicaSetsReply {
+  repeated ReplicaSet replica_sets = 1;
+}
 
-    // Pod stores information about a Pod inside the ReplicaSet.
-    message Pod {
-      string weavelet_addr = 1;               // Weavelet address.
-      string babysitter_addr = 2;             // Babysitter address.
-      runtime.HealthStatus health_status = 3; // Health status.
-    }
-    repeated Pod pods = 2;
-    repeated string components = 3; // Active components hosted by ReplicaSet.
-    repeated string listeners = 4; // Listeners hosted by ReplicaSet.
-  }
-  repeated ReplicaSet replica_sets = 3;
+// ReplicaSet stores information about a Kubernetes ReplicaSet, i.e.,
+// a set of pods that host the same set of components.
+message ReplicaSet {
+  string name = 1;               // Replica set name.
+  config.GKEConfig config = 2;   // Replica set config.
 
-  // Errors encountered collecting the ReplicaSet state.
-  // Note that the ReplicaSet data may be partially populated even if there were
-  // collection errors.
-  repeated string errors = 4;
+  repeated Pod pods = 3;          // Set of healthy pods.
+  repeated string components = 4; // Set of activated components.
+  repeated string listeners = 5;  // Set of instantiated network listeners.
+}
+
+// Pod stores information about a Pod inside a ReplicaSet.
+message Pod {
+  string weavelet_addr = 1;               // Weavelet address.
+  string babysitter_addr = 2;             // Babysitter address.
+  runtime.LoadReport load = 3;            // Per-component load on the pod.
 }
 
 // TargetFn is a target function that controls the traffic rollout for a given

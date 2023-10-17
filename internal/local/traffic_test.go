@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package local
+package local_test
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	config "github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/local"
 	"github.com/ServiceWeaver/weaver-gke/internal/local/proxy"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
@@ -122,7 +123,7 @@ func TestApplyTraffic(t *testing.T) {
 			},
 		},
 	}
-	if err := applyTraffic(ctx, proxyAddr, assignment, "region"); err != nil {
+	if err := local.ApplyTraffic(ctx, proxyAddr, assignment, "region"); err != nil {
 		t.Fatalf("UpdateTrafficShare: %v", err)
 	}
 
@@ -146,7 +147,7 @@ func TestApplyTraffic(t *testing.T) {
 
 	// Check that the traffic map at the proxy is as expected.
 	if diff := cmp.Diff(got, want, protocmp.Transform(),
-		protocmp.SortRepeatedFields(&ListenState{}, "listeners")); diff != "" {
+		protocmp.SortRepeatedFields(&local.ListenState{}, "listeners")); diff != "" {
 		t.Fatalf("bad routes: (-want +got)\n%s", diff)
 	}
 }

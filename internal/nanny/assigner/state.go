@@ -19,87 +19,16 @@ import (
 	"errors"
 	"path"
 
+	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"google.golang.org/protobuf/proto"
 )
 
-// assignerStateKey is the store key that stores an assigner's state.
-const assignerStateKey = "assigner_state"
-
-// loadState loads the assigner's state from the store.
-func (a *Assigner) loadState(ctx context.Context) (*AssignerState, *store.Version, error) {
-	var state AssignerState
-	key := store.GlobalKey(assignerStateKey)
-	version, err := store.GetProto(ctx, a.store, key, &state, nil)
-	return &state, version, err
-}
-
-// applyState applies a read-modify-write operation to the assigner's state.
-// The current state is read from the store and passed to the provided apply
-// function. This function modifies the state and returns true, or it leaves
-// the state unchanged and returns false. If apply returns true, the state is
-// then written back to the store. The read-modify-write operation is retried
-// if there are conflicting writes.
-func (a *Assigner) applyState(ctx context.Context, apply func(*AssignerState) bool) (*AssignerState, *store.Version, error) {
-	return applyProto(ctx, a.store, store.GlobalKey(assignerStateKey), apply)
-}
-
-// appStateKey returns the key into which we persist the provided app's state.
-func appStateKey(app string) string {
-	return path.Join("/", "assigner", "application", app)
-}
-
-// loadAppState loads an application's state from the store.
-func (a *Assigner) loadAppState(ctx context.Context, app string) (*AppState, *store.Version, error) {
-	var state AppState
-	version, err := store.GetProto(ctx, a.store, appStateKey(app), &state, nil)
-	return &state, version, err
-}
-
-// saveAppState saves an application's state in the store.
-func (a *Assigner) saveAppState(ctx context.Context, app string, state *AppState, version *store.Version) (*store.Version, error) {
-	return store.PutProto(ctx, a.store, appStateKey(app), state, version)
-}
-
-// applyAppState applies a read-modify-write operation to the provided app's
-// state. The current state is read from the store and passed to the provided
-// apply function. This function modifies the state and returns true, or it
-// leaves the state unchanged and returns false. If apply returns true, the
-// state is then written back to the store. The read-modify-write operation is
-// retried if there are conflicting writes.
-func (a *Assigner) applyAppState(ctx context.Context, app string, apply func(*AppState) bool) (*AppState, *store.Version, error) {
-	return applyProto(ctx, a.store, appStateKey(app), apply)
-}
-
-// replicaSetInfoKey returns the key into which we persist the ReplicaSetInfo.
-func replicaSetInfoKey(rid *ReplicaSetId) string {
-	return store.ReplicaSetKey(rid.Config, rid.Name, "replica_set_info")
-}
-
-// loadReplicaSetInfo loads a Kubernetes ReplicaSet's info from the store.
-func (a *Assigner) loadReplicaSetInfo(ctx context.Context, rid *ReplicaSetId) (*ReplicaSetInfo, *store.Version, error) {
-	rs := &ReplicaSetInfo{}
-	version, err := store.GetProto(ctx, a.store, replicaSetInfoKey(rid), rs, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if rs.Components == nil {
-		rs.Components = map[string]*Assignment{}
-	}
-	if rs.Pods == nil {
-		rs.Pods = map[string]*Pod{}
-	}
-	return rs, version, err
-}
-
-// applyReplicaSetInfo applies a read-modify-write operation to the provided
-// Kubernetes ReplicaSet's state. The current state is read from the store and
-// passed to the provided apply function. This function modifies the state and
-// returns true, or it leaves the state unchanged and returns false. If apply
-// returns true, the state is then written back to the store.
-// The read-modify-write operation is retried if there are conflicting writes.
-func (a *Assigner) applyReplicaSetInfo(ctx context.Context, rid *ReplicaSetId, apply func(*ReplicaSetInfo) bool) (*ReplicaSetInfo, *store.Version, error) {
-	return applyProto(ctx, a.store, replicaSetInfoKey(rid), apply)
+// replicaSetStateKey returns the key into which we persist the ReplicaSetState.
+func replicaSetStateKey(cfg *config.GKEConfig, replicaSet string) string {
+	app := cfg.Deployment.App.Name
+	version := cfg.Deployment.Id
+	return path.Join("/assigner", "app", app, "version", version, "replica_set", replicaSet, "state")
 }
 
 // protoPointer[T] is an interface which asserts that *T is a proto.Message.
@@ -114,10 +43,10 @@ type protoPointer[T any] interface {
 // applyProto is a thin wrapper around store.UpdateProto. The apply function is
 // passed in the current state of the proto. It should make any necessary
 // changes and then return whether the proto was changed.
-func applyProto[T any, P protoPointer[T]](ctx context.Context, s store.Store, key string, apply func(P) bool) (P, *store.Version, error) {
+func applyProto[T any, P protoPointer[T]](ctx context.Context, s store.Store, key string, apply func(P, *store.Version) bool) (P, *store.Version, error) {
 	var state T
-	version, err := store.UpdateProto(ctx, s, key, P(&state), func(*store.Version) error {
-		if apply(&state) {
+	version, err := store.UpdateProto(ctx, s, key, P(&state), func(v *store.Version) error {
+		if apply(&state, v) {
 			return nil
 		}
 		return store.ErrUnchanged

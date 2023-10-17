@@ -44,7 +44,7 @@ message AppVersionState {
   int64 order = 3;
 
   // All known Kubernetes ReplicaSets for this application version.
-  nanny.ReplicaSetState replica_sets = 4;
+  repeated nanny.ReplicaSet replica_sets = 4;
 
   // All known listeners for this application version.
   repeated nanny.Listener listeners = 7;

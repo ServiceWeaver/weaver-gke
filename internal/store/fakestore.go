@@ -17,6 +17,7 @@ package store
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -135,12 +136,15 @@ func (f *FakeStore) Delete(_ context.Context, key string) error {
 	return nil
 }
 
-func (f *FakeStore) List(_ context.Context) ([]string, error) {
+func (f *FakeStore) List(_ context.Context, opts ListOptions) ([]string, error) {
 	f.m.Lock()
 	defer f.m.Unlock()
 
 	keys := []string{}
 	for key := range f.data {
+		if opts.Prefix != "" && !strings.HasPrefix(string(key), opts.Prefix) {
+			continue
+		}
 		keys = append(keys, key)
 	}
 	return keys, nil

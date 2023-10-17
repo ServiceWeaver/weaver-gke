@@ -43,8 +43,8 @@ func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, l
 		return nil
 	}
 
-	key := store.DeploymentKey(cfg, "listeners")
-	histKey := store.DeploymentKey(cfg, store.HistoryKey)
+	key := store.AppVersionKey(cfg, "listeners")
+	histKey := store.AppVersionKey(cfg, store.HistoryKey)
 	err := store.AddToSet(ctx, s, histKey, key)
 	if err != nil && !errors.Is(err, store.ErrUnchanged) {
 		// Track the key in the store under histKey.
@@ -57,14 +57,14 @@ func RecordListener(ctx context.Context, s store.Store, cfg *config.GKEConfig, l
 	return err
 }
 
-// getListeners returns network listeners in the given store associated with
+// GetListeners returns network listeners in the given store associated with
 // a given application version.
 //
 // If a replica that exports a listener dies, we don't update the traffic rules
 // to reflect the new set of listeners in case of a gke-local deployer. Note
 // that this is intentional, as we don't worry about processes deaths.
-func getListeners(ctx context.Context, s store.Store, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
-	key := store.DeploymentKey(cfg, "listeners")
+func GetListeners(ctx context.Context, s store.Store, cfg *config.GKEConfig) ([]*nanny.Listener, error) {
+	key := store.AppVersionKey(cfg, "listeners")
 	var state ListenState
 	if _, err := store.GetProto(ctx, s, key, &state, nil); err != nil {
 		return nil, err

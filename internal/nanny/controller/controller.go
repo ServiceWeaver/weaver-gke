@@ -124,7 +124,7 @@ func (c *controller) handleRollout(ctx context.Context, req *RolloutRequest) err
 		c.logger.Error("Cannot register for rollout", "err", err, "version", id, "application", name)
 		return err
 	}
-	c.logger.Info("Successfully registering for rollout", "version", id, "application", name)
+	c.logger.Info("Successfully registered for rollout", "version", id, "application", name)
 	return nil
 }
 
@@ -460,14 +460,8 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 		if d.ReplicaSets == nil {
 			continue
 		}
-		for _, group := range d.ReplicaSets.ReplicaSets {
-			var numHealthyReplicas int
-			for _, pod := range group.Pods {
-				if pod.HealthStatus == protos.HealthStatus_HEALTHY {
-					numHealthyReplicas++
-				}
-			}
-			for _, l := range group.Listeners {
+		for _, rs := range d.ReplicaSets {
+			for _, l := range rs.Listeners {
 				var hostname string
 				var public bool
 				if opts := cfg.Listeners[l]; opts != nil && opts.PublicHostname != "" {
@@ -493,11 +487,11 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 
 			}
 			groups = append(groups, &ReplicaSetStatus{
-				Name:            group.Name,
+				Name:            rs.Name,
 				Location:        loc,
-				HealthyReplicas: int64(numHealthyReplicas),
-				TotalReplicas:   int64(len(group.Pods)),
-				Components:      group.Components,
+				HealthyReplicas: int64(len(rs.Pods)),
+				TotalReplicas:   int64(len(rs.Pods)),
+				Components:      rs.Components,
 			})
 		}
 	}

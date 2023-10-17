@@ -64,6 +64,9 @@ func findSlice(a *Assignment, key *SliceKey) (s *Slice, ok bool) {
 
 // FromProto returns an assignment from an assignment proto.
 func FromProto(assignmentP *protos.Assignment) (*Assignment, error) {
+	if assignmentP == nil {
+		return nil, nil
+	}
 	if err := validateAssignment(assignmentP); err != nil {
 		return nil, err
 	}
@@ -97,6 +100,9 @@ func FromProto(assignmentP *protos.Assignment) (*Assignment, error) {
 
 // toProto returns an assignment proto from an assignment.
 func toProto(a *Assignment) *protos.Assignment {
+	if a == nil {
+		return nil
+	}
 	var slices []*protos.Assignment_Slice
 	for _, slice := range a.Slices {
 		slices = append(slices, &protos.Assignment_Slice{
