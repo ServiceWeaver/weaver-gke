@@ -29,7 +29,7 @@ import (
 
 var dockerfileTmpl = template.Must(template.New("Dockerfile").Parse(`
 {{if .GoInstall}}
-FROM golang:1.20-bullseye as builder
+FROM golang:1.21-bullseye as builder
 RUN echo ""{{range .GoInstall}} && go install {{.}}{{end}}
 {{end}}
 FROM ubuntu:rolling
