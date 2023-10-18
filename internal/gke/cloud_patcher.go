@@ -22,7 +22,9 @@ import (
 	"path"
 
 	artifactregistry "cloud.google.com/go/artifactregistry/apiv1beta2"
+	artifactregistrypb "cloud.google.com/go/artifactregistry/apiv1beta2/artifactregistrypb"
 	compute "cloud.google.com/go/compute/apiv1"
+	computepb "cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
 	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
@@ -31,8 +33,6 @@ import (
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iam/v1"
-	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
-	artifactregistrypb "google.golang.org/genproto/googleapis/devtools/artifactregistry/v1beta2"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -48,14 +48,19 @@ func (e noRetryErr) Error() string { return e.err.Error() }
 // returned either by a HTTP or a gRPC cloud client.
 func isNotFound(err error) bool {
 	if gErr, ok := err.(*apierror.APIError); ok {
-		if gErr.GRPCStatus().Code() != codes.OK {
-			// Error is a GRPC error.
-			return gErr.GRPCStatus().Code() == codes.NotFound
+		// Check if gRPC status gives us the code.
+		if gErr.GRPCStatus().Code() == codes.NotFound {
+			return true
 		}
-		// Error is an HTTP error. Unfortunately, apierror.APIError interface
-		// doesn't allow us to check the error code. Our best bet is to
-		// unwrap the underlying error, which should be of type
-		// *googleapi.Error.
+
+		// Check if HTTP status gives us the code.
+		if gErr.HTTPCode() == 404 {
+			return true
+		}
+
+		// apierror.APIError interface doesn't allow us to check the error code.
+		// Our best bet is to unwrap the underlying error, which should be of
+		// type *googleapi.Error, and check the code below.
 		err = gErr.Unwrap()
 	}
 	if gErr, ok := err.(*googleapi.Error); ok && gErr.Code == 404 {
