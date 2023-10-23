@@ -15,18 +15,22 @@
 package gke
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path"
 
 	artifactregistry "cloud.google.com/go/artifactregistry/apiv1beta2"
-	artifactregistrypb "cloud.google.com/go/artifactregistry/apiv1beta2/artifactregistrypb"
+	"cloud.google.com/go/artifactregistry/apiv1beta2/artifactregistrypb"
 	compute "cloud.google.com/go/compute/apiv1"
-	computepb "cloud.google.com/go/compute/apiv1/computepb"
+	"cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	privateca "cloud.google.com/go/security/privateca/apiv1"
+	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
 	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"github.com/googleapis/gax-go/v2/apierror"
@@ -159,7 +163,7 @@ func patchSubnet(ctx context.Context, config CloudConfig, opts patchOptions, reg
 		desc: fmt.Sprintf("subnetwork %s in region %s", *sub.Name, region),
 		opts: opts,
 		get: func() (interface{}, error) {
-			old, err := client.Get(ctx, &computepb.GetSubnetworkRequest{
+			_, err := client.Get(ctx, &computepb.GetSubnetworkRequest{
 				Region:     region,
 				Subnetwork: *sub.Name,
 				Project:    config.Project,
@@ -167,16 +171,12 @@ func patchSubnet(ctx context.Context, config CloudConfig, opts patchOptions, reg
 			if err != nil {
 				return nil, err
 			}
-			// See if the old value differs from the new in the fields that
-			// matter.
-			modif, err := dproto.Copy(old, sub, nil /*skip*/)
-			if err != nil {
-				return nil, err
-			}
-			if modif == nil { // no change from the existing value
-				return nil, nil
-			}
-			return old, nil
+			// Update API doesn't exist and Patch API is too limited.  We also
+			// cannot delete the subnet resource, since it may be in use (by a
+			// load-balancer). For this reason, we pretend that there has been
+			// no change to the existing value and don't bother applying the
+			// update.
+			return nil, nil
 		},
 		create: func() error {
 			_, err := client.Insert(ctx, &computepb.InsertSubnetworkRequest{
@@ -185,16 +185,6 @@ func patchSubnet(ctx context.Context, config CloudConfig, opts patchOptions, reg
 				Project:            config.Project,
 			})
 			return err
-		},
-		update: func(updateVal interface{}) error {
-			// Update API doesn't exist and Patch API is too limited.  We also
-			// cannot delete the subnet resource, since it may be in use (by a
-			// load-balancer).  We therefore have no other recourse but to return
-			// an error.
-			// NOTE: we don't anticipate needing to change an existing subnet
-			// resource; in the event that we do in the future, we'll have to use
-			// one of the custom client APIs (e.g., ExpandIpCidrRange()).
-			return noRetryErr{fmt.Errorf("subnetwork %q cannot be updated", *sub.Name)}
 		},
 	}.Run(ctx)
 }
@@ -209,7 +199,7 @@ func patchSSLCertificate(ctx context.Context, config CloudConfig, opts patchOpti
 		desc: fmt.Sprintf("ssl certificate %s", *cert.Name),
 		opts: opts,
 		get: func() (interface{}, error) {
-			old, err := client.Get(ctx, &computepb.GetSslCertificateRequest{
+			_, err := client.Get(ctx, &computepb.GetSslCertificateRequest{
 				SslCertificate: *cert.Name,
 				Project:        config.Project,
 			})
@@ -217,16 +207,13 @@ func patchSSLCertificate(ctx context.Context, config CloudConfig, opts patchOpti
 				return nil, err
 			}
 
-			// See if the old value differs from the new in the fields that
-			// matter.
-			modif, err := dproto.Merge(old, cert, nil)
-			if err != nil {
-				return nil, err
-			}
-			if !modif { // no change from the existing value
-				return nil, nil
-			}
-			return old, nil
+			// Neither Update or a Patch API exists, so we cannot update
+			// the value. Moreover, the delete-then-recreate mechanism doesn't
+			// work for SSL certificates, as they cannot be deleted while in
+			// use by the load-balancers. For this reason, we pretend that there
+			// has been no change to the existing value and don't bother
+			// applying the update.
+			return nil, nil
 		},
 		create: func() error {
 			op, err := client.Insert(ctx, &computepb.InsertSslCertificateRequest{
@@ -238,11 +225,6 @@ func patchSSLCertificate(ctx context.Context, config CloudConfig, opts patchOpti
 			}
 			return op.Wait(ctx)
 		},
-		update: func(updateVal interface{}) error {
-			// Neither Update or a Patch API exists.  We also cannot delete the
-			// certificate, since it may be in use (by a load-balancer).
-			return noRetryErr{fmt.Errorf("ssl certificate resource %q cannot be updated", *cert.Name)}
-		},
 	}.Run(ctx)
 }
 
@@ -253,6 +235,18 @@ func patchRepository(ctx context.Context, config CloudConfig, opts patchOptions,
 		return err
 	}
 	defer client.Close()
+	create := func() error {
+		op, err := client.CreateRepository(ctx, &artifactregistrypb.CreateRepositoryRequest{
+			Parent:       path.Dir(path.Dir(rep.Name)),
+			RepositoryId: path.Base(rep.Name),
+			Repository:   rep,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = op.Wait(ctx)
+		return err
+	}
 	return cloudPatcher{
 		desc: fmt.Sprintf("artifacts repository %s", rep.Name),
 		opts: opts,
@@ -266,36 +260,60 @@ func patchRepository(ctx context.Context, config CloudConfig, opts patchOptions,
 
 			// See if the old value differs from the new in the fields that
 			// matter.
-			modif, err := dproto.Copy(old, rep, nil /*skip*/)
+			modif, err := dproto.Merge(old, rep, nil)
 			if err != nil {
 				return nil, err
 			}
-			if modif == nil { // no change from the existing value
+			if !modif { // no change from the existing value
 				return nil, nil
 			}
 			return old, nil
 		},
-		create: func() error {
-			op, err := client.CreateRepository(ctx, &artifactregistrypb.CreateRepositoryRequest{
-				Parent:       path.Dir(path.Dir(rep.Name)),
-				RepositoryId: path.Base(rep.Name),
-				Repository:   rep,
+		create: create,
+		update: func(_ interface{}) error {
+			// The update API doesn't work for fields that matter, like
+			// "format". For this reason, we delete and then re-create the
+			// repository.
+			op, err := client.DeleteRepository(ctx, &artifactregistrypb.DeleteRepositoryRequest{
+				Name: rep.Name,
 			})
 			if err != nil {
 				return err
 			}
-			_, err = op.Wait(ctx)
-			return err
-		},
-		update: func(updateVal interface{}) error {
-			val := updateVal.(*artifactregistrypb.Repository)
-			updateReq := &artifactregistrypb.UpdateRepositoryRequest{
-				Repository: val,
+			if err := op.Wait(ctx); err != nil {
+				return err
 			}
-			_, err = client.UpdateRepository(ctx, updateReq)
-			return err
+			return create()
 		},
 	}.Run(ctx)
+}
+
+// waitClusterOp waits for the given cluster operation to complete.
+func waitClusterOp(ctx context.Context, config CloudConfig, client *container.ClusterManagerClient, location string, op *containerpb.Operation) error {
+	var doneError error
+	isDone := func(op *containerpb.Operation) bool {
+		switch op.Status {
+		case containerpb.Operation_DONE:
+			return true
+		case containerpb.Operation_ABORTING:
+			doneError = fmt.Errorf("operation %s failed: %v", op.OperationType, op.Error)
+			return true
+		default:
+			return false
+		}
+	}
+	if isDone(op) {
+		return doneError
+	}
+	for r := retry.Begin(); r.Continue(ctx); {
+		if op, err := client.GetOperation(ctx, &containerpb.GetOperationRequest{
+			Name: fmt.Sprintf("projects/%s/locations/%s/operations/%s",
+				config.Project, location, op.Name),
+		}); err == nil && isDone(op) {
+			return doneError
+		}
+	}
+	return fmt.Errorf("timeout waiting for operation %s: %w", op.OperationType, ctx.Err())
 }
 
 // patchCluster updates the cluster with the new configuration and waits
@@ -306,34 +324,6 @@ func patchCluster(ctx context.Context, config CloudConfig, opts patchOptions, lo
 		return err
 	}
 	defer client.Close()
-	wait := func(op *containerpb.Operation) error {
-		var doneError error
-		isDone := func(op *containerpb.Operation) bool {
-			switch op.Status {
-			case containerpb.Operation_DONE:
-				return true
-			case containerpb.Operation_ABORTING:
-				doneError = fmt.Errorf(
-					"error creating cluster %s: %s", c.Name, op.StatusMessage)
-				return true
-			default:
-				return false
-			}
-		}
-		if isDone(op) {
-			return doneError
-		}
-		opName := op.Name
-		for r := retry.Begin(); r.Continue(ctx); {
-			if op, err := client.GetOperation(ctx, &containerpb.GetOperationRequest{
-				Name: fmt.Sprintf("projects/%s/locations/%s/operations/%s",
-					config.Project, location, opName),
-			}); err == nil && isDone(op) {
-				return doneError
-			}
-		}
-		return fmt.Errorf("timeout waiting for operation %s on cluster %q", op.OperationType, c.Name)
-	}
 	return cloudPatcher{
 		desc: fmt.Sprintf("cluster %s in location %s", c.Name, location),
 		opts: opts,
@@ -417,7 +407,7 @@ func patchCluster(ctx context.Context, config CloudConfig, opts patchOptions, lo
 			if err != nil {
 				return err
 			}
-			return wait(op)
+			return waitClusterOp(ctx, config, client, location, op)
 		},
 		update: func(updateVal interface{}) error {
 			u := updateVal.(*containerpb.ClusterUpdate)
@@ -430,7 +420,7 @@ func patchCluster(ctx context.Context, config CloudConfig, opts patchOptions, lo
 				return err
 			}
 			// Wait until the cluster is updated.
-			return wait(op)
+			return waitClusterOp(ctx, config, client, location, op)
 		},
 	}.Run(ctx)
 }
@@ -442,108 +432,87 @@ func patchDNSZone(ctx context.Context, config CloudConfig, opts patchOptions, zo
 		return err
 	}
 	service := dns.NewManagedZonesService(dnsService)
-	get := func() (interface{}, error) {
-		call := service.Get(config.Project, zone.Name)
-		call.Context(ctx)
-		old, err := call.Do()
-		if err != nil {
-			return nil, err
-		}
-		// See if the old value differs from the new in the fields that
-		// matter.
-		if old.DnsName == zone.DnsName { // No meaningful change
-			return nil, nil
-		}
-		return zone, nil
-	}
-	create := func() error {
-		call := service.Create(config.Project, zone)
-		call.Context(ctx)
-		// TODO(spetrovic): The return value of call.Do() is a *dns.ManagedZone
-		// that will contain the Google nameservers that host the managed
-		// zone. Propagate this information to the caller.
-		_, err := call.Do()
-		return err
-	}
-	update := func(_ interface{}) error {
-		// Delete old zone entry and re-create it.
-		call := service.Delete(config.Project, zone.Name)
-		call.Context(ctx)
-		if err := call.Do(); err != nil {
-			return fmt.Errorf("cannot delete existing managed zone %q: %w", zone.Name, err)
-		}
-		return create()
-	}
 	return cloudPatcher{
-		desc:   fmt.Sprintf("DNS managed zone %s", zone.Name),
-		opts:   opts,
-		get:    get,
-		create: create,
-		update: update,
+		desc: fmt.Sprintf("DNS managed zone %s", zone.Name),
+		opts: opts,
+		get: func() (interface{}, error) {
+			call := service.Get(config.Project, zone.Name)
+			call.Context(ctx)
+			_, err := call.Do()
+			if err != nil {
+				return nil, err
+			}
+
+			// The Update or Patch API doesn't exist for a DNS zone, so there is
+			// no point in updating. Moreover, the delete-then-recreate
+			// mechanism is painful for DNS zones, as it requires deletion
+			// (and successive re-creation) of DNS records. For this
+			// reason, we pretend that there has been no change to the existing
+			// value and don't bother applying the update.
+			return nil, nil
+		},
+		create: func() error {
+			call := service.Create(config.Project, zone)
+			call.Context(ctx)
+			// TODO(spetrovic): The return value of call.Do() is a *dns.ManagedZone
+			// that will contain the Google nameservers that host the managed
+			// zone. Propagate this information to the caller.
+			_, err := call.Do()
+			return err
+		},
 	}.Run(ctx)
 }
 
 // patchDNSRecordSet updates the record set in the given managed zone with
 // the new configuration.
-func patchDNSRecordSet(ctx context.Context, config CloudConfig, opts patchOptions, dnsZone string, recordSet *dns.ResourceRecordSet) error {
+func patchDNSRecordSet(ctx context.Context, config CloudConfig, opts patchOptions, dnsZone string, rs *dns.ResourceRecordSet) error {
 	dnsService, err := dns.NewService(ctx, config.ClientOptions()...)
 	if err != nil {
 		return err
 	}
 	service := dns.NewResourceRecordSetsService(dnsService)
-	get := func() (interface{}, error) {
-		call := service.Get(config.Project, dnsZone, recordSet.Name, recordSet.Type)
-		call.Context(ctx)
-		old, err := call.Do()
-		if err != nil {
-			return nil, err
-		}
-
-		// See if the old value differs from the new in the fields that
-		// matter.
-		same := func() bool {
-			if old.Type != recordSet.Type {
-				return false
-			}
-			if old.Ttl != recordSet.Ttl {
-				return false
-			}
-			if len(old.Rrdatas) != len(recordSet.Rrdatas) {
-				return false
-			}
-			for i, data := range old.Rrdatas {
-				if data != recordSet.Rrdatas[i] {
-					return false
-				}
-			}
-			return true
-		}
-		if same() { // No meaningful change
-			return nil, nil
-		}
-		return recordSet, nil
-	}
 	create := func() error {
-		call := service.Create(config.Project, dnsZone, recordSet)
+		call := service.Create(config.Project, dnsZone, rs)
 		call.Context(ctx)
 		_, err := call.Do()
 		return err
 	}
-	update := func(_ interface{}) error {
-		// Delete old record set and re-create it.
-		call := service.Delete(config.Project, dnsZone, recordSet.Name, recordSet.Type)
-		call.Context(ctx)
-		if _, err := call.Do(); err != nil {
-			return fmt.Errorf("cannot delete record set %q in managed zone %q: %w", recordSet.Name, dnsZone, err)
-		}
-		return create()
-	}
 	return cloudPatcher{
-		desc:   fmt.Sprintf("DNS record set %s", recordSet.Name),
-		opts:   opts,
-		get:    get,
+		desc: fmt.Sprintf("DNS record set %s", rs.Name),
+		opts: opts,
+		get: func() (interface{}, error) {
+			call := service.Get(config.Project, dnsZone, rs.Name, rs.Type)
+			call.Context(ctx)
+			old, err := call.Do()
+			if err != nil {
+				return nil, err
+			}
+
+			// See if the old value differs from the new.
+			oldJSON, err := json.Marshal(old)
+			if err != nil {
+				return nil, err
+			}
+			newJSON, err := json.Marshal(rs)
+			if err != nil {
+				return nil, err
+			}
+			if bytes.Equal(oldJSON, newJSON) {
+				return nil, nil
+			}
+			return old, nil
+		},
 		create: create,
-		update: update,
+		update: func(_ interface{}) error {
+			// The Update or Patch API doesn't exist for a DNS record, so we
+			// have to delete and then re-create it.
+			call := service.Delete(config.Project, dnsZone, rs.Name, rs.Type)
+			call.Context(ctx)
+			if _, err := call.Do(); err != nil {
+				return err
+			}
+			return create()
+		},
 	}.Run(ctx)
 }
 
@@ -571,7 +540,13 @@ func patchCloudServiceAccount(ctx context.Context, config CloudConfig, opts patc
 			// See if the old value differs from the new in the fields that
 			// matter.
 			same := func() bool {
-				return old.Description == account.Description && old.DisplayName == account.DisplayName
+				if old.Description != account.Description {
+					return false
+				}
+				if old.DisplayName != account.DisplayName {
+					return false
+				}
+				return true
 			}
 			if same() { // no change from the existing value
 				return nil, nil
@@ -620,9 +595,28 @@ func patchProjectCustomRole(ctx context.Context, config CloudConfig, opts patchO
 				return nil, err
 			}
 
+			if old.Deleted {
+				// Role has been deleted previously - undelete it.
+				call := service.Undelete(name, &iam.UndeleteRoleRequest{})
+				call.Context(ctx)
+				old, err = call.Do()
+				if err != nil {
+					return nil, err
+				}
+			}
+
 			// See if the old value differs from the new in the fields that
 			// matter.
 			same := func() bool {
+				if old.Description != role.Description {
+					return false
+				}
+				if old.Stage != role.Stage {
+					return false
+				}
+				if old.Title != role.Title {
+					return false
+				}
 				oldPermissions := map[string]struct{}{}
 				for _, perm := range old.IncludedPermissions {
 					oldPermissions[perm] = struct{}{}
@@ -654,7 +648,7 @@ func patchProjectCustomRole(ctx context.Context, config CloudConfig, opts patchO
 		update: func(_ interface{}) error {
 			call := service.Patch(name, role)
 			call.Context(ctx)
-			call.UpdateMask("included_permissions")
+			call.UpdateMask("description,stage,title,included_permissions")
 			_, err := call.Do()
 			return err
 		},
@@ -676,7 +670,6 @@ func patchStaticIPAddress(ctx context.Context, config CloudConfig, opts patchOpt
 		return "", err
 	}
 	var cur *computepb.Address
-
 	get := func() (interface{}, error) {
 		var old *computepb.Address
 		var err error
@@ -724,7 +717,6 @@ func patchStaticIPAddress(ctx context.Context, config CloudConfig, opts patchOpt
 		opts:   opts,
 		get:    get,
 		create: create,
-		update: nil,
 	}
 	if err := p.Run(ctx); err != nil {
 		return "", err
@@ -744,4 +736,106 @@ func patchStaticIPAddress(ctx context.Context, config CloudConfig, opts patchOpt
 		return *cur.Address, nil
 	}
 	return "", fmt.Errorf("timeout waiting for the IP address %q to be allocated", *addr.Name)
+}
+
+// patchCAPool updates the certificate authority pool with the new configuration.
+func patchCAPool(ctx context.Context, config CloudConfig, opts patchOptions, pool *privatecapb.CaPool) error {
+	client, err := privateca.NewCertificateAuthorityClient(ctx, config.ClientOptions()...)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	parent := path.Dir(path.Dir(pool.Name))
+	name := path.Base(pool.Name)
+	return cloudPatcher{
+		desc: fmt.Sprintf("certificate authority pool %s", name),
+		opts: opts,
+		get: func() (interface{}, error) {
+			_, err := client.GetCaPool(ctx, &privatecapb.GetCaPoolRequest{
+				Name: pool.Name,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			// The Update API for the CA pool doesn't actually apply any
+			// updates, at least to the fields that matter like "tier".
+			// Moreover, the delete-then-recreate mechanism doesn't work for
+			// CA pools, as they cannot be deleted for 30 days after their
+			// last certificate authorities have been deleted. For this reason,
+			// we pretend that there has been no change to the existing value
+			// and don't bother applying the update.
+			return nil, nil
+		},
+		create: func() error {
+			op, err := client.CreateCaPool(ctx, &privatecapb.CreateCaPoolRequest{
+				Parent:   parent,
+				CaPoolId: name,
+				CaPool:   pool,
+			})
+			if err != nil {
+				return err
+			}
+			_, err = op.Wait(ctx)
+			return err
+		},
+	}.Run(ctx)
+}
+
+// patchCA updates the certificate authority with the new configuration.
+func patchCA(ctx context.Context, config CloudConfig, opts patchOptions, ca *privatecapb.CertificateAuthority) error {
+	client, err := privateca.NewCertificateAuthorityClient(ctx, config.ClientOptions()...)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	parent := path.Dir(path.Dir(ca.Name))
+	name := path.Base(ca.Name)
+	return cloudPatcher{
+		desc: fmt.Sprintf("certificate authority %s", name),
+		opts: opts,
+		get: func() (interface{}, error) {
+			old, err := client.GetCertificateAuthority(ctx, &privatecapb.GetCertificateAuthorityRequest{
+				Name: ca.Name,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			if old.State == privatecapb.CertificateAuthority_DELETED {
+				// CA has been deleted previously: undelete it.
+				op, err := client.UndeleteCertificateAuthority(ctx, &privatecapb.UndeleteCertificateAuthorityRequest{
+					Name: ca.Name,
+				})
+				if err != nil {
+					return nil, err
+				}
+				_, err = op.Wait(ctx)
+				if err != nil {
+					return nil, err
+				}
+			}
+
+			// The Update API for the CA doesn't actually apply any updates,
+			// at least to "config", and "lifetime" fields. Moreover, the
+			// delete-then-recreate mechanism doesn't work for certificate
+			// authorities, as they linger around with their old configuration
+			// for 30 days. For this reason, we pretend that there has been no
+			// change to the existing value and don't bother applying the
+			// update.
+			return nil, nil
+		},
+		create: func() error {
+			op, err := client.CreateCertificateAuthority(ctx, &privatecapb.CreateCertificateAuthorityRequest{
+				Parent:                 parent,
+				CertificateAuthorityId: name,
+				CertificateAuthority:   ca,
+			})
+			if err != nil {
+				return err
+			}
+			_, err = op.Wait(ctx)
+			return err
+		},
+	}.Run(ctx)
 }

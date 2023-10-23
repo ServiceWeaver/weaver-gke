@@ -41,7 +41,7 @@ var dashboardSpec = tool.DashboardSpec{
 		if err != nil {
 			return "", nil, err
 		}
-		fmt.Fprintf(os.Stderr, "Using project %s", config.Project)
+		fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
 		return gke.Controller(ctx, config)
 	},
 	AppLinks: func(ctx context.Context, app string) (tool.Links, error) {
