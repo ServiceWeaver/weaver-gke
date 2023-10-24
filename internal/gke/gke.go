@@ -30,6 +30,7 @@ import (
 
 	"log/slog"
 
+	"cloud.google.com/go/compute/apiv1/computepb"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
@@ -38,7 +39,6 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/retry"
 	"golang.org/x/exp/maps"
 	"google.golang.org/api/iam/v1"
-	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
 	gproto "google.golang.org/protobuf/proto"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -167,6 +167,10 @@ const (
 
 	// Port on which babysitters listen on communication from the manager.
 	babysitterPort = 23232
+
+	// String constant embedded into a resource description, to denote that
+	// the resource is owned by the Service Weaver runtime.
+	descriptionData = "⟦SeRvIcEwEaVeR⟧"
 )
 
 var (
@@ -1246,7 +1250,7 @@ func ensureSSLCertificate(ctx context.Context, cluster *ClusterInfo, logger *slo
 	if err := patchSSLCertificate(ctx, cluster.CloudConfig, patchOptions{logger: logger}, &computepb.SslCertificate{
 		Name: &certName,
 		Description: ptrOf(fmt.Sprintf(
-			"Managed certificate for the Service Weaver exported hostname %q", host)),
+			"Managed certificate for the %s exported hostname %q", descriptionData, host)),
 		Type: ptrOf(computepb.SslCertificate_MANAGED.String()),
 		Managed: &computepb.SslCertificateManagedSslCertificate{
 			Domains: []string{host},

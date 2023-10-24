@@ -29,10 +29,13 @@ import (
 	"text/template"
 	"time"
 
+	artifactregistrypb "cloud.google.com/go/artifactregistry/apiv1beta2/artifactregistrypb"
+	computepb "cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
 	"cloud.google.com/go/iam/apiv1/iampb"
 	privateca "cloud.google.com/go/security/privateca/apiv1"
+	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
 	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
@@ -44,12 +47,10 @@ import (
 	"google.golang.org/api/cloudresourcemanager/v1"
 	"google.golang.org/api/dns/v1"
 	"google.golang.org/api/iam/v1"
-	computepb "google.golang.org/genproto/googleapis/cloud/compute/v1"
-	artifactregistrypb "google.golang.org/genproto/googleapis/devtools/artifactregistry/v1beta2"
+	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscaling "k8s.io/api/autoscaling/v1"
-	apiv1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -691,7 +692,10 @@ func ensureProjectIAMBinding(config CloudConfig, role, member string, bindings i
 // project.
 func ensureCA(ctx context.Context, config CloudConfig) error {
 	// Ensure the CA pool has been created.
-	if err := ensureCAPool(config, caPoolName, caLocation, "devops"); err != nil {
+	if err := patchCAPool(ctx, config, patchOptions{}, &privatecapb.CaPool{
+		Name: fmt.Sprintf("projects/%s/locations/%s/caPools/%s", config.Project, caLocation, caPoolName),
+		Tier: privatecapb.CaPool_DEVOPS,
+	}); err != nil {
 		return err
 	}
 
@@ -705,34 +709,73 @@ func ensureCA(ctx context.Context, config CloudConfig) error {
 	}
 
 	// Ensure the CA has been created.
-	if _, err := runGcloud(config, "", cmdOptions{}, "privateca", "roots",
-		"describe", caName, "--pool", caPoolName,
-		"--location", caLocation); err == nil {
-		// Already exists.
+	name := fmt.Sprintf("projects/%s/locations/%s/caPools/%s/certificateAuthorities/%s", config.Project, caLocation, caPoolName, caName)
+	if err := patchCA(ctx, config, patchOptions{}, &privatecapb.CertificateAuthority{
+		Name: name,
+		Type: privatecapb.CertificateAuthority_SELF_SIGNED,
+		Config: &privatecapb.CertificateConfig{
+			SubjectConfig: &privatecapb.CertificateConfig_SubjectConfig{
+				Subject: &privatecapb.Subject{
+					CommonName:         caName,
+					CountryCode:        "US",
+					Organization:       caOrganization,
+					OrganizationalUnit: "Google Cloud",
+					Province:           "CA",
+					Locality:           "Sunnyvale",
+				},
+				SubjectAltName: &privatecapb.SubjectAltNames{},
+			},
+			X509Config: &privatecapb.X509Parameters{
+				// These options ensure that the generated certificates can
+				// be used for mTLS.
+				CaOptions: &privatecapb.X509Parameters_CaOptions{
+					IsCa:                ptrOf(true),
+					MaxIssuerPathLength: ptrOf(int32(0)),
+				},
+				KeyUsage: &privatecapb.KeyUsage{
+					BaseKeyUsage: &privatecapb.KeyUsage_KeyUsageOptions{
+						CertSign: true,
+						CrlSign:  true,
+					},
+					ExtendedKeyUsage: &privatecapb.KeyUsage_ExtendedKeyUsageOptions{
+						ServerAuth: true,
+						ClientAuth: true,
+					},
+				},
+			},
+		},
+		Lifetime: durationpb.New(10 * 365 * 24 * time.Hour), // 10y
+		KeySpec: &privatecapb.CertificateAuthority_KeyVersionSpec{
+			KeyVersion: &privatecapb.CertificateAuthority_KeyVersionSpec_Algorithm{
+				Algorithm: privatecapb.CertificateAuthority_EC_P256_SHA256,
+			},
+		},
+	}); err != nil {
+		return err
+	}
+
+	// Ensure the CA has been enabled.
+	client, err := privateca.NewCertificateAuthorityClient(ctx, config.ClientOptions()...)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	ca, err := client.GetCertificateAuthority(ctx, &privatecapb.GetCertificateAuthorityRequest{
+		Name: name,
+	})
+	if err != nil {
+		return err
+	}
+	if ca.State == privatecapb.CertificateAuthority_ENABLED { // already enabled
 		return nil
 	}
-	subject := fmt.Sprintf("CN=%s, O=%s", caName, caOrganization)
-	_, err := runGcloud(config, "Creating Certificate Authority for the project",
-		cmdOptions{}, "privateca", "roots", "create", caName,
-		"--pool", caPoolName, "--location", caLocation,
-		"--subject", subject, "--key-algorithm", "ec-p256-sha256",
-		"--use-preset-profile", "subordinate_mtls_pathlen_0", "--auto-enable")
-	return err
-}
-
-// ensureCAPool ensures that a Certificate Authority pool with the given
-// specification has been created.
-func ensureCAPool(config CloudConfig, name, location, tier string) error {
-	if _, err := runGcloud(config, "", cmdOptions{}, "privateca", "pools",
-		"describe", name, "--location", location); err == nil {
-		// Pool already exists.
-		return nil
+	op, err := client.EnableCertificateAuthority(ctx, &privatecapb.EnableCertificateAuthorityRequest{
+		Name: name,
+	})
+	if err != nil {
+		return err
 	}
-
-	// Create the pool.
-	_, err := runGcloud(config, "Creating Certificate Authority pool for the project",
-		cmdOptions{}, "privateca", "pools", "create", name,
-		"--location", location, "--tier", tier)
+	_, err = op.Wait(ctx)
 	return err
 }
 
@@ -1137,7 +1180,8 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 	// Ensure that the cluster has been created.
 	if err := patchCluster(ctx, config, patchOptions{}, region, &containerpb.Cluster{
 		Name:        name,
-		Description: "Service Weaver managed cluster",
+		Description: fmt.Sprintf("%s managed cluster", descriptionData),
+
 		// NOTE: We need cluster version 1.24 or later, which happens to be
 		// satisfied by the "latest" alias on the release channel as of
 		// 9/30/2022.
@@ -1260,7 +1304,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 	}
 
 	// Add a Service Weaver namespace to the cluster.
-	if err := patchNamespace(ctx, cluster, patchOptions{}, &apiv1.Namespace{
+	if err := patchNamespace(ctx, cluster, patchOptions{}, &v1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: namespaceName,
 			Labels: map[string]string{
@@ -1355,7 +1399,7 @@ func ensureControlPriorityClass(ctx context.Context, cluster *ClusterInfo) error
 			Name: controlPriorityClassName,
 		},
 		Value:            10,
-		PreemptionPolicy: ptrOf(apiv1.PreemptLowerPriority),
+		PreemptionPolicy: ptrOf(v1.PreemptLowerPriority),
 		GlobalDefault:    false,
 		Description:      "Priority class used by Service Weaver control Pods",
 	})
@@ -1369,7 +1413,7 @@ func ensureApplicationPriorityClass(ctx context.Context, cluster *ClusterInfo) e
 			Name: applicationPriorityClassName,
 		},
 		Value:            0,
-		PreemptionPolicy: ptrOf(apiv1.PreemptLowerPriority),
+		PreemptionPolicy: ptrOf(v1.PreemptLowerPriority),
 		GlobalDefault:    false,
 		Description:      "Priority class used by Service Weaver application Pods",
 	})
@@ -1383,7 +1427,7 @@ func ensureSpareCapacityPriorityClass(ctx context.Context, cluster *ClusterInfo)
 			Name: spareCapacityPriorityClassName,
 		},
 		Value:            -10,
-		PreemptionPolicy: ptrOf(apiv1.PreemptNever),
+		PreemptionPolicy: ptrOf(v1.PreemptNever),
 		GlobalDefault:    false,
 		Description:      "Priority class used by Service Weaver to allocate spare Pod capacity",
 	})
@@ -1473,6 +1517,7 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 	dnsName := fmt.Sprintf("*.%s.%s.", cluster.Region, distributor.InternalDNSDomain)
 	return patchDNSRecordSet(ctx, cluster.CloudConfig, patchOptions{}, managedDNSZoneName, &dns.ResourceRecordSet{
 		Name:    dnsName,
+		Kind:    "dns#resourceRecordSet",
 		Type:    "A",
 		Rrdatas: []string{gatewayIP},
 		Ttl:     300, // seconds
@@ -1484,6 +1529,8 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 func registerWithFleet(ctx context.Context, config CloudConfig, cluster *ClusterInfo) error {
 	mName := fmt.Sprintf("%s-%s", cluster.Name, cluster.Region)
 	cName := fmt.Sprintf("%s/%s", cluster.Region, cluster.Name)
+
+	// TODO(spetrovic): Implement these registrations using the Go API.
 
 	// Check if the cluster has membership.
 	if _, err := runGcloud(config, "", cmdOptions{},
@@ -1509,6 +1556,8 @@ func registerWithFleet(ctx context.Context, config CloudConfig, cluster *Cluster
 func unregisterFromFleet(ctx context.Context, config CloudConfig, name, region string) error {
 	mName := fmt.Sprintf("%s-%s", name, region)
 
+	// TODO(spetrovic): Implement these un-registrations using the Go API.
+
 	// Check if the cluster has membership.
 	if _, err := runGcloud(config, "", cmdOptions{},
 		"container", "fleet", "memberships", "describe", mName,
@@ -1518,9 +1567,7 @@ func unregisterFromFleet(ctx context.Context, config CloudConfig, name, region s
 	}
 
 	// Delete the membership.
-	_, err := runGcloud(config, fmt.Sprintf(
-		"Deleting project fleet membership for cluster %q in %q",
-		name, region), cmdOptions{},
+	_, err := runGcloud(config, "", cmdOptions{},
 		"container", "fleet", "memberships", "unregister", mName,
 		"--gke-cluster", fmt.Sprintf("%s/%s", region, name),
 		"--location", "global", "--quiet",
@@ -1819,23 +1866,23 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{"app": name},
 			},
-			Template: apiv1.PodTemplateSpec{
+			Template: v1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": name},
 					Annotations: map[string]string{
 						"security.cloud.google.com/use-workload-certificates": "",
 					},
 				},
-				Spec: apiv1.PodSpec{
+				Spec: v1.PodSpec{
 					PriorityClassName: controlPriorityClassName,
-					Containers: []apiv1.Container{
+					Containers: []v1.Container{
 						{
 							Name:  name,
 							Image: toolImageURL,
 							Args: []string{
 								fmt.Sprintf("/weaver/weaver-gke %s --port=%d", name, nannyServingPort),
 							},
-							Resources: apiv1.ResourceRequirements{
+							Resources: v1.ResourceRequirements{
 								Requests: v1.ResourceList{
 									"memory": memoryUnit,
 									"cpu":    cpuUnit,
@@ -1845,7 +1892,7 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 							// shell inside the container, for debugging.
 							TTY:   true,
 							Stdin: true,
-							Env: []apiv1.EnvVar{
+							Env: []v1.EnvVar{
 								{Name: containerMetadataEnvKey, Value: metaStr},
 								nodeNameEnvVar,
 								podNameEnvVar,
@@ -1888,7 +1935,7 @@ func ensureNannyVerticalPodAutoscaler(ctx context.Context, cluster *ClusterInfo,
 				ContainerPolicies: []vautoscalingv1.ContainerResourcePolicy{
 					{
 						ContainerName:       vautoscalingv1.DefaultContainerResourcePolicy,
-						ControlledResources: ptrOf([]apiv1.ResourceName{"ResourceMemory"}),
+						ControlledResources: ptrOf([]v1.ResourceName{"ResourceMemory"}),
 					},
 				},
 			},
@@ -1899,21 +1946,21 @@ func ensureNannyVerticalPodAutoscaler(ctx context.Context, cluster *ClusterInfo,
 // ensureNannyService ensures that a nanny service with a given name is running
 // in the given cluster.
 func ensureNannyService(ctx context.Context, cluster *ClusterInfo, svcName, targetName string) error {
-	return patchService(ctx, cluster, patchOptions{}, &apiv1.Service{
+	return patchService(ctx, cluster, patchOptions{}, &v1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      svcName,
 			Namespace: namespaceName,
 		},
-		Spec: apiv1.ServiceSpec{
+		Spec: v1.ServiceSpec{
 			ClusterIP: "None",
 			Selector: map[string]string{
 				"app": targetName,
 			},
-			Ports: []apiv1.ServicePort{
+			Ports: []v1.ServicePort{
 				{
 					Port:       80,
 					TargetPort: intstr.FromInt(nannyServingPort),
-					Protocol:   apiv1.Protocol("TCP"),
+					Protocol:   v1.Protocol("TCP"),
 				},
 			},
 		},

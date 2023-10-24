@@ -29,7 +29,7 @@ import (
 )
 
 // Copy copies all populated message fields from src into dst, overwriting any
-// existing values in dst.  Fields in skipFields aren't copied, even if they are
+// existing values in dst. Fields in skipFields aren't copied, even if they are
 // populated.
 // Returns the list of all fields in dst that were modified during the copy,
 // or nil otherwise.

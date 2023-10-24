@@ -48,12 +48,15 @@ Description:
 		tool.FlagsHelp(purgeFlags.FlagSet)),
 
 	Fn: purge,
-	// TODO(mwhittaker): Unhide the purge command when it's fully implemented.
-	Hidden: true,
 }
 
 func purge(ctx context.Context, _ []string) error {
-	// TODO(mwhittaker): Kill jobs and purge other resources.
+	config, err := purgeFlags.CloudConfig()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
+
 	if !*purgeForce {
 		fmt.Printf(`WARNING: You are about to kill every active Service Weaver application and
 delete all cloud resources created by "weaver gke". This cannot be undone. Are
@@ -68,25 +71,10 @@ Enter (y)es to continue: `)
 		text = text[:len(text)-1] // strip the trailing "\n"
 		text = strings.ToLower(text)
 		if !(text == "y" || text == "yes") {
-			fmt.Println("")
-			fmt.Println("Purge aborted.")
+			fmt.Fprintln(os.Stderr, "")
+			fmt.Fprintln(os.Stderr, "Purge aborted.")
 			return nil
 		}
 	}
-
-	config, err := purgeFlags.CloudConfig()
-	if err != nil {
-		return nil
-	}
-	clusters, err := gke.GetClusterInfos(context.Background(), config)
-	if err != nil {
-		return err
-	}
-	for _, cluster := range clusters {
-		store := gke.Store(cluster).(*gke.KubeStore)
-		if err := store.Purge(ctx); err != nil {
-			return err
-		}
-	}
-	return nil
+	return gke.Purge(ctx, config)
 }
