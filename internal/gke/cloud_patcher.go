@@ -29,6 +29,8 @@ import (
 	"cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	gkehub "cloud.google.com/go/gkehub/apiv1beta1"
+	"cloud.google.com/go/gkehub/apiv1beta1/gkehubpb"
 	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
 	dproto "github.com/ServiceWeaver/weaver-gke/internal/proto"
@@ -421,6 +423,68 @@ func patchCluster(ctx context.Context, config CloudConfig, opts patchOptions, lo
 			}
 			// Wait until the cluster is updated.
 			return waitClusterOp(ctx, config, client, location, op)
+		},
+	}.Run(ctx)
+}
+
+// patchFleetMembership updates the fleet membership with the new configuration.
+func patchFleetMembership(ctx context.Context, config CloudConfig, opts patchOptions, id string, membership *gkehubpb.Membership) error {
+	client, err := gkehub.NewGkeHubMembershipClient(ctx, config.ClientOptions()...)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	parent := path.Join("projects", config.Project, "locations", "global")
+	path := path.Join(parent, "memberships", id)
+	create := func() error {
+		op, err := client.CreateMembership(ctx, &gkehubpb.CreateMembershipRequest{
+			Parent:       parent,
+			MembershipId: id,
+			Resource:     membership,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = op.Wait(ctx)
+		return err
+	}
+	return cloudPatcher{
+		desc: fmt.Sprintf("fleet membership %s", id),
+		opts: opts,
+		get: func() (interface{}, error) {
+			old, err := client.GetMembership(ctx, &gkehubpb.GetMembershipRequest{
+				Name: path,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			// See if the old value differs from the new in the fields that
+			// matter.
+			modif, err := dproto.Merge(old, membership, nil)
+			if err != nil {
+				return nil, err
+			}
+			if !modif { // no change from the existing value
+				return nil, nil
+			}
+			return old, nil
+		},
+		create: create,
+		update: func(_ interface{}) error {
+			// The update API doesn't work for most fields (e.g., "type"),
+			// so we update by deleting the membership and re-creating it.
+			op, err := client.DeleteMembership(ctx, &gkehubpb.DeleteMembershipRequest{
+				Name:  path,
+				Force: true,
+			})
+			if err != nil {
+				return err
+			}
+			if err := op.Wait(ctx); err != nil {
+				return err
+			}
+			return create()
 		},
 	}.Run(ctx)
 }

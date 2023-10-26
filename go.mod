@@ -7,6 +7,7 @@ require (
 	cloud.google.com/go/compute v1.20.1
 	cloud.google.com/go/compute/metadata v0.2.3
 	cloud.google.com/go/container v1.22.1
+	cloud.google.com/go/gkehub v0.14.1
 	cloud.google.com/go/iam v1.1.0
 	cloud.google.com/go/logging v1.7.0
 	cloud.google.com/go/monitoring v1.15.1

@@ -29,6 +29,8 @@ import (
 	"cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	gkehub "cloud.google.com/go/gkehub/apiv1beta1"
+	"cloud.google.com/go/gkehub/apiv1beta1/gkehubpb"
 	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
 	"google.golang.org/api/dns/v1"
@@ -76,6 +78,9 @@ func Purge(ctx context.Context, config CloudConfig) error {
 		errs = append(errs, err)
 	} else {
 		for _, cluster := range appClusters {
+			if err := deleteFleetMembership(ctx, config, cluster.Name, cluster.Location); err != nil {
+				errs = append(errs, err)
+			}
 			if wait, err := deleteCluster(ctx, config, cluster.Name, cluster.Location); err != nil {
 				errs = append(errs, err)
 			} else if wait != nil {
@@ -213,6 +218,9 @@ func deleteRepository(ctx context.Context, config CloudConfig) (func() error, er
 
 // deleteConfigCluster deletes the Service Weaver configuration cluster.
 func deleteConfigCluster(ctx context.Context, config CloudConfig) (func() error, error) {
+	if err := deleteFleetMembership(ctx, config, ConfigClusterName, ConfigClusterRegion); err != nil {
+		return nil, err
+	}
 	exists, err := hasCluster(ctx, config, ConfigClusterName, ConfigClusterRegion)
 	if err != nil {
 		return nil, err
@@ -251,12 +259,7 @@ func getApplicationClusters(ctx context.Context, config CloudConfig) ([]*contain
 
 // deleteClusters deletes the cluster with the given name in the given region.
 func deleteCluster(ctx context.Context, config CloudConfig, cluster, region string) (func() error, error) {
-	fmt.Fprintf(os.Stderr, "Unregistering cluster %q in region %s from fleet... ", cluster, region)
-	if err := unregisterFromFleet(ctx, config, cluster, region); err != nil {
-		return nil, doErr(err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Success. Starting async deletion... ")
+	fmt.Fprintf(os.Stderr, "Starting async deletion of cluster %s in region %s... ", cluster, region)
 	client, err := container.NewClusterManagerClient(ctx, config.ClientOptions()...)
 	if err != nil {
 		return nil, doErr(err)
@@ -279,6 +282,47 @@ func deleteCluster(ctx context.Context, config CloudConfig, cluster, region stri
 		fmt.Fprintf(os.Stderr, "Done deleting cluster %q in region %s\n", cluster, region)
 		return nil
 	}, nil
+}
+
+// deleteFleetMembership deletes the fleet membership for the given cluster in
+// the given region.
+func deleteFleetMembership(ctx context.Context, config CloudConfig, cluster, region string) error {
+	fmt.Fprintf(os.Stderr, "Fetching fleet membership for cluster %s in region %s... ", cluster, region)
+	id := fmt.Sprintf("%s-%s", cluster, region)
+	parent := path.Join("projects", config.Project, "locations", "global")
+	path := path.Join(parent, "memberships", id)
+	client, err := gkehub.NewGkeHubMembershipClient(ctx, config.ClientOptions()...)
+	if err != nil {
+		return doErr(err)
+	}
+	defer client.Close()
+
+	// Check if the membership has already been deleted.
+	_, err = client.GetMembership(ctx, &gkehubpb.GetMembershipRequest{
+		Name: path,
+	})
+	if isNotFound(err) {
+		fmt.Fprintf(os.Stderr, "Not found\n")
+		return nil
+	}
+	if err != nil {
+		return doErr(err)
+	}
+
+	// Delete the membership.
+	fmt.Fprintf(os.Stderr, "Deleting... ")
+	op, err := client.DeleteMembership(ctx, &gkehubpb.DeleteMembershipRequest{
+		Name:  path,
+		Force: true,
+	})
+	if err != nil {
+		return doErr(err)
+	}
+	if err := op.Wait(ctx); err != nil {
+		return doErr(err)
+	}
+	fmt.Fprintf(os.Stderr, "Done\n")
+	return nil
 }
 
 // deleteGlobalIPAddress deletes the global static IP address with the given name.

@@ -33,6 +33,7 @@ import (
 	computepb "cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
+	"cloud.google.com/go/gkehub/apiv1beta1/gkehubpb"
 	"cloud.google.com/go/iam/apiv1/iampb"
 	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
@@ -1172,7 +1173,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 		// removed. (A defunct fleet membership can linger if e.g. the user
 		// deletes the cluster manually, without deleting the fleet membership
 		// as well.)
-		if err := unregisterFromFleet(ctx, config, name, region); err != nil {
+		if err := deleteFleetMembership(ctx, config, name, region); err != nil {
 			return nil, err
 		}
 	}
@@ -1331,7 +1332,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 	}
 
 	// Register the cluster with the project fleet.
-	if err := registerWithFleet(ctx, config, cluster); err != nil {
+	if err := ensureFleetMembership(ctx, config, cluster); err != nil {
 		return nil, err
 	}
 
@@ -1524,55 +1525,22 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 	})
 }
 
-// registerWithFleet registers the given cluster with the project fleet, if it
-// isn't already registered.
-func registerWithFleet(ctx context.Context, config CloudConfig, cluster *ClusterInfo) error {
-	mName := fmt.Sprintf("%s-%s", cluster.Name, cluster.Region)
-	cName := fmt.Sprintf("%s/%s", cluster.Region, cluster.Name)
-
-	// TODO(spetrovic): Implement these registrations using the Go API.
-
-	// Check if the cluster has membership.
-	if _, err := runGcloud(config, "", cmdOptions{},
-		"container", "fleet", "memberships", "describe", mName,
-		"--location", "global", "--format=value(state.code)"); err == nil {
-		// Already a member: we're done.
-		return nil
-	}
-
-	// Add the membership.
-	_, err := runGcloud(config,
-		fmt.Sprintf("Registering cluster %q in %q with the project fleet",
-			cluster.Name, cluster.Region),
-		cmdOptions{}, "container", "fleet", "memberships", "register", mName,
-		"--location", "global", "--gke-cluster", cName,
-		"--enable-workload-identity",
-	)
-	return err
-}
-
-// unregisterFromFleet removes the given cluster's registration with the project
-// fleet, if one exists.
-func unregisterFromFleet(ctx context.Context, config CloudConfig, name, region string) error {
-	mName := fmt.Sprintf("%s-%s", name, region)
-
-	// TODO(spetrovic): Implement these un-registrations using the Go API.
-
-	// Check if the cluster has membership.
-	if _, err := runGcloud(config, "", cmdOptions{},
-		"container", "fleet", "memberships", "describe", mName,
-		"--location", "global"); err != nil {
-		// Not a member: we're done.
-		return nil
-	}
-
-	// Delete the membership.
-	_, err := runGcloud(config, "", cmdOptions{},
-		"container", "fleet", "memberships", "unregister", mName,
-		"--gke-cluster", fmt.Sprintf("%s/%s", region, name),
-		"--location", "global", "--quiet",
-	)
-	return err
+// ensureFleetMembership registers the given cluster with the project fleet, if
+// it isn't already registered.
+func ensureFleetMembership(ctx context.Context, config CloudConfig, cluster *ClusterInfo) error {
+	id := fmt.Sprintf("%s-%s", cluster.Name, cluster.Region)
+	clusterPath := path.Join("projects", config.Project, "locations", cluster.Region, "clusters", cluster.Name)
+	return patchFleetMembership(ctx, config, patchOptions{}, id, &gkehubpb.Membership{
+		Type: &gkehubpb.Membership_Endpoint{
+			Endpoint: &gkehubpb.MembershipEndpoint{
+				Type: &gkehubpb.MembershipEndpoint_GkeCluster{
+					GkeCluster: &gkehubpb.GkeCluster{
+						ResourceLink: "//container.googleapis.com/" + clusterPath,
+					},
+				},
+			},
+		},
+	})
 }
 
 // waitForServiceExportsResource waits for the serviceexports resource
