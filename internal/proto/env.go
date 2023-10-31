@@ -34,7 +34,7 @@ func ToEnv(msg proto.Message) (string, error) {
 func FromEnv(in string, msg proto.Message) error {
 	data, err := base64.StdEncoding.DecodeString(in)
 	if err != nil {
-		return nil
+		return err
 	}
 	return proto.Unmarshal(data, msg)
 }
