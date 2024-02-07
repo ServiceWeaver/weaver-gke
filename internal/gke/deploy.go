@@ -1888,6 +1888,10 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 									"cpu":    cpuUnit,
 								},
 							},
+							Ports: []v1.ContainerPort{{
+								HostPort:      nannyServingPort,
+								ContainerPort: nannyServingPort,
+							}},
 							// Enabling TTY and Stdin allows the user to run a
 							// shell inside the container, for debugging.
 							TTY:   true,
