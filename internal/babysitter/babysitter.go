@@ -19,9 +19,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -30,7 +28,6 @@ import (
 	"github.com/ServiceWeaver/weaver-gke/internal/mtls"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver/runtime"
-	"github.com/ServiceWeaver/weaver/runtime/deployers"
 	"github.com/ServiceWeaver/weaver/runtime/envelope"
 	"github.com/ServiceWeaver/weaver/runtime/logging"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
@@ -88,21 +85,6 @@ func Start(
 	traceSaver func(spans *protos.TraceSpans) error,
 	metricExporter func(metrics []*metrics.MetricSnapshot) error,
 ) (*Babysitter, error) {
-	// Custom logging component to receive log messages.
-	loggerComponent := &loggerImpl{dst: logSaver}
-
-	// Make Unix domain socket listener for serving hosted system components.
-	tmpDir, err := runtime.NewTempDir()
-	if err != nil {
-		return nil, err
-	}
-	// TODO(sanjay): Use runtime.OnExitSignal to cleanup when available.
-	udsPath := filepath.Join(tmpDir, "socket")
-	uds, err := net.Listen("unix", udsPath)
-	if err != nil {
-		return nil, err
-	}
-
 	// Create the envelope.
 	//
 	// We use the PodName as a unique weavelet id for the following reasons:
@@ -112,24 +94,18 @@ func Start(
 	//   * It allows the manager to quickly check if the weavelet is still
 	//     active by asking the Kubernetes API if the Pod with a given name
 	//     exists.
-	info := &protos.EnvelopeInfo{
+	args := &protos.WeaveletArgs{
 		App:             cfg.Deployment.App.Name,
 		DeploymentId:    cfg.Deployment.Id,
 		Id:              podName,
-		Sections:        cfg.Deployment.App.Sections,
 		RunMain:         replicaSet == runtime.Main,
 		Mtls:            cfg.Mtls,
 		InternalAddress: internalAddress,
-		Redirects: []*protos.EnvelopeInfo_Redirect{
-			// Override the builtin logger.
-			{
-				Component: weaverLoggerName,
-				Target:    funcLoggerName,
-				Address:   "unix://" + udsPath,
-			},
-		},
+		// ControlSocket, Redirects filled by envelope.NewEnvelope
 	}
-	e, err := envelope.NewEnvelope(ctx, info, cfg.Deployment.App)
+	e, err := envelope.NewEnvelope(ctx, args, cfg.Deployment.App, envelope.Options{
+		Logger: logger,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -168,24 +144,12 @@ func Start(
 	// Watch for components to start.
 	go b.watchComponentsToStart()
 
-	// Serve calls to system components.
-	go func() {
-		sys := map[string]any{
-			funcLoggerName: loggerComponent,
-		}
-		if err := deployers.ServeComponents(ctx, uds, logger, sys); err != nil {
-			panic(err)
-		}
-	}()
-
 	return b, nil
 }
 
-// WeaveletInfo returns information about the weavelet managed by the
-// babysitter.
-func (b *Babysitter) WeaveletInfo() *protos.WeaveletInfo {
-	return b.envelope.WeaveletInfo()
-}
+// WeaveletAddress returns the address that other components should dial to communicate with the
+// weavelet.
+func (b *Babysitter) WeaveletAddress() string { return b.envelope.WeaveletAddress() }
 
 // SelfAddr returns the address on which the babysitter is listening on
 // for incoming requests.
@@ -231,7 +195,7 @@ func (b *Babysitter) GetLoad(_ context.Context, req *endpoints.GetLoadRequest) (
 	}
 	return &endpoints.GetLoadReply{
 		Load:         load,
-		WeaveletAddr: b.WeaveletInfo().DialAddr,
+		WeaveletAddr: b.WeaveletAddress(),
 	}, nil
 }
 
@@ -243,6 +207,14 @@ func (b *Babysitter) RunProfiling(_ context.Context, req *protos.GetProfileReque
 			req.ProfileType, b.cfg.Deployment.Id, b.cfg.Deployment.App.Name, logging.ShortenComponent(b.replicaSet), err)
 	}
 	return &protos.GetProfileReply{Data: prof}, nil
+}
+
+// LogBatch implements the control.DeployerControl interface.
+func (b *Babysitter) LogBatch(ctx context.Context, batch *protos.LogEntryBatch) error {
+	for _, entry := range batch.Entries {
+		b.logSaver(entry)
+	}
+	return nil
 }
 
 // ActivateComponent implements the envelope.EnvelopeHandler interface.
