@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 
 	"github.com/ServiceWeaver/weaver"
 )
@@ -56,5 +57,8 @@ func serve(ctx context.Context, s *server) error {
 	mux.HandleFunc(weaver.HealthzURL, weaver.HealthzHandler)
 
 	fmt.Printf("echo listener available on %v\n", s.lis)
+	if strings.HasPrefix(s.lis.String(), "http://localhost:") {
+		fmt.Printf("try: curl --header host:echo.example.com %v?s=hello\n", s.lis)
+	}
 	return http.Serve(s.lis, &mux)
 }
