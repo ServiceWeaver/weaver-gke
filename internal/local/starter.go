@@ -128,7 +128,7 @@ func (s *Starter) getHealthyPods(ctx context.Context, cfg *config.GKEConfig, rep
 	var healthyPods []*nanny.Pod
 	for _, r := range rs.pods {
 		babysitterAddr := r.b.SelfAddr()
-		weaveletAddr := r.b.WeaveletInfo().DialAddr
+		weaveletAddr := r.b.WeaveletAddress()
 		// NOTE: we could call r.b.GetLoad() directly here, but are instead
 		// choosing to exercise the same call path as GKE proper.
 		b := newBabysitter(babysitterAddr)

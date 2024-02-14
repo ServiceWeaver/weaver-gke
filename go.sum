@@ -71,6 +71,8 @@ github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapp
 github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.35.0/go.mod h1:H785fvlgotVZqht+1rHhXSs8EJ8uPVmpBYkTYO3ccpc=
 github.com/ServiceWeaver/weaver v0.22.1-0.20231019162801-c2294d1ae0e8 h1:smtruzdiiELIMDNHrXD+fY8/I69p0rQPqMlYERptwA4=
 github.com/ServiceWeaver/weaver v0.22.1-0.20231019162801-c2294d1ae0e8/go.mod h1:j27YowX7vVpIrYcEPZ9e1FR+fvVrlH9DweyO3uyOqkg=
+github.com/ServiceWeaver/weaver v0.22.1-0.20240208183719-2eb6066c2f85 h1:nvYGb2V6IdwCSfDXpR4ruo1GD9919+2pnsPLcui0QbU=
+github.com/ServiceWeaver/weaver v0.22.1-0.20240208183719-2eb6066c2f85/go.mod h1:j27YowX7vVpIrYcEPZ9e1FR+fvVrlH9DweyO3uyOqkg=
 github.com/alecthomas/template v0.0.0-20160405071501-a0175ee3bccc/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/template v0.0.0-20190718012654-fb15b899a751/go.mod h1:LOuyumcjzFXgccqObfd/Ljyb9UuFJ6TxHnclSeseNhc=
 github.com/alecthomas/units v0.0.0-20151022065526-2efee857e7cf/go.mod h1:ybxpYRFXyAe+OPACYpWeL0wqObRcbAqCMya13uyzqw0=
