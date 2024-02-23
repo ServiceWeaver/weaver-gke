@@ -77,4 +77,11 @@ message GKEConfig {
     repeated string component = 1;
   }
   map<string, Components> identity_allowlist = 10;
+
+  // A knob that lets the user specifies how many nanoseconds it expects for
+  // the rollout to take. This is used internally by the GKE deployer to figure
+  // out the rollout strategy.
+  //
+  // If not specified, Service Weaver will pick a default value.
+  int64 rollout_nanos = 11;
 }
