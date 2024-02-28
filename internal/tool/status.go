@@ -260,7 +260,12 @@ func rolloutStatus(w io.Writer, status *controller.Status, p *controller.Project
 		// The first row shows the time. The following rows show the delta
 		// from the first row.
 		row := []any{}
-		t := projection.Time.AsTime()
+
+		// Note that AsTime() returns the time in UTC [1]. Convert the time to local
+		// timezone, so it makes sense when the status information is displayed.
+		//
+		// [1] https://pkg.go.dev/google.golang.org/protobuf/types/known/timestamppb#hdr-Conversion_to_a_Go_Time
+		t := projection.Time.AsTime().In(time.Local)
 		if start.IsZero() {
 			start = t
 			row = append(row, t.Format(time.Stamp))
