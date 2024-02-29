@@ -450,7 +450,7 @@ var autoJSONTmpl = template.Must(template.New("auto").Parse(`{
 // configured for the given Kubernetes ReplicaSet.
 func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
 	dep := cfg.Deployment
-	name := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
+	aName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	var b strings.Builder
 	if err := autoJSONTmpl.Execute(&b, struct {
 		Name             string
@@ -462,14 +462,14 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 		TargetKind       string
 		TargetName       string
 	}{
-		Name:             name,
+		Name:             aName,
 		Namespace:        namespaceName,
-		AppName:          dep.App.Name,
-		DeploymentID:     dep.Id,
+		AppName:          name{dep.App.Name}.DNSLabel(),
+		DeploymentID:     name{dep.Id}.DNSLabel(),
 		AppContainerName: appContainerName,
 		MinMemory:        memoryUnit.String(),
 		TargetKind:       "Deployment",
-		TargetName:       name,
+		TargetName:       aName,
 	}); err != nil {
 		return err
 	}
