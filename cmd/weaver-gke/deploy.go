@@ -48,6 +48,7 @@ var (
 			if err != nil {
 				return nil, err
 			}
+
 			fmt.Fprintf(os.Stderr, "Deploying to project %s\n", config.Project)
 			toolBinVersion, err := getToolVersion()
 			if err != nil {

@@ -79,15 +79,15 @@ type ClusterInfo struct {
 // GetClusterInfo returns information about a GKE cluster running in a given
 // cloud region.
 // REQUIRES: The caller is running on the user machine.
-func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region string) (*ClusterInfo, error) {
+func GetClusterInfo(ctx context.Context, config CloudConfig, region string) (*ClusterInfo, error) {
 	// Fetch cluster credentials to the local machine.
 	kubeFileName := filepath.Join(
-		os.TempDir(), fmt.Sprintf("serviceweaver_%s_%s", cluster, uuid.New().String()))
+		os.TempDir(), fmt.Sprintf("serviceweaver_%s_%s", applicationClusterName, uuid.New().String()))
 	if _, err := runGcloud(config, "", cmdOptions{
 		EnvOverrides: []string{
 			fmt.Sprintf("KUBECONFIG=%s", kubeFileName),
 		}},
-		"container", "clusters", "get-credentials", cluster, "--region", region,
+		"container", "clusters", "get-credentials", applicationClusterName, "--region", region,
 	); err != nil {
 		return nil, err
 	}
@@ -102,7 +102,7 @@ func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region str
 	if err != nil {
 		return nil, fmt.Errorf("internal error: error creating kube config: %w", err)
 	}
-	return fillClusterInfo(ctx, cluster, region, config, kubeConfig)
+	return fillClusterInfo(ctx, applicationClusterName, region, config, kubeConfig)
 }
 
 // inClusterInfo returns information about the GKE cluster that the
@@ -137,7 +137,7 @@ func isZone(location string) bool {
 	return strings.Count(location, "-") > 1
 }
 
-func fillClusterInfo(ctx context.Context, cluster, region string, cc CloudConfig, kc *rest.Config) (*ClusterInfo, error) {
+func fillClusterInfo(_ context.Context, cluster, region string, cc CloudConfig, kc *rest.Config) (*ClusterInfo, error) {
 	// Avoid Kubernetes' low default QPS limit.
 	kc.QPS = math.MaxInt
 	kc.Burst = math.MaxInt

@@ -105,7 +105,7 @@ const (
 	caName         = "serviceweaver-ca"
 	caPoolName     = "serviceweaver-ca"
 	caOrganization = "serviceweaver"
-	caLocation     = ConfigClusterRegion
+	caLocation     = "us-central1"
 
 	// Serving port for the nanny.
 	nannyServingPort = 80
@@ -127,7 +127,7 @@ func PrepareRollout(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	localBinary := dep.App.Binary // Save before finalizeConfig rewrites it
 
 	// Finalize the config.
-	if err := finalizeConfig(config, cfg); err != nil {
+	if err := finalizeConfig(cfg); err != nil {
 		return nil, err
 	}
 
@@ -255,7 +255,7 @@ downloaded and installed in the container. Do you want to proceed? [Y/n] `)
 			stop(err)
 		}
 	}()
-	configCluster, externalGatewayIP, err := prepareProject(childCtx, config, cfg)
+	_, externalGatewayIP, err := prepareProject(childCtx, config, cfg)
 	if err != nil {
 		stop(err)
 	}
@@ -312,7 +312,7 @@ to use CloudDNS for name resolution [1].
 	fmt.Fprintln(os.Stderr, b.String())
 
 	// Build the rollout request.
-	req := buildRolloutRequest(configCluster, cfg)
+	req := buildRolloutRequest(cfg)
 	return req, nil
 }
 
@@ -369,7 +369,7 @@ func enableMultiClusterServices(config CloudConfig) error {
 	return err
 }
 
-func finalizeConfig(cloudConfig CloudConfig, gkeConfig *config.GKEConfig) error {
+func finalizeConfig(gkeConfig *config.GKEConfig) error {
 	// Finalize the rollout duration.
 	if gkeConfig.Deployment.App.RolloutNanos == 0 {
 		scanner := bufio.NewScanner(os.Stdin)
@@ -455,7 +455,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	}
 
 	// Ensure the Service Weaver configuration cluster is setup.
-	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, cfg, ConfigClusterName, ConfigClusterRegion, bindings)
+	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, cfg, bindings)
 	if err != nil {
 		return nil, "", err
 	}
@@ -463,7 +463,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	// Ensure that a cluster is started in each deployment region and that
 	// a distributor and a manager are running in each cluster.
 	for _, region := range cfg.Regions {
-		cluster, gatewayIP, err := ensureApplicationCluster(ctx, config, cfg, applicationClusterName, region)
+		cluster, gatewayIP, err := ensureApplicationCluster(ctx, config, cfg, region)
 		if err != nil {
 			return nil, "", err
 		}
@@ -474,10 +474,8 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	return configCluster, globalGatewayIP, nil
 }
 
-func buildRolloutRequest(configCluster *ClusterInfo, cfg *config.GKEConfig) *controller.RolloutRequest {
-	req := &controller.RolloutRequest{
-		Config: cfg,
-	}
+func buildRolloutRequest(cfg *config.GKEConfig) *controller.RolloutRequest {
+	req := &controller.RolloutRequest{Config: cfg}
 	for _, region := range cfg.Regions {
 		// NOTE: distributor address must be resolveable from anywhere inside
 		// the project's VPC.
@@ -956,11 +954,50 @@ func createServiceAccountsIAMPolicyRole(ctx context.Context, config CloudConfig)
 	})
 }
 
-// ensureConfigCluster sets up a Service Weaver configuration cluster, returning the
+func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, bindings iamBindings) (*ClusterInfo, string, error) {
+	// Check if there is a config cluster already running.
+	out, err := runGcloud(config, "", cmdOptions{},
+		"container", "fleet", "ingress", "describe",
+		"--format=value(spec.multiclusteringress.configMembership)")
+	if err != nil {
+		// No config cluster. Set up a config cluster in the first region as specified by the user.
+		return setupConfigCluster(ctx, config, cfg.Regions[0], bindings)
+	}
+
+	// There is a config cluster.
+	out = strings.TrimSuffix(out, "\n") // remove trailing newline
+	fName := fmt.Sprintf("projects/%s/locations/global/memberships/%s",
+		config.Project, applicationClusterName)
+
+	// Extract the region where the config cluster is running.
+	var region string
+	if _, err := fmt.Sscanf(out, fName+"-%s", &region); err != nil {
+		return nil, "", fmt.Errorf("unable to parse config region name: %v", err)
+	}
+
+	// Check that the config cluster actually exist.
+	exists, err := hasCluster(ctx, config, applicationClusterName, region)
+	if err != nil {
+		return nil, "", err
+	}
+	if !exists {
+		// Disable ingress.
+		_, err = runGcloud(config,
+			fmt.Sprintf("Disable multi-cluster ingress for cluster %q in %q",
+				applicationClusterName, region), cmdOptions{},
+			"container", "fleet", "ingress", "disable")
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return setupConfigCluster(ctx, config, region, bindings)
+}
+
+// setupConfigCluster sets up a Service Weaver configuration cluster, returning the
 // cluster information and the IP address of the gateway that routes ingress
 // traffic to all Service Weaver applications.
-func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string, bindings iamBindings) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, cfg, name, region)
+func setupConfigCluster(ctx context.Context, config CloudConfig, region string, bindings iamBindings) (*ClusterInfo, string, error) {
+	cluster, err := ensureManagedCluster(ctx, config, region)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1022,8 +1059,8 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 // and running in the given region and is set up to host Service Weaver applications.
 // It returns the cluster information and the IP address of the gateway that
 // routes internal traffic to Service Weaver applications in the cluster.
-func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, clusterName, region string) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, cfg, clusterName, region)
+func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, region string) (*ClusterInfo, string, error) {
+	cluster, err := ensureManagedCluster(ctx, config, region)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1162,8 +1199,8 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 
 // ensureManagedCluster ensures that a Service Weaver managed cluster is available
 // and running in the given region.
-func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string) (*ClusterInfo, error) {
-	exists, err := hasCluster(ctx, config, name, region)
+func ensureManagedCluster(ctx context.Context, config CloudConfig, region string) (*ClusterInfo, error) {
+	exists, err := hasCluster(ctx, config, applicationClusterName, region)
 	if err != nil {
 		return nil, err
 	}
@@ -1172,14 +1209,14 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 		// removed. (A defunct fleet membership can linger if e.g. the user
 		// deletes the cluster manually, without deleting the fleet membership
 		// as well.)
-		if err := unregisterFromFleet(ctx, config, name, region); err != nil {
+		if err := unregisterFromFleet(ctx, config, applicationClusterName, region); err != nil {
 			return nil, err
 		}
 	}
 
 	// Ensure that the cluster has been created.
 	if err := patchCluster(ctx, config, patchOptions{}, region, &containerpb.Cluster{
-		Name:        name,
+		Name:        applicationClusterName,
 		Description: fmt.Sprintf("%s managed cluster", descriptionData),
 
 		// NOTE: We need cluster version 1.24 or later, which happens to be
@@ -1264,7 +1301,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 			DnsConfig: &containerpb.DNSConfig{
 				ClusterDns:       containerpb.DNSConfig_CLOUD_DNS,
 				ClusterDnsScope:  containerpb.DNSConfig_VPC_SCOPE,
-				ClusterDnsDomain: fmt.Sprintf("%s-%s", name, region),
+				ClusterDnsDomain: fmt.Sprintf("%s-%s", applicationClusterName, region),
 			},
 			GatewayApiConfig: &containerpb.GatewayAPIConfig{
 				Channel: containerpb.GatewayAPIConfig_CHANNEL_STANDARD,
@@ -1283,7 +1320,7 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.G
 	}); err != nil {
 		return nil, err
 	}
-	cluster, err := GetClusterInfo(ctx, config, name, region)
+	cluster, err := GetClusterInfo(ctx, config, region)
 	if err != nil {
 		return nil, err
 	}
@@ -1760,11 +1797,24 @@ func ensureRegionalInternalGateway(ctx context.Context, cluster *ClusterInfo) (s
 // ensureWeaverServices ensures that Service Weaver services (i.e., controller and
 // all needed distributors and managers) are running.
 func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, toolImageURL string) error {
-	if err := ensureController(ctx, config, toolImageURL); err != nil {
+	tmpl := fmt.Sprintf("projects/%s/locations/global/memberships/%s",
+		config.Project, applicationClusterName)
+	out, err := runGcloud(config, "", cmdOptions{},
+		"container", "fleet", "ingress", "describe",
+		"--format=value(spec.multiclusteringress.configMembership)")
+	if err != nil {
+		return err
+	}
+	out = strings.TrimSuffix(out, "\n") // remove trailing newline
+	var region string
+	fmt.Sscanf(out, tmpl+"-%s", &region)
+	fmt.Fprintf(os.Stderr, "Robert - ensureWeaverServices: Extracted region: %v\n", region)
+
+	if err := ensureController(ctx, config, region, toolImageURL); err != nil {
 		return err
 	}
 	for _, region := range cfg.Regions {
-		cluster, err := GetClusterInfo(ctx, config, applicationClusterName, region)
+		cluster, err := GetClusterInfo(ctx, config, region)
 		if err != nil {
 			return err
 		}
@@ -1779,8 +1829,8 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 }
 
 // ensureController ensures that a controller is running in the config cluster.
-func ensureController(ctx context.Context, config CloudConfig, toolImageURL string) error {
-	cluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
+func ensureController(ctx context.Context, config CloudConfig, region string, toolImageURL string) error {
+	cluster, err := GetClusterInfo(ctx, config, region)
 	if err != nil {
 		return err
 	}

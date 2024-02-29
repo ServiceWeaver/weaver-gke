@@ -126,14 +126,17 @@ func ensureWeaverServices(ctx context.Context, cfg *config.GKEConfig) (map[strin
 	}
 
 	// Launch the controller.
+	// Note that the controller is *always* deployed in the first region from the
+	//list of regions to deploy the app, as specified by the user in the config.
+	controllerRegion := cfg.Regions[0]
 	if err := startSubProcess(ls, rolloutId, ex, "controller",
-		"--region", "us-central1",
+		"--region", controllerRegion,
 		"--port", fmt.Sprint(controllerPort)); err != nil {
 		return nil, err
 	}
 
 	// Launch the distributors and managers.
-	s, err := Store("us-central1")
+	s, err := Store(controllerRegion)
 	if err != nil {
 		return nil, err
 	}

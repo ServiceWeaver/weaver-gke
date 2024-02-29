@@ -25,7 +25,7 @@ import (
 var (
 	controllerFlags  = flag.NewFlagSet("controller", flag.ContinueOnError)
 	controllerId     = controllerFlags.String("id", "", "controller unique id")
-	controllerRegion = controllerFlags.String("region", "us-central1", "Simulated GKE region")
+	controllerRegion = controllerFlags.String("region", "", "Simulated GKE region")
 	controllerPort   = controllerFlags.Int("port", 0, "Controller port")
 )
 

@@ -134,7 +134,7 @@ var _ wlogging.Reader = &gcpCatter{}
 
 // newGCPCatter returns a new gcpCatter.
 func newGCPCatter(ctx context.Context, config CloudConfig, q wlogging.Query) (*gcpCatter, error) {
-	filter, err := Translate(config.Project, q)
+	filter, err := Translate(config, q)
 	if err != nil {
 		return nil, fmt.Errorf("error translating query %s: %v", q, err)
 	}
@@ -245,7 +245,7 @@ var _ wlogging.Reader = &gcpFollower{}
 
 // newGCPFollower returns a new gcpFollower.
 func newGCPFollower(ctx context.Context, config CloudConfig, q wlogging.Query) (*gcpFollower, error) {
-	filter, err := Translate(config.Project, q)
+	filter, err := Translate(config, q)
 	if err != nil {
 		return nil, fmt.Errorf("error translating query %s: %v", q, err)
 	}
@@ -372,7 +372,7 @@ func HasTime(query wlogging.Query) (bool, error) {
 // Translate translates a log query into a Google Cloud Logging query [1].
 //
 // [1]: https://cloud.google.com/logging/docs/view/logging-query-language
-func Translate(project string, query wlogging.Query) (string, error) {
+func Translate(cfg CloudConfig, query wlogging.Query) (string, error) {
 	// The translation is relatively straightforward, with the following
 	// notable changes:
 	//
@@ -411,11 +411,11 @@ func Translate(project string, query wlogging.Query) (string, error) {
 	//
 	// TODO(mwhittaker): Restrict based on location.
 	fmt.Fprintf(&b, ` AND resource.type="k8s_container"`)
-	fmt.Fprintf(&b, ` AND resource.labels.project_id=%q`, project)
-	fmt.Fprintf(&b, ` AND (resource.labels.cluster_name=%q OR resource.labels.cluster_name=%q)`, applicationClusterName, ConfigClusterName)
+	fmt.Fprintf(&b, ` AND resource.labels.project_id=%q`, cfg.Project)
+	fmt.Fprintf(&b, ` AND resource.labels.cluster_name=%q`, applicationClusterName)
 	fmt.Fprintf(&b, ` AND resource.labels.namespace_name=%q`, namespaceName)
 	fmt.Fprintf(&b, ` AND (resource.labels.container_name=%q OR resource.labels.container_name=%q)`, appContainerName, nannyContainerName)
-	fmt.Fprintf(&b, ` AND logName="projects/%s/logs/serviceweaver"`, project)
+	fmt.Fprintf(&b, ` AND logName="projects/%s/logs/serviceweaver"`, cfg.Project)
 
 	return b.String(), nil
 }

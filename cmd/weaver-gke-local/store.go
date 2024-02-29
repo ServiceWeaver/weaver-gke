@@ -26,14 +26,14 @@ import (
 
 var (
 	storeFlags  = flag.NewFlagSet("store", flag.ContinueOnError)
-	storeRegion = storeFlags.String("region", "us-central1", "Simulated GKE region")
+	storeRegion = storeFlags.String("region", "none", "Simulated GKE region")
 )
 
 var storeSpec = tool.StoreSpec{
 	Tool:  "weaver gke-local",
 	Flags: storeFlags,
 	Store: func(context.Context) (store.Store, error) {
-		if *storeRegion == "" {
+		if *storeRegion == "none" {
 			return nil, fmt.Errorf("must specify --region flag")
 		}
 		return local.Store(*storeRegion)

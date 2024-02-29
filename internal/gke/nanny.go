@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	sync "sync"
 	"time"
 
@@ -125,7 +126,21 @@ func runNannyServer(ctx context.Context, server *http.Server, lis net.Listener) 
 // Controller returns the HTTP address of the controller and an HTTP client
 // that can be used to contact the controller.
 func Controller(ctx context.Context, config CloudConfig) (string, *http.Client, error) {
-	configCluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
+	tmpl := fmt.Sprintf("projects/%s/locations/global/memberships/%s",
+		config.Project, applicationClusterName)
+
+	out, err := runGcloud(config, "", cmdOptions{},
+		"container", "fleet", "ingress", "describe",
+		"--format=value(spec.multiclusteringress.configMembership)")
+	if err != nil {
+		return "", nil, err
+	}
+	out = strings.TrimSuffix(out, "\n") // remove trailing newline
+	var region string
+	fmt.Sscanf(out, tmpl+"-%s", &region)
+
+	fmt.Fprintf(os.Stderr, "Robert - Controller deployed in region: %v\n", region)
+	configCluster, err := GetClusterInfo(ctx, config, region)
 	if err != nil {
 		return "", nil, err
 	}

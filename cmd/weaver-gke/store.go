@@ -27,23 +27,23 @@ import (
 
 var (
 	storeFlags  = newCloudFlagSet("store", flag.ContinueOnError)
-	storeRegion = storeFlags.String("region", gke.ConfigClusterRegion,
-		`Cloud region where the store resides. Default value is the region of
-the Service Weaver configuration cluster.`)
-	storeCluster = storeFlags.String("cluster", gke.ConfigClusterName,
-		`GKE cluster where the store resides. Default value is the name of the
-Service Weaver configuration cluster.`)
-
+	storeRegion = storeFlags.String("region", "none",
+		`Cloud region where the store resides. This is the region of the Service
+Weaver configuration cluster, usually the first entry in the list of regions where
+to deploy the application, as specified by the user.`)
 	storeSpec = tool.StoreSpec{
 		Tool:  "weaver gke",
 		Flags: storeFlags.FlagSet,
 		Store: func(ctx context.Context) (store.Store, error) {
+			if *storeRegion == "none" {
+				return nil, fmt.Errorf("must specify --region flag")
+			}
 			config, err := storeFlags.CloudConfig()
 			if err != nil {
 				return nil, err
 			}
 			fmt.Fprintf(os.Stderr, "Using project %s\n", config.Project)
-			cluster, err := gke.GetClusterInfo(ctx, config, *storeCluster, *storeRegion)
+			cluster, err := gke.GetClusterInfo(ctx, config, *storeRegion)
 			if err != nil {
 				return nil, err
 			}

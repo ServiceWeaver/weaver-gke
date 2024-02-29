@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"os"
@@ -27,8 +28,6 @@ import (
 	"strings"
 	"text/template"
 	"time"
-
-	"log/slog"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
@@ -69,12 +68,6 @@ const (
 
 	// Name of Service Weaver application clusters.
 	applicationClusterName = "serviceweaver"
-
-	// Name of a Service Weaver configuration cluster.
-	ConfigClusterName = "serviceweaver-config"
-
-	// Region for the Service Weaver configuration cluster.
-	ConfigClusterRegion = "us-central1"
 
 	// Name of the backend config used for configuring application listener
 	// backends.

@@ -94,7 +94,7 @@ func links(app, version string) (tool.Links, error) {
 		logQuery = fmt.Sprintf(`full_version == %q`, version)
 	}
 	logQuery += ` && !("serviceweaver/system" in attrs)`
-	logQuery, err = gke.Translate(config.Project, logQuery)
+	logQuery, err = gke.Translate(config, logQuery)
 	if err != nil {
 		return tool.Links{}, err
 	}

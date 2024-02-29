@@ -66,11 +66,6 @@ func Purge(ctx context.Context, config CloudConfig) error {
 	}
 
 	// Start deleting the clusters, if necessary.
-	if wait, err := deleteConfigCluster(ctx, config); err != nil {
-		errs = append(errs, err)
-	} else if wait != nil {
-		waits = append(waits, wait)
-	}
 	appClusters, err := getApplicationClusters(ctx, config)
 	if err != nil {
 		errs = append(errs, err)
@@ -209,18 +204,6 @@ func deleteRepository(ctx context.Context, config CloudConfig) (func() error, er
 		fmt.Fprintf(os.Stderr, "Done deleting artifacts repository %q in region %s\n", dockerRepoName, buildLocation)
 		return nil
 	}, nil
-}
-
-// deleteConfigCluster deletes the Service Weaver configuration cluster.
-func deleteConfigCluster(ctx context.Context, config CloudConfig) (func() error, error) {
-	exists, err := hasCluster(ctx, config, ConfigClusterName, ConfigClusterRegion)
-	if err != nil {
-		return nil, err
-	}
-	if !exists { // already deleted
-		return nil, nil
-	}
-	return deleteCluster(ctx, config, ConfigClusterName, ConfigClusterRegion)
 }
 
 // getApplicationClusters returns the list of Service Weaver application clusters.

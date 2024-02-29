@@ -20,7 +20,7 @@ import (
 )
 
 func TestTranslate(t *testing.T) {
-	const project = "p"
+	cfg := CloudConfig{Project: "p"}
 	for _, test := range []struct {
 		query   string
 		want    string
@@ -43,7 +43,7 @@ func TestTranslate(t *testing.T) {
 		{`!(app == "todo")`, `(NOT (labels."serviceweaver/app"="todo"))`, false},
 	} {
 		t.Run(test.query, func(t *testing.T) {
-			got, err := Translate(project, test.query)
+			got, err := Translate(cfg, test.query)
 			if err != nil {
 				t.Fatalf("translate(%s): %v", test.query, err)
 			}

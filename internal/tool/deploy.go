@@ -148,6 +148,9 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 			listeners[lis] = &config.GKEConfig_ListenerOptions{PublicHostname: opts.PublicHostname}
 		}
 	}
+	if err := validateDeployRegions(parsed.Regions); err != nil {
+		return nil, err
+	}
 
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
@@ -192,7 +195,7 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 	}
 	if versions.DeployerVersion != version.DeployerVersion {
 		// Try to relativize the binary, defaulting to the absolute path if
-		// there are any errors..
+		// there are any errors.
 		binary := app.Binary
 		if cwd, err := os.Getwd(); err == nil {
 			if rel, err := filepath.Rel(cwd, app.Binary); err == nil {
@@ -276,10 +279,6 @@ persists, please file an issue at https://github.com/ServiceWeaver/weaver/issues
 
 // startRollout starts the rollout of the given application version.
 func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) error {
-	if err := pickDeployRegions(cfg); err != nil {
-		return err
-	}
-
 	req, err := d.PrepareRollout(ctx, cfg)
 	if err != nil {
 		return err
@@ -310,22 +309,19 @@ func (d *DeploySpec) startRollout(ctx context.Context, cfg *config.GKEConfig) er
 	return fmt.Errorf("timeout trying to deploy the app; last error: %w", err)
 }
 
-// pickDeployRegions ensures that the application config has a valid set of
-// unique regions to deploy the application. If the app config doesn't specify
-// any regions where to deploy the app, we pick the regions.
+// validateDeployRegions ensures that the application config has a valid set of
+// unique regions to deploy the application.
 //
-// TODO(rgrandl): We pick "us-west1" as the default region. However, we should
-// determine the set of regions to deploy the app based on various constraints
-// (e.g., traffic patterns, geographical location, etc.).
-func pickDeployRegions(cfg *config.GKEConfig) error {
-	if len(cfg.Regions) == 0 {
-		cfg.Regions = []string{"us-west1"}
-		return nil
+// Note that at least one region should be specified.
+func validateDeployRegions(regions []string) error {
+	// Ensure that at least one region where to deploy the app is specified.
+	if len(regions) == 0 {
+		return fmt.Errorf("no regions where to deploy the app was specified")
 	}
 
 	// Ensure that the set of regions is unique.
-	unique := make(map[string]bool, len(cfg.Regions))
-	for _, elem := range cfg.Regions {
+	unique := make(map[string]bool, len(regions))
+	for _, elem := range regions {
 		if unique[elem] {
 			return fmt.Errorf("the set of regions should be unique; found %s "+
 				"multiple times", elem)

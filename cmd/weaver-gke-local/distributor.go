@@ -25,7 +25,7 @@ import (
 var (
 	distributorFlags       = flag.NewFlagSet("distributor", flag.ContinueOnError)
 	distributorId          = distributorFlags.String("id", "", "distributor unique id")
-	distributorRegion      = distributorFlags.String("region", "us-west1", "Simulated GKE region")
+	distributorRegion      = distributorFlags.String("region", "", "Simulated GKE region")
 	distributorPort        = distributorFlags.Int("port", 0, "Distributor port")
 	distributorManagerPort = distributorFlags.Int("manager_port", 0, "Local manager port")
 )
