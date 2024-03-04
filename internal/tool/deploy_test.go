@@ -44,25 +44,29 @@ func TestMakeGKEConfig(t *testing.T) {
 	}
 	for _, c := range []testCase{
 		{
-			name:   "empty",
-			config: ``,
-			expect: &config.GKEConfig{},
+			name: "basic",
+			config: `
+[gke]
+regions = ["us-central1"]`,
+			expect: &config.GKEConfig{Regions: []string{"us-central1"}},
 		},
 		{
 			name: "simple",
 			config: `
 [gke]
 mtls = true
+regions = ["us-central1"]
 `,
-			expect: &config.GKEConfig{Mtls: true},
+			expect: &config.GKEConfig{Mtls: true, Regions: []string{"us-central1"}},
 		},
 		{
 			name: "long-key",
 			config: `
 ["github.com/ServiceWeaver/weaver-gke/internal/gke"]
 mtls = true
+regions = ["us-central1"]
 `,
-			expect: &config.GKEConfig{Mtls: true},
+			expect: &config.GKEConfig{Mtls: true, Regions: []string{"us-central1"}},
 		},
 		{
 			name: "listeners",
@@ -70,12 +74,14 @@ mtls = true
 [gke]
 listeners.a = {public_hostname="a.com"}
 listeners.b = {public_hostname="b.com"}
+regions = ["us-central1"]
 `,
 			expect: &config.GKEConfig{
 				Listeners: map[string]*config.GKEConfig_ListenerOptions{
 					"a": {PublicHostname: "a.com"},
 					"b": {PublicHostname: "b.com"},
 				},
+				Regions: []string{"us-central1"},
 			},
 		},
 	} {

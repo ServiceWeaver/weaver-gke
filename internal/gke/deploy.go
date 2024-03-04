@@ -105,7 +105,7 @@ const (
 	caName         = "serviceweaver-ca"
 	caPoolName     = "serviceweaver-ca"
 	caOrganization = "serviceweaver"
-	caLocation     = ConfigClusterRegion
+	caLocation     = "us-central1"
 
 	// Serving port for the nanny.
 	nannyServingPort = 80
@@ -255,7 +255,7 @@ downloaded and installed in the container. Do you want to proceed? [Y/n] `)
 			stop(err)
 		}
 	}()
-	configCluster, externalGatewayIP, err := prepareProject(childCtx, config, cfg)
+	_, externalGatewayIP, err := prepareProject(childCtx, config, cfg)
 	if err != nil {
 		stop(err)
 	}
@@ -312,7 +312,7 @@ to use CloudDNS for name resolution [1].
 	fmt.Fprintln(os.Stderr, b.String())
 
 	// Build the rollout request.
-	req := buildRolloutRequest(configCluster, cfg)
+	req := buildRolloutRequest(cfg)
 	return req, nil
 }
 
@@ -455,7 +455,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	}
 
 	// Ensure the Service Weaver configuration cluster is setup.
-	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, cfg, ConfigClusterName, ConfigClusterRegion, bindings)
+	configCluster, globalGatewayIP, err := ensureConfigCluster(ctx, config, cfg, bindings)
 	if err != nil {
 		return nil, "", err
 	}
@@ -463,7 +463,7 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	// Ensure that a cluster is started in each deployment region and that
 	// a distributor and a manager are running in each cluster.
 	for _, region := range cfg.Regions {
-		cluster, gatewayIP, err := ensureApplicationCluster(ctx, config, cfg, applicationClusterName, region)
+		cluster, gatewayIP, err := ensureApplicationCluster(ctx, config, cfg, region)
 		if err != nil {
 			return nil, "", err
 		}
@@ -474,12 +474,10 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	return configCluster, globalGatewayIP, nil
 }
 
-func buildRolloutRequest(configCluster *ClusterInfo, cfg *config.GKEConfig) *controller.RolloutRequest {
-	req := &controller.RolloutRequest{
-		Config: cfg,
-	}
+func buildRolloutRequest(cfg *config.GKEConfig) *controller.RolloutRequest {
+	req := &controller.RolloutRequest{Config: cfg}
 	for _, region := range cfg.Regions {
-		// NOTE: distributor address must be resolveable from anywhere inside
+		// NOTE: distributor address must be resolvable from anywhere inside
 		// the project's VPC.
 		distributorAddr :=
 			fmt.Sprintf("https://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
@@ -956,11 +954,92 @@ func createServiceAccountsIAMPolicyRole(ctx context.Context, config CloudConfig)
 	})
 }
 
+// getConfigCluster returns the name of the cluster and the name of the region
+// that manages all the applications within a Service Weaver project.
+func getConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig) (string, string, error) {
+	name, region, err := getRunningConfigCluster(config)
+	if err != nil {
+		return "", "", err
+	}
+	if name == "" && region == "" {
+		// No config cluster. Set up a config cluster in the first region from the
+		// list of regions where to rollout the app, as specified by the user.
+		return applicationClusterName, cfg.Regions[0], nil
+	}
+
+	// Check if the config cluster actually exists.
+	exists, err := hasCluster(ctx, config, name, region)
+	if err != nil {
+		return "", "", err
+	}
+	if exists {
+		return name, region, nil
+	}
+	// The config cluster doesn't exist; disable ingress.
+	// TODO(rgrandl): we have to force the deletion of the ingress, because some
+	// other resources that depend on the ingress might be lingering around. We
+	// should delete all these resources as well.
+	_, err = runGcloud(config,
+		fmt.Sprintf("Disable multi-cluster ingress for cluster %q in %q",
+			name, region), cmdOptions{},
+		"container", "fleet", "ingress", "disable", "--force")
+
+	// The name of new config clusters will always be applicationClusterName.
+	name = applicationClusterName
+	if err != nil {
+		return "", "", err
+	}
+
+	// Set up the config cluster in the first region from the list of regions
+	// where to rollout the app, as specified by the user.
+	return name, cfg.Regions[0], nil
+}
+
+// getRunningConfigCluster returns information about the config cluster that
+// manages all the applications within a Service Weaver project.
+//
+// Returns empty cluster name, and empty region if no config cluster is running.
+func getRunningConfigCluster(config CloudConfig) (string, string, error) {
+	// Check if there is a config cluster already running.
+	out, err := runGcloud(config, "", cmdOptions{},
+		"container", "fleet", "ingress", "describe",
+		"--format=value(spec.multiclusteringress.configMembership)")
+	if err != nil {
+		// There is no config cluster.
+		return "", "", nil
+	}
+
+	// There is a config cluster entry. Extract the region where the config
+	// cluster should be running.
+	out = strings.TrimSuffix(out, "\n") // remove trailing newline
+	var clusterName, region string
+	if strings.Contains(out, "serviceweaver-config") {
+		// Legacy config cluster name.
+		clusterName = "serviceweaver-config"
+	} else if strings.Contains(out, applicationClusterName) {
+		// New config clusters should always be named applicationClusterName.
+		clusterName = applicationClusterName
+	} else {
+		// Unable to find ingress cluster.
+		return "", "", fmt.Errorf("unable to find ingress cluster for project %v", config.Project)
+	}
+
+	regionMatcher := fmt.Sprintf("projects/%s/locations/global/memberships/%s", config.Project, clusterName)
+	if _, err := fmt.Sscanf(out, regionMatcher+"-%s", &region); err != nil {
+		return "", "", fmt.Errorf("unable to parse config region name: %v", err)
+	}
+	return clusterName, region, nil
+}
+
 // ensureConfigCluster sets up a Service Weaver configuration cluster, returning the
 // cluster information and the IP address of the gateway that routes ingress
 // traffic to all Service Weaver applications.
-func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string, bindings iamBindings) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, cfg, name, region)
+func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, bindings iamBindings) (*ClusterInfo, string, error) {
+	name, region, err := getConfigCluster(ctx, config, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+	cluster, err := ensureManagedCluster(ctx, config, name, region)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1022,8 +1101,8 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 // and running in the given region and is set up to host Service Weaver applications.
 // It returns the cluster information and the IP address of the gateway that
 // routes internal traffic to Service Weaver applications in the cluster.
-func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, clusterName, region string) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, cfg, clusterName, region)
+func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, region string) (*ClusterInfo, string, error) {
+	cluster, err := ensureManagedCluster(ctx, config, applicationClusterName, region)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1162,7 +1241,7 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 
 // ensureManagedCluster ensures that a Service Weaver managed cluster is available
 // and running in the given region.
-func ensureManagedCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, name, region string) (*ClusterInfo, error) {
+func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region string) (*ClusterInfo, error) {
 	exists, err := hasCluster(ctx, config, name, region)
 	if err != nil {
 		return nil, err
@@ -1351,8 +1430,7 @@ func hasCluster(ctx context.Context, config CloudConfig, name, region string) (b
 	}
 	defer client.Close()
 	if _, err = client.GetCluster(ctx, &containerpb.GetClusterRequest{
-		Name: fmt.Sprintf("projects/%s/locations/%s/clusters/%s",
-			config.Project, region, name),
+		Name: fmt.Sprintf("projects/%s/locations/%s/clusters/%s", config.Project, region, name),
 	}); err != nil {
 		if isNotFound(err) {
 			return false, nil
@@ -1553,7 +1631,7 @@ func registerWithFleet(ctx context.Context, config CloudConfig, cluster *Cluster
 
 // unregisterFromFleet removes the given cluster's registration with the project
 // fleet, if one exists.
-func unregisterFromFleet(ctx context.Context, config CloudConfig, name, region string) error {
+func unregisterFromFleet(_ context.Context, config CloudConfig, name, region string) error {
 	mName := fmt.Sprintf("%s-%s", name, region)
 
 	// TODO(spetrovic): Implement these un-registrations using the Go API.
@@ -1604,7 +1682,7 @@ func waitForServiceExportsResource(ctx context.Context, cluster *ClusterInfo) er
 }
 
 // ensureMultiClusterIngress ensures multi-cluster ingress is enabled
-// fo the given (config) cluster.
+// for the given (config) cluster.
 func ensureMultiClusterIngress(cluster *ClusterInfo) error {
 	fName := fmt.Sprintf("projects/%s/locations/global/memberships/%s-%s",
 		cluster.CloudConfig.Project, cluster.Name, cluster.Region)
@@ -1629,17 +1707,25 @@ func ensureMultiClusterIngress(cluster *ClusterInfo) error {
 			return err
 		}
 	}
+
 	// Ingress feature enabled: see if it's for our cluster.
 	out = strings.TrimSuffix(out, "\n") // remove trailing newline
 	if out == fName {
 		return nil
 	}
-	// Update ingress feature to point to our cluster.
-	_, err = runGcloud(cluster.CloudConfig,
-		fmt.Sprintf("Updating multi-cluster ingress for cluster %q in %q",
-			cluster.Name, cluster.Region), cmdOptions{},
-		"container", "fleet", "ingress", "update", "--config-membership",
-		fName, "--quiet")
+
+	// Update ingress feature to point to our cluster. Retry twice since it sometimes
+	// takes more than two minutes for the ingress controller to be updated.
+	for i := 0; i < 2; i++ {
+		_, err = runGcloud(cluster.CloudConfig,
+			fmt.Sprintf("Updating multi-cluster ingress for cluster %q in %q",
+				cluster.Name, cluster.Region), cmdOptions{},
+			"container", "fleet", "ingress", "update", "--config-membership",
+			fName, "--quiet")
+		if err == nil {
+			break
+		}
+	}
 	return err
 }
 
@@ -1760,7 +1846,11 @@ func ensureRegionalInternalGateway(ctx context.Context, cluster *ClusterInfo) (s
 // ensureWeaverServices ensures that Service Weaver services (i.e., controller and
 // all needed distributors and managers) are running.
 func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, toolImageURL string) error {
-	if err := ensureController(ctx, config, toolImageURL); err != nil {
+	name, region, err := getConfigCluster(ctx, config, cfg)
+	if err != nil {
+		return err
+	}
+	if err := ensureController(ctx, config, name, region, toolImageURL); err != nil {
 		return err
 	}
 	for _, region := range cfg.Regions {
@@ -1779,8 +1869,8 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 }
 
 // ensureController ensures that a controller is running in the config cluster.
-func ensureController(ctx context.Context, config CloudConfig, toolImageURL string) error {
-	cluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
+func ensureController(ctx context.Context, config CloudConfig, clusterName, region string, toolImageURL string) error {
+	cluster, err := GetClusterInfo(ctx, config, clusterName, region)
 	if err != nil {
 		return err
 	}

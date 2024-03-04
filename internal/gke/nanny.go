@@ -125,7 +125,12 @@ func runNannyServer(ctx context.Context, server *http.Server, lis net.Listener) 
 // Controller returns the HTTP address of the controller and an HTTP client
 // that can be used to contact the controller.
 func Controller(ctx context.Context, config CloudConfig) (string, *http.Client, error) {
-	configCluster, err := GetClusterInfo(ctx, config, ConfigClusterName, ConfigClusterRegion)
+	name, region, err := getRunningConfigCluster(config)
+	if err != nil || region == "" {
+		return "", nil, err
+	}
+
+	configCluster, err := GetClusterInfo(ctx, config, name, region)
 	if err != nil {
 		return "", nil, err
 	}

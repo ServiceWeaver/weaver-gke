@@ -213,14 +213,18 @@ func deleteRepository(ctx context.Context, config CloudConfig) (func() error, er
 
 // deleteConfigCluster deletes the Service Weaver configuration cluster.
 func deleteConfigCluster(ctx context.Context, config CloudConfig) (func() error, error) {
-	exists, err := hasCluster(ctx, config, ConfigClusterName, ConfigClusterRegion)
+	name, region, err := getRunningConfigCluster(config)
+	if err != nil || region == "" { // already deleted
+		return nil, nil
+	}
+	exists, err := hasCluster(ctx, config, name, region)
 	if err != nil {
 		return nil, err
 	}
 	if !exists { // already deleted
 		return nil, nil
 	}
-	return deleteCluster(ctx, config, ConfigClusterName, ConfigClusterRegion)
+	return deleteCluster(ctx, config, name, region)
 }
 
 // getApplicationClusters returns the list of Service Weaver application clusters.
