@@ -36,6 +36,10 @@ func runGcloud(config CloudConfig, msg string, opts cmdOptions, args ...string) 
 		return "", fmt.Errorf("cannot get cloud access token: %w", err)
 	}
 	opts.EnvOverrides = append(opts.EnvOverrides, fmt.Sprintf("CLOUDSDK_AUTH_ACCESS_TOKEN=%s", token.AccessToken))
+	args = append(args,
+		fmt.Sprintf("--account=%s", config.Account),
+		fmt.Sprintf("--project=%s", config.Project),
+	)
 	return runCmd(msg, opts, "gcloud", args...)
 }
 
