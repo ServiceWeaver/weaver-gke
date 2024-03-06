@@ -19,6 +19,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net"
 	"os"
@@ -27,8 +28,6 @@ import (
 	"strings"
 	"text/template"
 	"time"
-
-	"log/slog"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
@@ -424,7 +423,7 @@ var autoJSONTmpl = template.Must(template.New("auto").Parse(`{
 			"requests":{"minAllowed":{"memory":"{{.MinMemory}}"}}
 		}],
 		"containerControlledResources":["memory"],
-		"global":{"maxReplicas":999999,"minReplicas":1}
+		"global":{"maxReplicas":999999,"minReplicas":{{.MinReplicas}}
 	},
 	"goals":{
 		"metrics":[{
@@ -459,6 +458,7 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 		DeploymentID     string
 		AppContainerName string
 		MinMemory        string
+		MinReplicas      int32
 		TargetKind       string
 		TargetName       string
 	}{
@@ -468,6 +468,7 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 		DeploymentID:     dep.Id,
 		AppContainerName: appContainerName,
 		MinMemory:        memoryUnit.String(),
+		MinReplicas:      cfg.MinReplicas,
 		TargetKind:       "Deployment",
 		TargetName:       name,
 	}); err != nil {
