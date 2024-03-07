@@ -82,7 +82,7 @@ type ClusterInfo struct {
 func GetClusterInfo(ctx context.Context, config CloudConfig, cluster, region string) (*ClusterInfo, error) {
 	// Fetch cluster credentials to the local machine.
 	kubeFileName := filepath.Join(
-		os.TempDir(), fmt.Sprintf("serviceweaver_%s_%s", cluster, uuid.New().String()))
+		os.TempDir(), fmt.Sprintf("serviceweaver_%s", uuid.New().String()))
 	if _, err := runGcloud(config, "", cmdOptions{
 		EnvOverrides: []string{
 			fmt.Sprintf("KUBECONFIG=%s", kubeFileName),
@@ -137,7 +137,7 @@ func isZone(location string) bool {
 	return strings.Count(location, "-") > 1
 }
 
-func fillClusterInfo(ctx context.Context, cluster, region string, cc CloudConfig, kc *rest.Config) (*ClusterInfo, error) {
+func fillClusterInfo(_ context.Context, cluster, region string, cc CloudConfig, kc *rest.Config) (*ClusterInfo, error) {
 	// Avoid Kubernetes' low default QPS limit.
 	kc.QPS = math.MaxInt
 	kc.Burst = math.MaxInt

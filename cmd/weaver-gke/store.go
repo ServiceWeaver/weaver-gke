@@ -26,18 +26,20 @@ import (
 )
 
 var (
-	storeFlags  = newCloudFlagSet("store", flag.ContinueOnError)
-	storeRegion = storeFlags.String("region", gke.ConfigClusterRegion,
-		`Cloud region where the store resides. Default value is the region of
-the Service Weaver configuration cluster.`)
-	storeCluster = storeFlags.String("cluster", gke.ConfigClusterName,
-		`GKE cluster where the store resides. Default value is the name of the
-Service Weaver configuration cluster.`)
-
-	storeSpec = tool.StoreSpec{
+	storeFlags   = newCloudFlagSet("store", flag.ContinueOnError)
+	storeRegion  = storeFlags.String("region", "", `Cloud region where the store resides.`)
+	storeCluster = storeFlags.String("cluster", "", `GKE cluster where the store resides.`)
+	storeSpec    = tool.StoreSpec{
 		Tool:  "weaver gke",
 		Flags: storeFlags.FlagSet,
 		Store: func(ctx context.Context) (store.Store, error) {
+			if *storeRegion == "" {
+				return nil, fmt.Errorf("must specify --region flag")
+			}
+			if *storeCluster == "" {
+				return nil, fmt.Errorf("must specify --cluster flag. Note that" +
+					"the cluster should be either serviceweaver or serviceweaver-config")
+			}
 			config, err := storeFlags.CloudConfig()
 			if err != nil {
 				return nil, err

@@ -138,7 +138,6 @@ func newGCPCatter(ctx context.Context, config CloudConfig, q wlogging.Query) (*g
 	if err != nil {
 		return nil, fmt.Errorf("error translating query %s: %v", q, err)
 	}
-
 	client, err := logadmin.NewClient(ctx, config.Project, config.ClientOptions()...)
 	if err != nil {
 		return nil, fmt.Errorf("error creating logadmin client: %w", err)
@@ -412,7 +411,8 @@ func Translate(project string, query wlogging.Query) (string, error) {
 	// TODO(mwhittaker): Restrict based on location.
 	fmt.Fprintf(&b, ` AND resource.type="k8s_container"`)
 	fmt.Fprintf(&b, ` AND resource.labels.project_id=%q`, project)
-	fmt.Fprintf(&b, ` AND (resource.labels.cluster_name=%q OR resource.labels.cluster_name=%q)`, applicationClusterName, ConfigClusterName)
+	fmt.Fprintf(&b, ` AND (resource.labels.cluster_name=%q OR resource.labels.cluster_name=%q)`,
+		applicationClusterName, fmt.Sprintf("%s-config", applicationClusterName))
 	fmt.Fprintf(&b, ` AND resource.labels.namespace_name=%q`, namespaceName)
 	fmt.Fprintf(&b, ` AND (resource.labels.container_name=%q OR resource.labels.container_name=%q)`, appContainerName, nannyContainerName)
 	fmt.Fprintf(&b, ` AND logName="projects/%s/logs/serviceweaver"`, project)
