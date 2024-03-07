@@ -32,6 +32,9 @@ message GKEConfig {
   //   https://cloud.google.com/compute/docs/regions-zones
   repeated string regions = 3;
 
+  // Minimum number of running pods for each component.
+  int32 min_replicas = 11;
+
   // Options for the application listeners, keyed by listener name.
   // If a listener isn't specified in the map, default options will be used.
   message ListenerOptions {

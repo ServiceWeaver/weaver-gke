@@ -371,7 +371,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: ptrOf(int32(1)),
+			Replicas: ptrOf(int32(cfg.MinReplicas)),
 			Selector: &metav1.LabelSelector{
 				MatchLabels: map[string]string{
 					appKey:        name{dep.App.Name}.DNSLabel(),
@@ -417,7 +417,7 @@ var autoJSONTmpl = template.Must(template.New("auto").Parse(`{
 			"requests":{"minAllowed":{"memory":"{{.MinMemory}}"}}
 		}],
 		"containerControlledResources":["memory"],
-		"global":{"maxReplicas":999999,"minReplicas":1}
+		"global":{"maxReplicas":999999,"minReplicas":{{.MinReplicas}}}
 	},
 	"goals":{
 		"metrics":[{
@@ -452,6 +452,7 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 		DeploymentID     string
 		AppContainerName string
 		MinMemory        string
+		MinReplicas      int32
 		TargetKind       string
 		TargetName       string
 	}{
@@ -461,6 +462,7 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 		DeploymentID:     name{dep.Id}.DNSLabel(),
 		AppContainerName: appContainerName,
 		MinMemory:        memoryUnit.String(),
+		MinReplicas:      cfg.MinReplicas,
 		TargetKind:       "Deployment",
 		TargetName:       aName,
 	}); err != nil {
