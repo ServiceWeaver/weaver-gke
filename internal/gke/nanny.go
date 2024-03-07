@@ -372,13 +372,14 @@ func RunManager(ctx context.Context, port int) error {
 		},
 		// deleteAppVersions
 		func(_ context.Context, app string, versions []*config.GKEConfig) error {
+			var errs []error
 			for _, version := range versions {
 				id := version.Deployment.Id
 				if err := kill(ctx, cluster, logger, app, id); err != nil {
-					return fmt.Errorf("kill %q: %w", version, err)
+					errs = append(errs, fmt.Errorf("kill %q: %w", version, err))
 				}
 			}
-			return nil
+			return errors.Join(errs...)
 		},
 	)
 
