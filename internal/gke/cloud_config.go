@@ -115,7 +115,7 @@ func SetupCloudConfig(project, token, account string) (CloudConfig, error) {
 
 	number, err := runGcloud(
 		config, "", cmdOptions{}, "projects", "describe", project,
-		"--format=value(projectNumber)", "--project", project)
+		"--format=value(projectNumber)")
 	if err != nil {
 		return CloudConfig{}, fmt.Errorf("couldn't find the numeric project "+
 			"id for project %q: %w", project, err)
