@@ -48,16 +48,17 @@ func TestMakeGKEConfig(t *testing.T) {
 			config: `
 [gke]
 regions = ["us-central1"]`,
-			expect: &config.GKEConfig{Regions: []string{"us-central1"}},
+			expect: &config.GKEConfig{MinReplicas: 1, Regions: []string{"us-central1"}},
 		},
 		{
 			name: "simple",
 			config: `
 [gke]
 mtls = true
+minreplicas = 2
 regions = ["us-central1"]
 `,
-			expect: &config.GKEConfig{Mtls: true, Regions: []string{"us-central1"}},
+			expect: &config.GKEConfig{MinReplicas: 2, Mtls: true, Regions: []string{"us-central1"}},
 		},
 		{
 			name: "long-key",
@@ -66,7 +67,7 @@ regions = ["us-central1"]
 mtls = true
 regions = ["us-central1"]
 `,
-			expect: &config.GKEConfig{Mtls: true, Regions: []string{"us-central1"}},
+			expect: &config.GKEConfig{MinReplicas: 1, Mtls: true, Regions: []string{"us-central1"}},
 		},
 		{
 			name: "listeners",
@@ -77,6 +78,7 @@ listeners.b = {public_hostname="b.com"}
 regions = ["us-central1"]
 `,
 			expect: &config.GKEConfig{
+				MinReplicas: 1,
 				Listeners: map[string]*config.GKEConfig_ListenerOptions{
 					"a": {PublicHostname: "a.com"},
 					"b": {PublicHostname: "b.com"},

@@ -117,9 +117,10 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		PublicHostname string `toml:"public_hostname"`
 	}
 	type gkeConfigSchema struct {
-		Regions   []string
-		Listeners map[string]lisOpts
-		MTLS      bool
+		Regions     []string
+		MinReplicas int32
+		Listeners   map[string]lisOpts
+		MTLS        bool
 	}
 	parsed := &gkeConfigSchema{}
 	if err := runtime.ParseConfigSection(gkeKey, shortGKEKey, app.Sections, parsed); err != nil {
@@ -151,11 +152,16 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 	if err := validateDeployRegions(parsed.Regions); err != nil {
 		return nil, err
 	}
+	if parsed.MinReplicas == 0 {
+		// Ensure that each component runs in at least 1 pod.
+		parsed.MinReplicas = 1
+	}
 
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
-		Regions:   parsed.Regions,
-		Listeners: listeners,
+		Regions:     parsed.Regions,
+		MinReplicas: parsed.MinReplicas,
+		Listeners:   listeners,
 		Deployment: &protos.Deployment{
 			App: app,
 			Id:  depID.String(),

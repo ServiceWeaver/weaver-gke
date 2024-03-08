@@ -82,7 +82,7 @@ jobs:
       # TODO(spetrovic): use the hostname directly once we change the DNS
       # records to point to the IP address below.
       run: |
-        timeout ${{ env.WAIT_TIMEOUT }} /bin/sh -c 'while true; do wget -O- -T 10 --header "Host: echo.serviceweaver.dev" http://34.36.173.102:80?s=${{env.VERSION}} && break; sleep 15; done'
+        timeout ${{ env.WAIT_TIMEOUT }} /bin/sh -c 'while true; do wget -O- -T 10 --header "Host: echo.serviceweaver.dev" http://34.128.184.184:80?s=${{env.VERSION}} && break; sleep 15; done'
 
     - name: Cleanup the echo app
       if: always()
