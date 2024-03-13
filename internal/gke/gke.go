@@ -69,6 +69,9 @@ const (
 	// Name of Service Weaver application clusters.
 	applicationClusterName = "serviceweaver"
 
+	// Name of the deprecated Service Weaver config cluster.
+	deprecatedConfigClusterName = "serviceweaver-config"
+
 	// Name of the backend config used for configuring application listener
 	// backends.
 	backendConfigName = "serviceweaver"
