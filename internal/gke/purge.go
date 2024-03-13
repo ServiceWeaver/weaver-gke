@@ -71,6 +71,11 @@ func Purge(ctx context.Context, config CloudConfig) error {
 	} else if wait != nil {
 		waits = append(waits, wait)
 	}
+	if wait, err := deleteDeprecatedConfigCluster(ctx, config); err != nil {
+		errs = append(errs, err)
+	} else if wait != nil {
+		waits = append(waits, wait)
+	}
 	appClusters, err := getApplicationClusters(ctx, config)
 	if err != nil {
 		errs = append(errs, err)
@@ -225,6 +230,22 @@ func deleteConfigCluster(ctx context.Context, config CloudConfig) (func() error,
 		return nil, nil
 	}
 	return deleteCluster(ctx, config, name, region)
+}
+
+// deleteDeprecatedConfigCluster deletes the deprecated Service Weaver configuration cluster.
+//
+// Note that we used to create config clusters in "us-central1" with the name
+// "serviceweaver-config". When the user runs the purge command, we want to make
+// sure we delete any deprecated config cluster as well.
+func deleteDeprecatedConfigCluster(ctx context.Context, config CloudConfig) (func() error, error) {
+	exists, err := hasCluster(ctx, config, deprecatedConfigClusterName, caLocation)
+	if err != nil {
+		return nil, err
+	}
+	if !exists { // already deleted
+		return nil, nil
+	}
+	return deleteCluster(ctx, config, deprecatedConfigClusterName, caLocation)
 }
 
 // getApplicationClusters returns the list of Service Weaver application clusters.

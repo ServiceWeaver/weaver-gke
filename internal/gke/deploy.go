@@ -1013,9 +1013,9 @@ func getRunningConfigCluster(config CloudConfig) (string, string, error) {
 	// cluster should be running.
 	out = strings.TrimSuffix(out, "\n") // remove trailing newline
 	var clusterName, region string
-	if strings.Contains(out, "serviceweaver-config") {
+	if strings.Contains(out, deprecatedConfigClusterName) {
 		// Legacy config cluster name.
-		clusterName = "serviceweaver-config"
+		clusterName = deprecatedConfigClusterName
 	} else if strings.Contains(out, applicationClusterName) {
 		// New config clusters should always be named applicationClusterName.
 		clusterName = applicationClusterName
