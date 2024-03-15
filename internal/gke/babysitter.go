@@ -142,9 +142,11 @@ func RunBabysitter(ctx context.Context) error {
 		return err
 	}
 
+	// Create an unique http client to the manager, that will be reused across all
+	// the http requests to the manager.
 	m := &manager.HttpClient{
-		Addr:      cfg.ManagerAddr,
-		TLSConfig: mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager"),
+		Addr:   cfg.ManagerAddr,
+		Client: makeHttpClient(mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager")),
 	}
 	mux := http.NewServeMux()
 	host, err := os.Hostname()

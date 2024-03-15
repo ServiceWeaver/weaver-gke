@@ -33,6 +33,7 @@ package local
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"fmt"
 	"log/slog"
@@ -137,6 +138,10 @@ func RunController(ctx context.Context, id string, region string, port int) erro
 		return selfCertPEM, selfKeyPEM, nil
 	}
 
+	// Create unique http client s.t., all the http requests from the controller to
+	// the distributor use the same underlying http client.
+	httpClient := makeHttpClient(mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "distributor"))
+
 	s, err := Store(region)
 	if err != nil {
 		return fmt.Errorf("cannot get the store: %w", err)
@@ -151,8 +156,8 @@ func RunController(ctx context.Context, id string, region string, port int) erro
 		10*time.Second, // actuationDelay
 		func(addr string) endpoints.Distributor {
 			return &distributor.HttpClient{
-				Addr:      addr,
-				TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "distributor"),
+				Addr:   addr,
+				Client: httpClient,
 			}
 		},
 		10*time.Second, // fetchAssignmentsInterval
@@ -223,8 +228,8 @@ func RunDistributor(ctx context.Context, id, region string, port, managerPort in
 		s,
 		logger,
 		&manager.HttpClient{
-			Addr:      managerAddr,
-			TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "manager"),
+			Addr:   managerAddr,
+			Client: makeHttpClient(mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "manager")),
 		},
 		region,
 		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
@@ -232,10 +237,7 @@ func RunDistributor(ctx context.Context, id, region string, port, managerPort in
 			if !ok { // should never happen
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
 			}
-			return &babysitter.HttpClient{
-				Addr:      addr,
-				TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, replicaSetIdentity),
-			}, nil
+			return babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(projectName, caCert, getSelfCert, replicaSetIdentity)), nil
 		},
 		10*time.Second, // manageAppsInterval
 		10*time.Second, // computeTrafficInterval
@@ -313,10 +315,7 @@ func RunManager(ctx context.Context, id, region string, port, proxyPort int) err
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
 			}
 			newBabysitter := func(addr string) endpoints.Babysitter {
-				return &babysitter.HttpClient{
-					Addr:      addr,
-					TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, replicaSetIdentity),
-				}
+				return babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(projectName, caCert, getSelfCert, replicaSetIdentity))
 			}
 			return starter.getHealthyPods(ctx, cfg, replicaSet, newBabysitter)
 		},
@@ -380,4 +379,12 @@ func RunProxy(ctx context.Context, id string, port int) error {
 	proxy := proxy.NewProxy(logger)
 	logger.Debug("Proxy listenening", "address", lis.Addr())
 	return proxy.Serve(ctx, lis, fmt.Sprintf("localhost:%d", port))
+}
+
+// makeHttpClient returns an http client based on whether TLS is enabled.
+func makeHttpClient(tlsConfig *tls.Config) *http.Client {
+	if tlsConfig != nil {
+		return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
+	}
+	return http.DefaultClient
 }

@@ -102,8 +102,8 @@ func startBabysitter(ctx context.Context, cfg *config.GKEConfig, s *Starter, rep
 
 	// Connection to the manager.
 	m := &manager.HttpClient{
-		Addr:      cfg.ManagerAddr,
-		TLSConfig: mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "manager"),
+		Addr:   cfg.ManagerAddr,
+		Client: makeHttpClient(mtls.ClientTLSConfig(projectName, caCert, getSelfCert, "manager")),
 	}
 	mux := http.NewServeMux()
 	hostname, err := os.Hostname()

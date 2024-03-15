@@ -16,7 +16,6 @@ package distributor
 
 import (
 	"context"
-	"crypto/tls"
 	"net/http"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
@@ -29,28 +28,16 @@ var _ endpoints.Distributor = &Distributor{}
 
 // HttpClient is a Client that executes requests over HTTP.
 type HttpClient struct {
-	Addr      string      // distributor address
-	TLSConfig *tls.Config // TLS config, possibly nil.
+	Addr   string       // babysitter address
+	Client *http.Client // The HTTP client to use to make requests.
 }
 
 var _ endpoints.Distributor = &HttpClient{}
 
-// client returns the HTTP client to use to make requests.
-func (h *HttpClient) client() *http.Client {
-	if h.TLSConfig == nil {
-		return http.DefaultClient
-	}
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: h.TLSConfig,
-		},
-	}
-}
-
 // Distribute implements the endpoints.Distributor interface.
 func (h *HttpClient) Distribute(ctx context.Context, req *nanny.ApplicationDistributionRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: distributeURL,
 		Request: req,
@@ -60,7 +47,7 @@ func (h *HttpClient) Distribute(ctx context.Context, req *nanny.ApplicationDistr
 // Cleanup implements the endpoints.Distributor interface.
 func (h *HttpClient) Cleanup(ctx context.Context, req *nanny.ApplicationCleanupRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: cleanupURL,
 		Request: req,
@@ -71,7 +58,7 @@ func (h *HttpClient) Cleanup(ctx context.Context, req *nanny.ApplicationCleanupR
 func (h *HttpClient) GetApplicationState(ctx context.Context, req *nanny.ApplicationStateAtDistributorRequest) (*nanny.ApplicationStateAtDistributor, error) {
 	reply := &nanny.ApplicationStateAtDistributor{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getApplicationStateURL,
 		Request: req,
@@ -84,7 +71,7 @@ func (h *HttpClient) GetApplicationState(ctx context.Context, req *nanny.Applica
 func (h *HttpClient) GetPublicTrafficAssignment(ctx context.Context) (*nanny.TrafficAssignment, error) {
 	reply := &nanny.TrafficAssignment{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getPublicTrafficAssignmentURL,
 		Request: nil,
@@ -97,7 +84,7 @@ func (h *HttpClient) GetPublicTrafficAssignment(ctx context.Context) (*nanny.Tra
 func (h *HttpClient) GetPrivateTrafficAssignment(ctx context.Context) (*nanny.TrafficAssignment, error) {
 	reply := &nanny.TrafficAssignment{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getPrivateTrafficAssignmentURL,
 		Request: nil,
@@ -110,7 +97,7 @@ func (h *HttpClient) GetPrivateTrafficAssignment(ctx context.Context) (*nanny.Tr
 func (h *HttpClient) RunProfiling(ctx context.Context, req *nanny.GetProfileRequest) (*protos.GetProfileReply, error) {
 	reply := &protos.GetProfileReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: runProfilingURL,
 		Request: req,

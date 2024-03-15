@@ -16,6 +16,7 @@ package gke
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -175,6 +176,9 @@ func RunController(ctx context.Context, port int) error {
 		return err
 	}
 
+	// Create unique http client s.t., all the http requests from the controller to
+	// the distributor use the same underlying http client.
+	httpClient := makeHttpClient(mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "distributor"))
 	mux := http.NewServeMux()
 	if _, err := controller.Start(ctx,
 		mux,
@@ -183,8 +187,8 @@ func RunController(ctx context.Context, port int) error {
 		10*time.Minute, // actuationDelay
 		func(addr string) endpoints.Distributor {
 			return &distributor.HttpClient{
-				Addr:      addr,
-				TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "distributor"),
+				Addr:   addr,
+				Client: httpClient,
 			}
 		},
 		10*time.Second, // fetchAssignmentsInterval
@@ -242,6 +246,10 @@ func RunDistributor(ctx context.Context, port int) error {
 		return err
 	}
 
+	// Track http clients to the babysitters, keyed by replica set.
+	var mu sync.Mutex
+	bsHttpClients := map[string]endpoints.Babysitter{}
+
 	mux := http.NewServeMux()
 	managerAddr := fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
 	if _, err := distributor.Start(ctx,
@@ -249,8 +257,8 @@ func RunDistributor(ctx context.Context, port int) error {
 		s,
 		logger,
 		&manager.HttpClient{
-			Addr:      managerAddr,
-			TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "manager"),
+			Addr:   managerAddr,
+			Client: makeHttpClient(mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "manager")),
 		},
 		cluster.Region,
 		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
@@ -258,10 +266,17 @@ func RunDistributor(ctx context.Context, port int) error {
 			if !ok { // should never happen
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
 			}
-			return &babysitter.HttpClient{
-				Addr:      addr,
-				TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity),
-			}, nil
+
+			// Note that we don't want to create a new http connection to a
+			// babysitter each time we do an HTTP request to the babysitter.
+			mu.Lock()
+			defer mu.Unlock()
+			httpClient, ok := bsHttpClients[replicaSet]
+			if !ok {
+				httpClient = babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity))
+				bsHttpClients[replicaSet] = httpClient
+			}
+			return httpClient, nil
 		},
 		5*time.Second,  // manageAppsInterval
 		10*time.Second, // computeTrafficInterval
@@ -323,6 +338,10 @@ func RunManager(ctx context.Context, port int) error {
 		return err
 	}
 
+	// Track http clients to the babysitters, keyed by replica set.
+	var mu sync.Mutex
+	bsHttpClients := map[string]endpoints.Babysitter{}
+
 	s = store.WithMetrics("manager", id, s)
 	m := manager.NewManager(ctx,
 		s,
@@ -335,11 +354,18 @@ func RunManager(ctx context.Context, port int) error {
 			if !ok { // should never happen
 				return nil, fmt.Errorf("unknown identity for replica set %q", replicaSet)
 			}
+
 			newBabysitter := func(addr string) endpoints.Babysitter {
-				return &babysitter.HttpClient{
-					Addr:      addr,
-					TLSConfig: mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity),
+				// Note that we don't want to create a new http connection to a
+				// babysitter each time we call the getHealthyPods method.
+				mu.Lock()
+				defer mu.Unlock()
+				httpClient, ok := bsHttpClients[replicaSet]
+				if !ok {
+					httpClient = babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity))
+					bsHttpClients[replicaSet] = httpClient
 				}
+				return httpClient
 			}
 			return getHealthyPods(ctx, cfg, logger, cluster, replicaSet, newBabysitter)
 		},
@@ -480,4 +506,14 @@ func pickPort(ctx context.Context, s store.Store, key string, listener string) (
 	const defaultPortStartNumber = 10000
 	index, err := store.Sequence(ctx, s, key, listener)
 	return defaultPortStartNumber + index, err
+}
+
+// makeHttpClient returns an http client based on whether TLS is enabled.
+func makeHttpClient(tlsConfig *tls.Config) *http.Client {
+	if tlsConfig != nil {
+		return &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
+		}
+	}
+	return http.DefaultClient
 }

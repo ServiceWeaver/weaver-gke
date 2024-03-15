@@ -26,8 +26,8 @@ import (
 
 // HttpClient is a Client that executes requests over HTTP.
 type HttpClient struct {
-	Addr      string      // babysitter address
-	TLSConfig *tls.Config // TLS config, possibly nil.
+	addr   string       // babysitter address
+	client *http.Client // The HTTP client to use to make requests.
 }
 
 var (
@@ -35,15 +35,14 @@ var (
 	_ endpoints.Babysitter = &HttpClient{}
 )
 
-// client returns the HTTP client to use to make requests.
-func (h *HttpClient) client() *http.Client {
-	if h.TLSConfig == nil {
-		return http.DefaultClient
+func NewHttpClient(addr string, tlsConfig *tls.Config) *HttpClient {
+	client := http.DefaultClient
+	if tlsConfig != nil {
+		client = &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}}
 	}
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: h.TLSConfig,
-		},
+	return &HttpClient{
+		addr:   addr,
+		client: client,
 	}
 }
 
@@ -51,8 +50,8 @@ func (h *HttpClient) client() *http.Client {
 func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.GetProfileRequest) (*protos.GetProfileReply, error) {
 	reply := &protos.GetProfileReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
-		Addr:    h.Addr,
+		Client:  h.client,
+		Addr:    h.addr,
 		URLPath: runProfilingURL,
 		Request: req,
 		Reply:   reply,
@@ -64,8 +63,8 @@ func (h *HttpClient) RunProfiling(ctx context.Context, req *protos.GetProfileReq
 func (h *HttpClient) GetLoad(ctx context.Context, req *endpoints.GetLoadRequest) (*endpoints.GetLoadReply, error) {
 	reply := &endpoints.GetLoadReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
-		Addr:    h.Addr,
+		Client:  h.client,
+		Addr:    h.addr,
 		URLPath: loadURL,
 		Request: req,
 		Reply:   reply,
