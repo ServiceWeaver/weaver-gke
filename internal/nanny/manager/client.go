@@ -16,7 +16,6 @@ package manager
 
 import (
 	"context"
-	"crypto/tls"
 	"net/http"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
@@ -27,30 +26,18 @@ import (
 
 // HttpClient is a Client that executes requests over HTTP.
 type HttpClient struct {
-	Addr      string      // manager address
-	TLSConfig *tls.Config // TLS config, possibly nil.
+	Addr   string       // manager address
+	Client *http.Client // The HTTP client to use to make requests.
 }
 
 var (
 	_ endpoints.Manager = &HttpClient{}
 )
 
-// client returns the HTTP client to use to make requests.
-func (h *HttpClient) client() *http.Client {
-	if h.TLSConfig == nil {
-		return http.DefaultClient
-	}
-	return &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: h.TLSConfig,
-		},
-	}
-}
-
 // Deploy implements the endpoints.Manager interface.
 func (h *HttpClient) Deploy(ctx context.Context, req *nanny.ApplicationDeploymentRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: deployURL,
 		Request: req,
@@ -60,7 +47,7 @@ func (h *HttpClient) Deploy(ctx context.Context, req *nanny.ApplicationDeploymen
 // Stop implements the endpoints.Manager interface.
 func (h *HttpClient) Stop(ctx context.Context, req *nanny.ApplicationStopRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: stopURL,
 		Request: req,
@@ -70,7 +57,7 @@ func (h *HttpClient) Stop(ctx context.Context, req *nanny.ApplicationStopRequest
 // Delete implements the endpoints.Manager interface.
 func (h *HttpClient) Delete(ctx context.Context, req *nanny.ApplicationDeleteRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: deleteURL,
 		Request: req,
@@ -81,7 +68,7 @@ func (h *HttpClient) Delete(ctx context.Context, req *nanny.ApplicationDeleteReq
 func (h *HttpClient) GetReplicaSets(ctx context.Context, req *nanny.GetReplicaSetsRequest) (*nanny.GetReplicaSetsReply, error) {
 	reply := &nanny.GetReplicaSetsReply{}
 	err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getReplicaSetsURL,
 		Request: req,
@@ -93,7 +80,7 @@ func (h *HttpClient) GetReplicaSets(ctx context.Context, req *nanny.GetReplicaSe
 // ActivateComponent implements the endpoints.Manager interface.
 func (h *HttpClient) ActivateComponent(ctx context.Context, req *nanny.ActivateComponentRequest) error {
 	return protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: activateComponentURL,
 		Request: req,
@@ -104,7 +91,7 @@ func (h *HttpClient) ActivateComponent(ctx context.Context, req *nanny.ActivateC
 func (h *HttpClient) GetListenerAddress(ctx context.Context, req *nanny.GetListenerAddressRequest) (*protos.GetListenerAddressReply, error) {
 	reply := &protos.GetListenerAddressReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getListenerAddressURL,
 		Request: req,
@@ -119,7 +106,7 @@ func (h *HttpClient) GetListenerAddress(ctx context.Context, req *nanny.GetListe
 func (h *HttpClient) ExportListener(ctx context.Context, req *nanny.ExportListenerRequest) (*protos.ExportListenerReply, error) {
 	reply := &protos.ExportListenerReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: exportListenerURL,
 		Request: req,
@@ -134,7 +121,7 @@ func (h *HttpClient) ExportListener(ctx context.Context, req *nanny.ExportListen
 func (h *HttpClient) GetRoutingInfo(ctx context.Context, req *nanny.GetRoutingRequest) (*nanny.GetRoutingReply, error) {
 	reply := &nanny.GetRoutingReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getRoutingInfoURL,
 		Request: req,
@@ -150,7 +137,7 @@ func (h *HttpClient) GetComponentsToStart(ctx context.Context, req *nanny.GetCom
 	*nanny.GetComponentsReply, error) {
 	reply := &nanny.GetComponentsReply{}
 	if err := protomsg.Call(ctx, protomsg.CallArgs{
-		Client:  h.client(),
+		Client:  h.Client,
 		Addr:    h.Addr,
 		URLPath: getComponentsToStartURL,
 		Request: req,
