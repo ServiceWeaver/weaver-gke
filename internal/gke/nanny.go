@@ -246,9 +246,12 @@ func RunDistributor(ctx context.Context, port int) error {
 		return err
 	}
 
-	// Track http clients to the babysitters, keyed by replica set.
+	// Track http clients to the babysitters, keyed by replica set and the babysitter address.
+	type clientKey struct {
+		replicaSet, babysitterAddr string
+	}
 	var mu sync.Mutex
-	bsHttpClients := map[string]endpoints.Babysitter{}
+	bsHttpClients := map[clientKey]endpoints.Babysitter{}
 
 	mux := http.NewServeMux()
 	managerAddr := fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
@@ -269,12 +272,14 @@ func RunDistributor(ctx context.Context, port int) error {
 
 			// Note that we don't want to create a new http connection to a
 			// babysitter each time we do an HTTP request to the babysitter.
+
+			httpClientId := clientKey{replicaSet: replicaSet, babysitterAddr: addr}
 			mu.Lock()
 			defer mu.Unlock()
-			httpClient, ok := bsHttpClients[replicaSet]
+			httpClient, ok := bsHttpClients[httpClientId]
 			if !ok {
 				httpClient = babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity))
-				bsHttpClients[replicaSet] = httpClient
+				bsHttpClients[httpClientId] = httpClient
 			}
 			return httpClient, nil
 		},
@@ -338,9 +343,12 @@ func RunManager(ctx context.Context, port int) error {
 		return err
 	}
 
-	// Track http clients to the babysitters, keyed by replica set.
+	// Track http clients to the babysitters, keyed by replica set and the babysitter address.
+	type clientKey struct {
+		replicaSet, babysitterAddr string
+	}
 	var mu sync.Mutex
-	bsHttpClients := map[string]endpoints.Babysitter{}
+	bsHttpClients := map[clientKey]endpoints.Babysitter{}
 
 	s = store.WithMetrics("manager", id, s)
 	m := manager.NewManager(ctx,
@@ -358,12 +366,13 @@ func RunManager(ctx context.Context, port int) error {
 			newBabysitter := func(addr string) endpoints.Babysitter {
 				// Note that we don't want to create a new http connection to a
 				// babysitter each time we call the getHealthyPods method.
+				httpClientId := clientKey{replicaSet: replicaSet, babysitterAddr: addr}
 				mu.Lock()
 				defer mu.Unlock()
-				httpClient, ok := bsHttpClients[replicaSet]
+				httpClient, ok := bsHttpClients[httpClientId]
 				if !ok {
 					httpClient = babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity))
-					bsHttpClients[replicaSet] = httpClient
+					bsHttpClients[httpClientId] = httpClient
 				}
 				return httpClient
 			}
