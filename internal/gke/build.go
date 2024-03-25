@@ -32,7 +32,7 @@ var dockerfileTmpl = template.Must(template.New("Dockerfile").Parse(`
 FROM golang:1.21-bullseye as builder
 RUN echo ""{{range .GoInstall}} && go install {{.}}{{end}}
 {{end}}
-FROM ubuntu:rolling
+FROM {{.BaseImage}}
 WORKDIR /weaver/
 RUN apt-get update
 RUN apt-get install -y ca-certificates
@@ -47,6 +47,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 type buildSpec struct {
 	Tags      []string    // Tags attached to the built image.
 	Files     []string    // Files that should be copied to the container.
+	BaseImage string      // Name of the base image used to build the container.
 	GoInstall []string    // Binary targets that should be 'go install'-ed
 	Config    CloudConfig // Cloud project configuration.
 }
@@ -56,7 +57,7 @@ type buildSpec struct {
 // All the files in spec.Files will be copied to the container's /weaver/
 // directory.
 // The container entrypoint will be "/bin/bash -c".
-func buildImage(ctx context.Context, spec buildSpec) error {
+func buildImage(_ context.Context, spec buildSpec) error {
 	// Create a new working directory.
 	workDir := filepath.Join(os.TempDir(), fmt.Sprintf("weaver%s", uuid.New().String()))
 	if err := os.Mkdir(workDir, 0o700); err != nil {

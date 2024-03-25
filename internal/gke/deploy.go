@@ -250,6 +250,7 @@ downloaded and installed in the container. Do you want to proceed? [Y/n] `)
 			Tags:      []string{toolImageURL, appImageURL},
 			Files:     toCopy,
 			GoInstall: toInstall,
+			BaseImage: cfg.Image,
 			Config:    config,
 		}); err != nil {
 			stop(err)

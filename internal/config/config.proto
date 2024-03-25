@@ -23,6 +23,11 @@ import "runtime/protos/config.proto";
 // of user specified configuration and Service Weaver provided information
 // specific to a particular execution.
 message GKEConfig {
+  // Name of the base docker image used to build the container.
+  //
+  // If empty, Service Weaver will pick 'ubuntu:rolling' as the base image.
+  string image = 12;
+
   // List of unique regions to deploy the application to. Service Weaver will
   // manage the clusters in the given regions.
   //
