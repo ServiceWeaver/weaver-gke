@@ -202,7 +202,15 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 		return fmt.Errorf("want binary, found directory at path %q", app.Binary)
 	}
 	// Check version compatibility.
-	versions, err := bin.ReadVersions(app.Binary)
+	appBinaryVersions, err := bin.ReadVersions(app.Binary)
+	if err != nil {
+		return fmt.Errorf("read versions: %w", err)
+	}
+	tool, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	weaverGKEVersions, err := bin.ReadVersions(tool)
 	if err != nil {
 		return fmt.Errorf("read versions: %w", err)
 	}
@@ -210,7 +218,7 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 	if err != nil {
 		return fmt.Errorf("read weaver-gke version: %w", err)
 	}
-	if versions.DeployerVersion != version.DeployerVersion {
+	if appBinaryVersions.DeployerVersion != version.DeployerVersion {
 		// Try to relativize the binary, defaulting to the absolute path if
 		// there are any errors.
 		binary := app.Binary
@@ -221,9 +229,9 @@ func (d *DeploySpec) doDeploy(ctx context.Context, cfg *config.GKEConfig) error 
 		}
 		return fmt.Errorf(`
 ERROR: The binary you're trying to deploy (%q) was built with
-github.com/ServiceWeaver/weaver module version %s. However, the 'weaver-gke'
-binary you're using was built with weaver module version %s. These versions are
-incompatible.
+github.com/ServiceWeaver/weaver module version %s (internal version %s).
+However, the 'weaver-gke' binary you're using (%s) was built with weaver
+module version %s (internal version %s). These versions are incompatible.
 
 We recommend updating both the weaver module your application is built with and
 updating the 'weaver-gke' command by running the following.
@@ -233,7 +241,7 @@ updating the 'weaver-gke' command by running the following.
 
 Then, re-build your code and re-run 'weaver-gke deploy'. If the problem
 persists, please file an issue at https://github.com/ServiceWeaver/weaver/issues`,
-			binary, versions.ModuleVersion, selfVersion)
+			binary, appBinaryVersions.ModuleVersion, appBinaryVersions.DeployerVersion, selfVersion, weaverGKEVersions.ModuleVersion, version.DeployerVersion)
 	}
 
 	// TODO(mwhittaker): Check that the controller is running the same version
