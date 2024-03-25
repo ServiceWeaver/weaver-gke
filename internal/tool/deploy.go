@@ -53,6 +53,10 @@ const (
 	// starts connecting to the nanny jobs in the background, this time
 	// interval can be reduced.
 	deployTimeout = 8 * time.Minute
+
+	// Name of the base image to build the application image, if the user doesn't
+	// provide a base image.
+	defaultBaseImage = "ubuntu:rolling"
 )
 
 type DeploySpec struct {
@@ -118,6 +122,7 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 	}
 	type gkeConfigSchema struct {
 		Regions     []string
+		Image       string
 		MinReplicas int32
 		Listeners   map[string]lisOpts
 		MTLS        bool
@@ -157,8 +162,14 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		parsed.MinReplicas = 1
 	}
 
+	// Make sure we set the base image if the user doesn't provide a base image.
+	if parsed.Image == "" {
+		parsed.Image = defaultBaseImage
+	}
+
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
+		Image:       parsed.Image,
 		Regions:     parsed.Regions,
 		MinReplicas: parsed.MinReplicas,
 		Listeners:   listeners,
