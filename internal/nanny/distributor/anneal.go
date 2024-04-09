@@ -376,16 +376,6 @@ func (d *Distributor) getReplicaSets(ctx context.Context, app string) error {
 	return errors.Join(errs...)
 }
 
-// hostname returns the hostname for the given listener, and the boolean value
-// indicating whether the given listener is public.
-func (d *Distributor) hostname(lis string, cfg *config.GKEConfig) (string, bool) {
-	if opts := cfg.Listeners[lis]; opts != nil && opts.PublicHostname != "" {
-		return opts.PublicHostname, true
-	}
-	// Private.
-	return fmt.Sprintf("%s.%s.%s", lis, d.region, InternalDNSDomain), false
-}
-
 // ComputeTrafficAssignments computes traffic assignments across all active
 // versions of the applications and returns the earliest time at which a
 // version's desired traffic fraction will change.
@@ -457,7 +447,7 @@ func (d *Distributor) ComputeTrafficAssignments(ctx context.Context, now time.Ti
 		publicTarget := newTarget()
 		privateTarget := newTarget()
 		for _, lis := range v.state.Listeners {
-			host, public := d.hostname(lis.Name, v.state.Config)
+			host, public := nanny.Hostname(lis.Name, d.region, v.state.Config)
 			if public {
 				publicTarget.Listeners[host] = append(publicTarget.Listeners[host], lis)
 			} else {
@@ -562,7 +552,7 @@ func (d *Distributor) detectAppliedTraffic(ctx context.Context, cadence time.Dur
 			expected := nanny.Fraction(v.Schedule)
 			matches := true
 			for _, lis := range v.Listeners {
-				host, _ := d.hostname(lis.Name, v.Config)
+				host, _ := nanny.Hostname(lis.Name, d.region, v.Config)
 				actual := actualTraffic[appVersionHost{app, v.Config.Deployment.Id, host}]
 				if actual >= (expected - maxDivergence) {
 					// Matches the expected traffic.

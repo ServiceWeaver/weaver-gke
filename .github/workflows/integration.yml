@@ -67,7 +67,7 @@ jobs:
 
         [gke]
         regions= ["us-west1"]
-        listeners.echo = {public_hostname = "echo.serviceweaver.dev"}
+        listeners.echo = {is_public=true, hostname = "echo.serviceweaver.dev"}
 
         ["github.com/ServiceWeaver/weaver-gke/examples/echo/Echoer"]
         Pattern = "${{env.VERSION}}"

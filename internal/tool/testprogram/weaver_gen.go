@@ -16,7 +16,7 @@ func init() {
 		Name:      "github.com/ServiceWeaver/weaver/Main",
 		Iface:     reflect.TypeOf((*weaver.Main)(nil)).Elem(),
 		Impl:      reflect.TypeOf(app{}),
-		Listeners: []string{"a", "b"},
+		Listeners: []string{"a", "b", "c"},
 		LocalStubFn: func(impl any, caller string, tracer trace.Tracer) any {
 			return main_local_stub{impl: impl.(weaver.Main), tracer: tracer}
 		},
@@ -27,7 +27,7 @@ func init() {
 		ReflectStubFn: func(caller func(string, context.Context, []any, []any) error) any {
 			return main_reflect_stub{caller: caller}
 		},
-		RefData: "⟦af9fa150:wEaVeRlIsTeNeRs:github.com/ServiceWeaver/weaver/Main→a,b⟧\n",
+		RefData: "⟦d54c0328:wEaVeRlIsTeNeRs:github.com/ServiceWeaver/weaver/Main→a,b,c⟧\n",
 	})
 }
 

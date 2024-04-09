@@ -43,12 +43,15 @@ message GKEConfig {
   // Options for the application listeners, keyed by listener name.
   // If a listener isn't specified in the map, default options will be used.
   message ListenerOptions {
-    // Public hostname for the listener. If empty, the listener is assumed
-    // to be private.
+    // Is the listener public, i.e., should it be accessible from outside of
+    // the cloud project?
+    bool is_public = 2;
+
+    // Hostname for the listener. It can be empty, iff the listener is private.
     //
     // Public listeners will be configured to receive ingress traffic; all other
     // listeners will be configured only for VPC-internal access.
-    string public_hostname = 1;
+    string hostname = 1;
   }
   map<string, ListenerOptions> listeners = 4;
 

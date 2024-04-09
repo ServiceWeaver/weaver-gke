@@ -118,7 +118,8 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 
 	// Use an intermediate struct, so that we can add TOML tags.
 	type lisOpts struct {
-		PublicHostname string `toml:"public_hostname"`
+		IsPublic bool   `toml:"is_public"`
+		Hostname string `toml:"hostname"`
 	}
 	type gkeConfigSchema struct {
 		Regions     []string
@@ -149,9 +150,12 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		for lis, opts := range parsed.Listeners {
 			if _, ok := allListeners[lis]; !ok {
 				return nil, fmt.Errorf("listener %s specified in the config not found in the binary", lis)
-
 			}
-			listeners[lis] = &config.GKEConfig_ListenerOptions{PublicHostname: opts.PublicHostname}
+			// If the listener is public, a hostname is required.
+			if opts.IsPublic && opts.Hostname == "" {
+				return nil, fmt.Errorf("listener %s is public, but has no hostname specified", lis)
+			}
+			listeners[lis] = &config.GKEConfig_ListenerOptions{IsPublic: opts.IsPublic, Hostname: opts.Hostname}
 		}
 	}
 	if err := validateDeployRegions(parsed.Regions); err != nil {

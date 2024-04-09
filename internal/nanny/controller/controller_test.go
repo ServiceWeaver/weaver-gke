@@ -1301,7 +1301,8 @@ func newVersion(locations []string, appName, id string, rollout string, listener
 			name := strings.Split(l, ".")[0]
 			v.listeners[l] = &nanny.Listener{Name: name}
 			v.listenerOpts[name] = &config.GKEConfig_ListenerOptions{
-				PublicHostname: l,
+				IsPublic: true,
+				Hostname: l,
 			}
 		}
 	}

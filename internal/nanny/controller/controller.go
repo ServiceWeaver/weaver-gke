@@ -28,7 +28,6 @@ import (
 
 	"github.com/ServiceWeaver/weaver-gke/internal/endpoints"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/runtime/profiling"
 	"github.com/ServiceWeaver/weaver/runtime/protomsg"
@@ -462,15 +461,7 @@ func appVersionStateToStatus(app string, state *ControllerState, versionState *A
 		}
 		for _, rs := range d.ReplicaSets {
 			for _, l := range rs.Listeners {
-				var hostname string
-				var public bool
-				if opts := cfg.Listeners[l]; opts != nil && opts.PublicHostname != "" {
-					public = true
-					hostname = opts.PublicHostname
-				} else {
-					public = false
-					hostname = fmt.Sprintf("%s.%s.%s", l, loc, distributor.InternalDNSDomain)
-				}
+				hostname, public := nanny.Hostname(l, loc, cfg)
 				ls := listeners[l]
 				if ls == nil {
 					ls = &ListenerStatus{

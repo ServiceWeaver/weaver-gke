@@ -76,9 +76,6 @@ import (
 // We can reuse the state rather than reading it twice.
 
 const (
-	// Internal domain name for applications' private listeners.
-	InternalDNSDomain = "serviceweaver.internal"
-
 	// URL suffixes for various HTTP endpoints exported by the distributor.
 	distributeURL                  = "/distributor/distribute"
 	cleanupURL                     = "/distributor/cleanup"

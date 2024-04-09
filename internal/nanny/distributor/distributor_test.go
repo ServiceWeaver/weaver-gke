@@ -1429,7 +1429,8 @@ func newVersion(appName, id string, submissionId int, listener ...string) versio
 		if strings.Contains(l, ".") { // public listener
 			name := strings.Split(l, ".")[0]
 			v.listenerOpts[name] = &config.GKEConfig_ListenerOptions{
-				PublicHostname: l,
+				IsPublic: true,
+				Hostname: l,
 			}
 			l = name
 		}
