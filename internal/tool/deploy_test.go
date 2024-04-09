@@ -97,19 +97,39 @@ regions = ["us-central1"]
 			},
 		},
 		{
-			name: "listeners",
+			name: "public-listeners",
 			config: `
 [gke]
-listeners.a = {public_hostname="a.com"}
-listeners.b = {public_hostname="b.com"}
+listeners.a = {is_public=true, hostname="a.com"}
+listeners.b = {is_public=true, hostname="b.com"}
 regions = ["us-central1"]
 `,
 			expect: &config.GKEConfig{
 				Image:       defaultBaseImage,
 				MinReplicas: 1,
 				Listeners: map[string]*config.GKEConfig_ListenerOptions{
-					"a": {PublicHostname: "a.com"},
-					"b": {PublicHostname: "b.com"},
+					"a": {IsPublic: true, Hostname: "a.com"},
+					"b": {IsPublic: true, Hostname: "b.com"},
+				},
+				Regions: []string{"us-central1"},
+			},
+		},
+		{
+			name: "public-and-private-listeners",
+			config: `
+[gke]
+listeners.a = {is_public=true, hostname="a.com"}
+listeners.b = {hostname="b.com"}
+listeners.c = {}
+regions = ["us-central1"]
+`,
+			expect: &config.GKEConfig{
+				Image:       defaultBaseImage,
+				MinReplicas: 1,
+				Listeners: map[string]*config.GKEConfig_ListenerOptions{
+					"a": {IsPublic: true, Hostname: "a.com"},
+					"b": {IsPublic: false, Hostname: "b.com"},
+					"c": {IsPublic: false, Hostname: ""},
 				},
 				Regions: []string{"us-central1"},
 			},
@@ -155,9 +175,19 @@ func TestBadGKEConfig(t *testing.T) {
 			name: "missing_listeners",
 			cfg: `
 [gke]
-listeners.c = {public_hostname="c.com"}
+listeners.d = {hostname="d.com"}
+regions = ["us-central1"]
 `,
 			expectedError: "not found in the binary",
+		},
+		{
+			name: "public_listener_no_hostname",
+			cfg: `
+[gke]
+listeners.c = {is_public=true}
+regions = ["us-central1"]
+`,
+			expectedError: "no hostname specified",
 		},
 	} {
 		t.Run(c.name, func(t *testing.T) {

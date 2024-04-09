@@ -898,7 +898,6 @@ func updateTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logger *slog
 			errs = append(errs, fmt.Errorf("error deleting obsolete route %s: %w", routeName, err))
 		}
 	}
-
 	return errors.Join(errs...)
 }
 

@@ -29,8 +29,8 @@ import (
 	"text/template"
 	"time"
 
-	artifactregistrypb "cloud.google.com/go/artifactregistry/apiv1beta2/artifactregistrypb"
-	computepb "cloud.google.com/go/compute/apiv1/computepb"
+	"cloud.google.com/go/artifactregistry/apiv1beta2/artifactregistrypb"
+	"cloud.google.com/go/compute/apiv1/computepb"
 	container "cloud.google.com/go/container/apiv1"
 	"cloud.google.com/go/container/apiv1/containerpb"
 	"cloud.google.com/go/iam/apiv1/iampb"
@@ -38,8 +38,8 @@ import (
 	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
 	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
+	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
-	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
 	"github.com/ServiceWeaver/weaver/runtime/bin"
 	"github.com/ServiceWeaver/weaver/runtime/graph"
@@ -293,8 +293,11 @@ achieved in one of two ways:
        "http://{{.ExternalGatewayIP}}" in your DNS configuration for "domain.com".
 
 The applications' private listeners will be accessible from inside the
-project's VPC using the schema:
-  - http://<listener_name>.<region>.serviceweaver.internal
+project's VPC in one of the two ways:
+  1. If you specified a hostname in the config for the listener, using the schema:
+     - http://<hostname>.<listener_name>.<region>.serviceweaver.internal
+  2. Otherwise, using the schema:
+     - http://<listener_name>.<region>.serviceweaver.internal
 
 , where <listener_name> is the name the listener was created with in the
 application (i.e., via a call to Listener()). For these names to
@@ -1578,8 +1581,8 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 	if err := patchDNSZone(ctx, cluster.CloudConfig, patchOptions{}, &dns.ManagedZone{
 		Name: managedDNSZoneName,
 		Description: fmt.Sprintf(
-			"Managed zone for domain %s", distributor.InternalDNSDomain),
-		DnsName:    distributor.InternalDNSDomain + ".",
+			"Managed zone for domain %s", nanny.InternalDNSDomain),
+		DnsName:    nanny.InternalDNSDomain + ".",
 		Visibility: "private",
 		PrivateVisibilityConfig: &dns.ManagedZonePrivateVisibilityConfig{
 			Networks: []*dns.ManagedZonePrivateVisibilityConfigNetwork{
@@ -1593,7 +1596,7 @@ func ensureInternalDNS(ctx context.Context, cluster *ClusterInfo, gatewayIP stri
 	}
 
 	// Add the A record to the managed DNS zone.
-	dnsName := fmt.Sprintf("*.%s.%s.", cluster.Region, distributor.InternalDNSDomain)
+	dnsName := fmt.Sprintf("*.%s.%s.", cluster.Region, nanny.InternalDNSDomain)
 	return patchDNSRecordSet(ctx, cluster.CloudConfig, patchOptions{}, managedDNSZoneName, &dns.ResourceRecordSet{
 		Name:    dnsName,
 		Kind:    "dns#resourceRecordSet",

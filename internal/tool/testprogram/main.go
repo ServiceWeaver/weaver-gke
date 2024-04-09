@@ -25,7 +25,7 @@ import (
 
 type app struct {
 	weaver.Implements[weaver.Main]
-	a, b weaver.Listener //nolint:unused // intentionally declared but not used
+	a, b, c weaver.Listener //nolint:unused // intentionally declared but not used
 }
 
 func (*app) Main(context.Context) error { return nil }
