@@ -134,7 +134,7 @@ func RunBabysitter(ctx context.Context) error {
 		return traceExporter.ExportSpans(ctx, s)
 	}
 	metricSaver := func(metrics []*metrics.MetricSnapshot) error {
-		return metricsExporter.Export(ctx, metrics)
+		return metricsExporter.Export(ctx, metrics, cfg.Telemetry.Metrics.AutoGenerateMetrics)
 	}
 
 	caCert, getSelfCert, err := getPodCerts()
