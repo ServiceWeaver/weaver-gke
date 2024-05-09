@@ -87,13 +87,12 @@ func startNannyMetricExporter(ctx context.Context, logger *slog.Logger, meta *Co
 		return nil, err
 	}
 	go func() {
-		const metricExportInterval = 15 * time.Second
-		ticker := time.NewTicker(metricExportInterval)
+		ticker := time.NewTicker(meta.Telemetry.Metrics.ExportInterval.AsDuration())
 		for {
 			select {
 			case <-ticker.C:
 				snaps := metrics.Snapshot()
-				if err := exporter.Export(ctx, snaps); err != nil {
+				if err := exporter.Export(ctx, snaps, meta.Telemetry.Metrics.AutoGenerateMetrics); err != nil {
 					logger.Error("exporting nanny metrics", "err", err)
 				}
 

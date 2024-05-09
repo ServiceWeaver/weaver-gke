@@ -16,6 +16,7 @@ syntax = "proto3";
 option go_package = "github.com/ServiceWeaver/weaver-gke;gke";
 
 package gke;
+import "internal/config/config.proto";
 
 // ContainerMetadata contains metadata about a container running on GKE.
 //
@@ -55,12 +56,13 @@ package gke;
 //
 // [1]: https://kubernetes.io/docs/concepts/cluster-administration/logging/
 message ContainerMetadata {
-  string project = 1;         // GCP project
-  string cluster_name = 2;    // GKE cluster name
-  string cluster_region = 3;  // GKE cluster region (e.g., us-east1)
-  string namespace = 4;       // Kubernetes namespace (e.g., default)
-  string node_name = 5;       // GCP node name
-  string pod_name = 6;        // Kubernetes pod name
-  string container_name = 7;  // Kubernetes container name
-  string app = 8;             // Kubernetes app label
+  string project = 1;             // GCP project
+  string cluster_name = 2;        // GKE cluster name
+  string cluster_region = 3;      // GKE cluster region (e.g., us-east1)
+  string namespace = 4;           // Kubernetes namespace (e.g., default)
+  string node_name = 5;           // GCP node name
+  string pod_name = 6;            // Kubernetes pod name
+  string container_name = 7;      // Kubernetes container name
+  string app = 8;                 // Kubernetes app label
+  config.Telemetry telemetry = 9; // Options to configure the telemetry
 }

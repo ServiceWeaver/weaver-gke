@@ -158,8 +158,7 @@ func (b *Babysitter) SelfAddr() string { return b.selfAddr }
 // exportMetrics periodically exports metrics.
 func (b *Babysitter) exportMetrics() {
 	// Time interval at which metrics are exported.
-	const metricExportInterval = 15 * time.Second
-	ticker := time.NewTicker(metricExportInterval)
+	ticker := time.NewTicker(b.cfg.Telemetry.Metrics.ExportInterval.AsDuration())
 	for {
 		select {
 		case <-ticker.C:

@@ -23,9 +23,10 @@ import (
 )
 
 type storeLabels struct {
-	Service string // System service using the store (e.g., controller, tool)
-	Id      string // Unique id for the system service instance
-	Op      string // Store operation (e.g., get, put)
+	Service   string // System service using the store (e.g., controller, tool)
+	Id        string // Unique id for the system service instance
+	Op        string // Store operation (e.g., get, put)
+	Generated bool   `weaver:"serviceweaver_generated"`
 }
 
 var (
@@ -53,7 +54,7 @@ var (
 // the appropriate store rtmetrics.
 func WithMetrics(service string, id string, store Store) Store {
 	labels := func(op string) storeLabels {
-		return storeLabels{Service: service, Id: id, Op: op}
+		return storeLabels{Service: service, Id: id, Op: op, Generated: true}
 	}
 	putCount := requestCounts.Get(labels("put"))
 	getCount := requestCounts.Get(labels("get"))

@@ -41,6 +41,7 @@ import (
 	"github.com/ServiceWeaver/weaver/runtime/tool"
 	"github.com/ServiceWeaver/weaver/runtime/version"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 const (
@@ -121,11 +122,19 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		IsPublic bool   `toml:"is_public"`
 		Hostname string `toml:"hostname"`
 	}
+	type metricOpts struct {
+		Generated      bool   `toml:"auto_generate_metrics"`
+		ExportInterval string `toml:"export_interval"`
+	}
+	type telemetry struct {
+		Metrics *metricOpts `toml:"metrics"`
+	}
 	type gkeConfigSchema struct {
 		Regions     []string
 		Image       string
 		MinReplicas int32
 		Listeners   map[string]lisOpts
+		Telemetry   telemetry
 		MTLS        bool
 	}
 	parsed := &gkeConfigSchema{}
@@ -171,6 +180,37 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		parsed.Image = defaultBaseImage
 	}
 
+	// Construct telemetry options.
+	telemetryFn := func(t *telemetry) (*config.Telemetry, error) {
+		// Default configuration for telemetry options.
+		tel := &config.Telemetry{
+			Metrics: &config.MetricsOptions{
+				ExportInterval: durationpb.New(30 * time.Second),
+			},
+		}
+		if t != nil && t.Metrics != nil {
+			tel.Metrics.AutoGenerateMetrics = t.Metrics.Generated
+			if len(t.Metrics.ExportInterval) != 0 {
+				ei, err := time.ParseDuration(t.Metrics.ExportInterval)
+				if err != nil {
+					return nil, err
+				}
+				
+				// Make sure that the export interval is at least 10 seconds.
+				minExportInterval := 10 * time.Second
+				if ei < minExportInterval {
+					return nil, fmt.Errorf("export_interval can't be less than 10 seconds")
+				}
+				tel.Metrics.ExportInterval = durationpb.New(ei)
+			}
+		}
+		return tel, nil
+	}
+	telemetryOpts, err := telemetryFn(&parsed.Telemetry)
+	if err != nil {
+		return nil, fmt.Errorf("unable to configure telemetry options: %w", err)
+	}
+
 	depID := uuid.New()
 	cfg := &config.GKEConfig{
 		Image:       parsed.Image,
@@ -181,7 +221,8 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 			App: app,
 			Id:  depID.String(),
 		},
-		Mtls: parsed.MTLS,
+		Mtls:      parsed.MTLS,
+		Telemetry: telemetryOpts,
 	}
 
 	return cfg, nil
@@ -354,7 +395,7 @@ func validateDeployRegions(regions []string) error {
 	for _, elem := range regions {
 		if unique[elem] {
 			return fmt.Errorf("the set of regions should be unique; found %s "+
-				"multiple times", elem)
+					"multiple times", elem)
 		}
 		unique[elem] = true
 	}

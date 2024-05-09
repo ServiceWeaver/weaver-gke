@@ -1854,7 +1854,7 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 	if err != nil {
 		return err
 	}
-	if err := ensureController(ctx, config, name, region, toolImageURL); err != nil {
+	if err := ensureController(ctx, config, name, region, cfg.Telemetry, toolImageURL); err != nil {
 		return err
 	}
 	for _, region := range cfg.Regions {
@@ -1862,10 +1862,10 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 		if err != nil {
 			return err
 		}
-		if err := ensureDistributor(ctx, cluster, toolImageURL); err != nil {
+		if err := ensureDistributor(ctx, cluster, cfg.Telemetry, toolImageURL); err != nil {
 			return err
 		}
-		if err := ensureManager(ctx, cluster, toolImageURL); err != nil {
+		if err := ensureManager(ctx, cluster, cfg.Telemetry, toolImageURL); err != nil {
 			return err
 		}
 	}
@@ -1873,13 +1873,14 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 }
 
 // ensureController ensures that a controller is running in the config cluster.
-func ensureController(ctx context.Context, config CloudConfig, clusterName, region string, toolImageURL string) error {
+func ensureController(ctx context.Context, config CloudConfig, clusterName, region string,
+	telemetry *config.Telemetry, toolImageURL string) error {
 	cluster, err := GetClusterInfo(ctx, config, clusterName, region)
 	if err != nil {
 		return err
 	}
 	const name = "controller"
-	if err := ensureNannyDeployment(ctx, cluster, name, controllerKubeServiceAccount, toolImageURL); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, controllerKubeServiceAccount, telemetry, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1889,9 +1890,10 @@ func ensureController(ctx context.Context, config CloudConfig, clusterName, regi
 }
 
 // ensureDistributor ensures that a distributor is running in the given cluster.
-func ensureDistributor(ctx context.Context, cluster *ClusterInfo, toolImageURL string) error {
+func ensureDistributor(ctx context.Context, cluster *ClusterInfo,
+	telemetry *config.Telemetry, toolImageURL string) error {
 	const name = "distributor"
-	if err := ensureNannyDeployment(ctx, cluster, name, distributorKubeServiceAccount, toolImageURL); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, distributorKubeServiceAccount, telemetry, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1901,9 +1903,10 @@ func ensureDistributor(ctx context.Context, cluster *ClusterInfo, toolImageURL s
 }
 
 // ensureManager ensures that a manager is running in the given cluster.
-func ensureManager(ctx context.Context, cluster *ClusterInfo, toolImageURL string) error {
+func ensureManager(ctx context.Context, cluster *ClusterInfo,
+	telemetry *config.Telemetry, toolImageURL string) error {
 	const name = "manager"
-	if err := ensureNannyDeployment(ctx, cluster, name, managerKubeServiceAccount, toolImageURL); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, managerKubeServiceAccount, telemetry, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1914,7 +1917,8 @@ func ensureManager(ctx context.Context, cluster *ClusterInfo, toolImageURL strin
 
 // ensureNannyDeployment ensures that a nanny deployment with the given name
 // and service account is running in the given cluster.
-func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serviceAccount, toolImageURL string) error {
+func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name string,
+	serviceAccount string, telemetry *config.Telemetry, toolImageURL string) error {
 	meta := ContainerMetadata{
 		Project:       cluster.CloudConfig.Project,
 		ClusterName:   cluster.Name,
@@ -1922,6 +1926,7 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name, serv
 		Namespace:     namespaceName,
 		ContainerName: nannyContainerName,
 		App:           name,
+		Telemetry:     telemetry,
 	}
 	metaStr, err := proto.ToEnv(&meta)
 	if err != nil {

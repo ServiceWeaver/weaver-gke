@@ -20,12 +20,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver/runtime"
 	"github.com/ServiceWeaver/weaver/runtime/codegen"
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 func parseGKEConfig(name string, config string) (*config.GKEConfig, error) {
@@ -52,6 +54,9 @@ regions = ["us-central1"]`,
 				Image:       defaultBaseImage,
 				MinReplicas: 1,
 				Regions:     []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+				},
 			},
 		},
 		{
@@ -67,6 +72,9 @@ regions = ["us-central1"]
 				MinReplicas: 2,
 				Mtls:        true,
 				Regions:     []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+				},
 			},
 		},
 		{
@@ -80,6 +88,9 @@ regions = ["us-central1"]
 				Image:       "custom-image",
 				MinReplicas: 1,
 				Regions:     []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+				},
 			},
 		},
 		{
@@ -94,6 +105,9 @@ regions = ["us-central1"]
 				MinReplicas: 1,
 				Mtls:        true,
 				Regions:     []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+				},
 			},
 		},
 		{
@@ -112,6 +126,9 @@ regions = ["us-central1"]
 					"b": {IsPublic: true, Hostname: "b.com"},
 				},
 				Regions: []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+				},
 			},
 		},
 		{
@@ -132,6 +149,28 @@ regions = ["us-central1"]
 					"c": {IsPublic: false, Hostname: ""},
 				},
 				Regions: []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+				},
+			},
+		},
+		{
+			name: "metrics",
+			config: `
+[gke]
+regions = ["us-central1"]
+telemetry.metrics = {auto_generate_metrics = true, export_interval = "1h"}
+`,
+			expect: &config.GKEConfig{
+				Image:       defaultBaseImage,
+				MinReplicas: 1,
+				Regions:     []string{"us-central1"},
+				Telemetry: &config.Telemetry{
+					Metrics: &config.MetricsOptions{
+						AutoGenerateMetrics: true,
+						ExportInterval:      durationpb.New(1 * time.Hour),
+					},
+				},
 			},
 		},
 	} {
