@@ -24,7 +24,7 @@ import (
 
 	monitoring "cloud.google.com/go/monitoring/apiv3"
 	monitoringv2 "cloud.google.com/go/monitoring/apiv3/v2"
-	monitoringpb "cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
+	"cloud.google.com/go/monitoring/apiv3/v2/monitoringpb"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/distributor"
 	"github.com/ServiceWeaver/weaver/runtime/metrics"
 	"github.com/ServiceWeaver/weaver/runtime/protos"
@@ -35,7 +35,6 @@ import (
 	"google.golang.org/genproto/googleapis/api/label"
 	metricpb "google.golang.org/genproto/googleapis/api/metric"
 	mrpb "google.golang.org/genproto/googleapis/api/monitoredres"
-	mpb "google.golang.org/genproto/googleapis/monitoring/v3"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/encoding/prototext"
@@ -80,7 +79,7 @@ func newMetricExporter(ctx context.Context, meta *ContainerMetadata) (*metricExp
 func (m *metricExporter) Export(ctx context.Context, snaps []*metrics.MetricSnapshot,
 	exportGeneratedMetrics bool) error {
 	snaps = filterMetrics(snaps, exportGeneratedMetrics)
-	var tss []*mpb.TimeSeries
+	var tss []*monitoringpb.TimeSeries
 	for _, snap := range snaps {
 		// Get or create the MetricDescriptor.
 		if _, ok := m.descs[snap.Name]; !ok {
@@ -101,12 +100,25 @@ func (m *metricExporter) Export(ctx context.Context, snaps []*metrics.MetricSnap
 	if len(tss) == 0 {
 		return nil
 	}
-	req := &mpb.CreateTimeSeriesRequest{
-		Name:       "projects/" + m.meta.Project,
-		TimeSeries: tss,
-	}
-	if err := m.client.CreateTimeSeries(ctx, req); err != nil {
-		return fmt.Errorf("MetricExporter: cannot export metrics: %w\n", err)
+
+	// Google Cloud Monitoring API doesn't allow to send more than 200 TimeSeries
+	// objects per request [1]. Export the time series in batches of at most 200
+	// entries per request.
+	//
+	// [1] https://cloud.google.com/monitoring/api/ref_v3/rest/v3/projects.timeSeries/create
+	const maxNumEntriesToExport = 200
+	for i := 0; i < len(tss); i += maxNumEntriesToExport {
+		end := i + maxNumEntriesToExport
+		if end > len(tss) {
+			end = len(tss)
+		}
+		req := &monitoringpb.CreateTimeSeriesRequest{
+			Name:       "projects/" + m.meta.Project,
+			TimeSeries: tss[i:end],
+		}
+		if err := m.client.CreateTimeSeries(ctx, req); err != nil {
+			return fmt.Errorf("MetricExporter: cannot export metrics: %w\n", err)
+		}
 	}
 	return nil
 }
@@ -173,7 +185,7 @@ func (m *metricExporter) createMetricDescriptor(ctx context.Context, snap *metri
 		Description: snap.Help,
 		DisplayName: snap.Name,
 	}
-	req := &mpb.CreateMetricDescriptorRequest{
+	req := &monitoringpb.CreateMetricDescriptorRequest{
 		Name:             "projects/" + m.meta.Project,
 		MetricDescriptor: desc,
 	}
@@ -187,7 +199,7 @@ func (m *metricExporter) createMetricDescriptor(ctx context.Context, snap *metri
 
 	// Fetch the existing descriptor and make sure that its kind and value type
 	// are as expected.
-	getReq := &mpb.GetMetricDescriptorRequest{
+	getReq := &monitoringpb.GetMetricDescriptorRequest{
 		Name: path.Join("projects", m.meta.Project, "metricDescriptors", desc.Type),
 	}
 	existing, err := m.client.GetMetricDescriptor(ctx, getReq)
@@ -202,7 +214,7 @@ func (m *metricExporter) createMetricDescriptor(ctx context.Context, snap *metri
 }
 
 // createTimeSeries creates a TimeSeries for the given metric.
-func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.TimeSeries, error) {
+func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*monitoringpb.TimeSeries, error) {
 	def := &metricpb.Metric{
 		Type:   "custom.googleapis.com/" + snap.Name,
 		Labels: snap.Labels,
@@ -210,12 +222,12 @@ func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.Ti
 	now := time.Now().Unix()
 	switch snap.Type {
 	case protos.MetricType_COUNTER:
-		return &mpb.TimeSeries{
+		return &monitoringpb.TimeSeries{
 			Metric:   def,
 			Resource: m.resource,
-			Points: []*mpb.Point{
+			Points: []*monitoringpb.Point{
 				{
-					Interval: &mpb.TimeInterval{
+					Interval: &monitoringpb.TimeInterval{
 						StartTime: &timestamp.Timestamp{
 							Seconds: m.start.Unix(),
 						},
@@ -223,8 +235,8 @@ func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.Ti
 							Seconds: now,
 						},
 					},
-					Value: &mpb.TypedValue{
-						Value: &mpb.TypedValue_DoubleValue{
+					Value: &monitoringpb.TypedValue{
+						Value: &monitoringpb.TypedValue_DoubleValue{
 							DoubleValue: snap.Value,
 						},
 					},
@@ -233,12 +245,12 @@ func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.Ti
 		}, nil
 
 	case protos.MetricType_GAUGE:
-		return &mpb.TimeSeries{
+		return &monitoringpb.TimeSeries{
 			Metric:   def,
 			Resource: m.resource,
-			Points: []*mpb.Point{
+			Points: []*monitoringpb.Point{
 				{
-					Interval: &mpb.TimeInterval{
+					Interval: &monitoringpb.TimeInterval{
 						StartTime: &timestamp.Timestamp{
 							Seconds: now,
 						},
@@ -246,8 +258,8 @@ func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.Ti
 							Seconds: now,
 						},
 					},
-					Value: &mpb.TypedValue{
-						Value: &mpb.TypedValue_DoubleValue{
+					Value: &monitoringpb.TypedValue{
+						Value: &monitoringpb.TypedValue_DoubleValue{
 							DoubleValue: snap.Value,
 						},
 					},
@@ -266,12 +278,12 @@ func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.Ti
 		if totalCount > 0 {
 			mean = snap.Value / float64(totalCount)
 		}
-		return &mpb.TimeSeries{
+		return &monitoringpb.TimeSeries{
 			Metric:   def,
 			Resource: m.resource,
-			Points: []*mpb.Point{
+			Points: []*monitoringpb.Point{
 				{
-					Interval: &mpb.TimeInterval{
+					Interval: &monitoringpb.TimeInterval{
 						StartTime: &timestamp.Timestamp{
 							Seconds: m.start.Unix(),
 						},
@@ -279,8 +291,8 @@ func (m *metricExporter) createTimeSeries(snap *metrics.MetricSnapshot) (*mpb.Ti
 							Seconds: now,
 						},
 					},
-					Value: &mpb.TypedValue{
-						Value: &mpb.TypedValue_DistributionValue{
+					Value: &monitoringpb.TypedValue{
+						Value: &monitoringpb.TypedValue_DistributionValue{
 							DistributionValue: &distribution.Distribution{
 								BucketOptions: &distribution.Distribution_BucketOptions{
 									Options: &distribution.Distribution_BucketOptions_ExplicitBuckets{
