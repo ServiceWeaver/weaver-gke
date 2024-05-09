@@ -228,6 +228,7 @@ message Pod {
   string weavelet_addr = 1;               // Weavelet address.
   string babysitter_addr = 2;             // Babysitter address.
   runtime.LoadReport load = 3;            // Per-component load on the pod.
+  repeated string healthy_components = 4;  // Pod components that are healthy.
 }
 
 // TargetFn is a target function that controls the traffic rollout for a given

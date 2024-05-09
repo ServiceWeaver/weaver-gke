@@ -855,6 +855,7 @@ func tryEnsureCAPoolIAMBindings(ctx context.Context, config CloudConfig, client 
 	return err
 }
 
+// Reload certificates every 30 days, to reduce the certificate issuance cost.
 var workloadCertificateConfigTmpl = template.Must(template.New("wcert").Parse(`{
 "kind":"WorkloadCertificateConfig",
 "apiVersion":"security.cloud.google.com/v1",
@@ -872,8 +873,8 @@ var workloadCertificateConfigTmpl = template.Must(template.New("wcert").Parse(`{
 			"modulusSize":4096
 		}
 	},
-	"validityDurationSeconds":86400,
-	"rotationWindowPercentage":50
+	"validityDurationSeconds":2592000,
+	"rotationWindowPercentage":80
 }}`))
 
 // ensureWorkloadCertificateConfig ensures that the workload certificate config
