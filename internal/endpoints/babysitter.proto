@@ -27,4 +27,5 @@ message GetLoadRequest {}
 message GetLoadReply {
   runtime.LoadReport load = 1;  // weavelet load information
   string weavelet_addr = 2;     // self-reported weavelet internal address
+  repeated string healthy_components = 3;  // components that are healthy
 }

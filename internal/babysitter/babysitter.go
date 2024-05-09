@@ -184,8 +184,8 @@ func (b *Babysitter) exportMetrics() {
 
 // GetLoad implements the endpoints.Babysitter interface.
 func (b *Babysitter) GetLoad(_ context.Context, req *endpoints.GetLoadRequest) (*endpoints.GetLoadReply, error) {
-	status := b.envelope.GetHealth()
-	if status != protos.HealthStatus_HEALTHY {
+	health := b.envelope.GetHealth()
+	if health.Status != protos.HealthStatus_HEALTHY {
 		return nil, fmt.Errorf("weavelet unhealthy")
 	}
 	load, err := b.envelope.GetLoad()
@@ -193,8 +193,9 @@ func (b *Babysitter) GetLoad(_ context.Context, req *endpoints.GetLoadRequest) (
 		return nil, fmt.Errorf("couldn't get weavelet load")
 	}
 	return &endpoints.GetLoadReply{
-		Load:         load,
-		WeaveletAddr: b.WeaveletAddress(),
+		Load:              load,
+		WeaveletAddr:      b.WeaveletAddress(),
+		HealthyComponents: health.HealthyComponents,
 	}, nil
 }
 

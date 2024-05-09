@@ -223,7 +223,7 @@ func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg 
 		// is to start a CronJob that periodically checks and cleans up expired
 		// spare-capacity jobs.
 		spareCpu := multiplyQuantity(6, cpuUnit)
-		spareDuration := 5 * time.Minute
+		spareDuration := 1 * time.Hour
 		if err := ensureTemporarySpareCapacity(ctx, cluster, logger, cfg, spareCpu, spareDuration); err != nil {
 			// Swallow the error as it isn't catastrophic.
 			logger.Error("Cannot allocate temporary spare capacity", "err", err)
