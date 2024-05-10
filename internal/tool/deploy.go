@@ -126,8 +126,12 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 		Generated      bool   `toml:"auto_generate_metrics"`
 		ExportInterval string `toml:"export_interval"`
 	}
+	type loggingOpts struct {
+		MinExportLevel string `toml:"min_export_level"`
+	}
 	type telemetry struct {
-		Metrics *metricOpts `toml:"metrics"`
+		Metrics *metricOpts  `toml:"metrics"`
+		Logging *loggingOpts `toml:"logging"`
 	}
 	type gkeConfigSchema struct {
 		Regions     []string
@@ -187,6 +191,9 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 			Metrics: &config.MetricsOptions{
 				ExportInterval: durationpb.New(30 * time.Second),
 			},
+			Logging: &config.LoggingOptions{
+				MinExportLevel: "DEBUG", // By default, export all log entries
+			},
 		}
 		if t != nil && t.Metrics != nil {
 			tel.Metrics.AutoGenerateMetrics = t.Metrics.Generated
@@ -195,7 +202,7 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 				if err != nil {
 					return nil, err
 				}
-				
+
 				// Make sure that the export interval is at least 10 seconds.
 				minExportInterval := 10 * time.Second
 				if ei < minExportInterval {
@@ -203,6 +210,14 @@ func makeGKEConfig(app *protos.AppConfig) (*config.GKEConfig, error) {
 				}
 				tel.Metrics.ExportInterval = durationpb.New(ei)
 			}
+		}
+		if t != nil && t.Logging != nil {
+			level, err := gke.LogLevelFromName(t.Logging.MinExportLevel)
+			if err != nil {
+				return nil, fmt.Errorf("unable to parse min_export_level to a "+
+					"valid log level: %v; valid log levels are: DEBUG, INFO, WARN, ERROR", err)
+			}
+			tel.Logging.MinExportLevel = level.String()
 		}
 		return tel, nil
 	}
@@ -395,7 +410,7 @@ func validateDeployRegions(regions []string) error {
 	for _, elem := range regions {
 		if unique[elem] {
 			return fmt.Errorf("the set of regions should be unique; found %s "+
-					"multiple times", elem)
+				"multiple times", elem)
 		}
 		unique[elem] = true
 	}

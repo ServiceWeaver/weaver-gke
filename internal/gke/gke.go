@@ -475,6 +475,7 @@ func appContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig, repli
 		Namespace:     namespaceName,
 		ContainerName: appContainerName,
 		App:           app,
+		Telemetry:     cfg.Telemetry,
 	}
 	metaStr, err := proto.ToEnv(&meta)
 	if err != nil {

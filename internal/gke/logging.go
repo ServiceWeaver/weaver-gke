@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -44,9 +45,14 @@ import (
 // These logs will also correctly show up in the "LOGS" tab on the GKE
 // console.
 type CloudLoggingClient struct {
-	meta   *ContainerMetadata // metadata about the current container
-	client *logging.Client    // Cloud Logging client
-	logger *logging.Logger    // logs to projects/<project>/logs/serviceweaver
+	meta    *ContainerMetadata // metadata about the current container
+	client  *logging.Client    // Cloud Logging client
+	logger  *logging.Logger    // logs to projects/<project>/logs/serviceweaver
+	filters exportFilters      // filters applied to logs before being exported
+}
+
+type exportFilters struct {
+	level slog.Level // minimum level for a log entry to be exported to Google Cloud Logging
 }
 
 // newCloudLoggingClient returns a new CloudLoggingClient.
@@ -55,7 +61,15 @@ func newCloudLoggingClient(ctx context.Context, meta *ContainerMetadata) (*Cloud
 	if err != nil {
 		return nil, err
 	}
-	return &CloudLoggingClient{meta, client, client.Logger("serviceweaver")}, nil
+	minExportLevel, err := LogLevelFromName(meta.Telemetry.Logging.MinExportLevel)
+	if err != nil {
+		return nil, err
+	}
+	return &CloudLoggingClient{
+		meta:    meta,
+		client:  client,
+		logger:  client.Logger("serviceweaver"),
+		filters: exportFilters{level: minExportLevel}}, nil
 }
 
 // Logger returns a new slog.Logger that logs to Google Cloud Logging.
@@ -65,6 +79,10 @@ func (cl *CloudLoggingClient) Logger(opts wlogging.Options) *slog.Logger {
 
 // Log logs the provided entry to Google Cloud Logging.
 func (cl *CloudLoggingClient) Log(entry *protos.LogEntry) {
+	if cl.filterLogEntry(entry) {
+		// Do not export the log entry if it doesn't satisfy the export filters.
+		return
+	}
 	if entry.TimeMicros == 0 {
 		entry.TimeMicros = time.Now().UnixMicro()
 	}
@@ -87,6 +105,26 @@ func (cl *CloudLoggingClient) Log(entry *protos.LogEntry) {
 			},
 		},
 	})
+}
+
+// filterLogEntry returns true if the entry should not be exported to Google Cloud Logging.
+func (cl *CloudLoggingClient) filterLogEntry(entry *protos.LogEntry) bool {
+	// Export all the log entries logged by the system services (e.g., controller,
+	// distributor, manager).
+	if entry.App == systemServicesName {
+		return false
+	}
+
+	level, err := LogLevelFromName(entry.Level)
+	if err != nil {
+		// Export log entries for which the log level is unknown, because we don't
+		// know how to filter them. Note that in practice this should never happen.
+		fmt.Fprintf(os.Stderr, "Invalid log level %s: %v", entry.Level, err)
+		return false
+	}
+	// Discard the log entry if its log level is smaller than the acceptable log
+	// level to be exported to Google Cloud Logging.
+	return level.Level() < cl.filters.level.Level()
 }
 
 // Close closes the CloudLoggingClient.
@@ -639,4 +677,11 @@ func entryFromLabels(labels map[string]string) (*protos.LogEntry, error) {
 		e.Attrs = append(e.Attrs, attr, value)
 	}
 	return &e, nil
+}
+
+// LogLevelFromName returns the log level corresponding to a level, based on its name.
+func LogLevelFromName(name string) (slog.Level, error) {
+	var level slog.Level
+	err := level.UnmarshalText([]byte(name))
+	return level, err
 }

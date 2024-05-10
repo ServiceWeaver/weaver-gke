@@ -256,6 +256,60 @@ func (x *MetricsOptions) GetExportInterval() *durationpb.Duration {
 	return nil
 }
 
+// Options to configure how the logs are handled by the deployer.
+type LoggingOptions struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// Minimum level for a log entry to be exported to Google Cloud Logging.
+	//
+	// Acceptable values are: "DEBUG", "INFO", "WARN", "ERROR". Note that these
+	// are the acceptable values by slog [1].
+	//
+	// [1] https://pkg.go.dev/log/slog#Level
+	MinExportLevel string `protobuf:"bytes,1,opt,name=min_export_level,json=minExportLevel,proto3" json:"min_export_level,omitempty"`
+}
+
+func (x *LoggingOptions) Reset() {
+	*x = LoggingOptions{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_internal_config_config_proto_msgTypes[2]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *LoggingOptions) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoggingOptions) ProtoMessage() {}
+
+func (x *LoggingOptions) ProtoReflect() protoreflect.Message {
+	mi := &file_internal_config_config_proto_msgTypes[2]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoggingOptions.ProtoReflect.Descriptor instead.
+func (*LoggingOptions) Descriptor() ([]byte, []int) {
+	return file_internal_config_config_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *LoggingOptions) GetMinExportLevel() string {
+	if x != nil {
+		return x.MinExportLevel
+	}
+	return ""
+}
+
 // Options to control how the telemetry is being manipulated.
 type Telemetry struct {
 	state         protoimpl.MessageState
@@ -263,12 +317,13 @@ type Telemetry struct {
 	unknownFields protoimpl.UnknownFields
 
 	Metrics *MetricsOptions `protobuf:"bytes,1,opt,name=metrics,proto3" json:"metrics,omitempty"`
+	Logging *LoggingOptions `protobuf:"bytes,2,opt,name=logging,proto3" json:"logging,omitempty"`
 }
 
 func (x *Telemetry) Reset() {
 	*x = Telemetry{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_internal_config_config_proto_msgTypes[2]
+		mi := &file_internal_config_config_proto_msgTypes[3]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -281,7 +336,7 @@ func (x *Telemetry) String() string {
 func (*Telemetry) ProtoMessage() {}
 
 func (x *Telemetry) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_config_config_proto_msgTypes[2]
+	mi := &file_internal_config_config_proto_msgTypes[3]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -294,12 +349,19 @@ func (x *Telemetry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Telemetry.ProtoReflect.Descriptor instead.
 func (*Telemetry) Descriptor() ([]byte, []int) {
-	return file_internal_config_config_proto_rawDescGZIP(), []int{2}
+	return file_internal_config_config_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *Telemetry) GetMetrics() *MetricsOptions {
 	if x != nil {
 		return x.Metrics
+	}
+	return nil
+}
+
+func (x *Telemetry) GetLogging() *LoggingOptions {
+	if x != nil {
+		return x.Logging
 	}
 	return nil
 }
@@ -324,7 +386,7 @@ type GKEConfig_ListenerOptions struct {
 func (x *GKEConfig_ListenerOptions) Reset() {
 	*x = GKEConfig_ListenerOptions{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_internal_config_config_proto_msgTypes[3]
+		mi := &file_internal_config_config_proto_msgTypes[4]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -337,7 +399,7 @@ func (x *GKEConfig_ListenerOptions) String() string {
 func (*GKEConfig_ListenerOptions) ProtoMessage() {}
 
 func (x *GKEConfig_ListenerOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_config_config_proto_msgTypes[3]
+	mi := &file_internal_config_config_proto_msgTypes[4]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -380,7 +442,7 @@ type GKEConfig_Components struct {
 func (x *GKEConfig_Components) Reset() {
 	*x = GKEConfig_Components{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_internal_config_config_proto_msgTypes[6]
+		mi := &file_internal_config_config_proto_msgTypes[7]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -393,7 +455,7 @@ func (x *GKEConfig_Components) String() string {
 func (*GKEConfig_Components) ProtoMessage() {}
 
 func (x *GKEConfig_Components) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_config_config_proto_msgTypes[6]
+	mi := &file_internal_config_config_proto_msgTypes[7]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -491,14 +553,21 @@ var file_internal_config_config_proto_rawDesc = []byte{
 	0x20, 0x01, 0x28, 0x0b, 0x32, 0x19, 0x2e, 0x67, 0x6f, 0x6f, 0x67, 0x6c, 0x65, 0x2e, 0x70, 0x72,
 	0x6f, 0x74, 0x6f, 0x62, 0x75, 0x66, 0x2e, 0x44, 0x75, 0x72, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x52,
 	0x0e, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x49, 0x6e, 0x74, 0x65, 0x72, 0x76, 0x61, 0x6c, 0x22,
-	0x3d, 0x0a, 0x09, 0x54, 0x65, 0x6c, 0x65, 0x6d, 0x65, 0x74, 0x72, 0x79, 0x12, 0x30, 0x0a, 0x07,
-	0x6d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e,
-	0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x2e, 0x4d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x4f, 0x70,
-	0x74, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x07, 0x6d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x42, 0x35,
-	0x5a, 0x33, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x53, 0x65, 0x72,
-	0x76, 0x69, 0x63, 0x65, 0x57, 0x65, 0x61, 0x76, 0x65, 0x72, 0x2f, 0x77, 0x65, 0x61, 0x76, 0x65,
-	0x72, 0x2d, 0x67, 0x6b, 0x65, 0x2f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x6e, 0x61, 0x6c, 0x2f, 0x63,
-	0x6f, 0x6e, 0x66, 0x69, 0x67, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x3a, 0x0a, 0x0e, 0x4c, 0x6f, 0x67, 0x67, 0x69, 0x6e, 0x67, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x12, 0x28, 0x0a, 0x10, 0x6d, 0x69, 0x6e, 0x5f, 0x65, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x5f,
+	0x6c, 0x65, 0x76, 0x65, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0e, 0x6d, 0x69, 0x6e,
+	0x45, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x22, 0x6f, 0x0a, 0x09, 0x54,
+	0x65, 0x6c, 0x65, 0x6d, 0x65, 0x74, 0x72, 0x79, 0x12, 0x30, 0x0a, 0x07, 0x6d, 0x65, 0x74, 0x72,
+	0x69, 0x63, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x63, 0x6f, 0x6e, 0x66,
+	0x69, 0x67, 0x2e, 0x4d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x4f, 0x70, 0x74, 0x69, 0x6f, 0x6e,
+	0x73, 0x52, 0x07, 0x6d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x12, 0x30, 0x0a, 0x07, 0x6c, 0x6f,
+	0x67, 0x67, 0x69, 0x6e, 0x67, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x16, 0x2e, 0x63, 0x6f,
+	0x6e, 0x66, 0x69, 0x67, 0x2e, 0x4c, 0x6f, 0x67, 0x67, 0x69, 0x6e, 0x67, 0x4f, 0x70, 0x74, 0x69,
+	0x6f, 0x6e, 0x73, 0x52, 0x07, 0x6c, 0x6f, 0x67, 0x67, 0x69, 0x6e, 0x67, 0x42, 0x35, 0x5a, 0x33,
+	0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x53, 0x65, 0x72, 0x76, 0x69,
+	0x63, 0x65, 0x57, 0x65, 0x61, 0x76, 0x65, 0x72, 0x2f, 0x77, 0x65, 0x61, 0x76, 0x65, 0x72, 0x2d,
+	0x67, 0x6b, 0x65, 0x2f, 0x69, 0x6e, 0x74, 0x65, 0x72, 0x6e, 0x61, 0x6c, 0x2f, 0x63, 0x6f, 0x6e,
+	0x66, 0x69, 0x67, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -513,34 +582,36 @@ func file_internal_config_config_proto_rawDescGZIP() []byte {
 	return file_internal_config_config_proto_rawDescData
 }
 
-var file_internal_config_config_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_internal_config_config_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_internal_config_config_proto_goTypes = []interface{}{
 	(*GKEConfig)(nil),                 // 0: config.GKEConfig
 	(*MetricsOptions)(nil),            // 1: config.MetricsOptions
-	(*Telemetry)(nil),                 // 2: config.Telemetry
-	(*GKEConfig_ListenerOptions)(nil), // 3: config.GKEConfig.ListenerOptions
-	nil,                               // 4: config.GKEConfig.ListenersEntry
-	nil,                               // 5: config.GKEConfig.ComponentIdentityEntry
-	(*GKEConfig_Components)(nil),      // 6: config.GKEConfig.Components
-	nil,                               // 7: config.GKEConfig.IdentityAllowlistEntry
-	(*protos.Deployment)(nil),         // 8: runtime.Deployment
-	(*durationpb.Duration)(nil),       // 9: google.protobuf.Duration
+	(*LoggingOptions)(nil),            // 2: config.LoggingOptions
+	(*Telemetry)(nil),                 // 3: config.Telemetry
+	(*GKEConfig_ListenerOptions)(nil), // 4: config.GKEConfig.ListenerOptions
+	nil,                               // 5: config.GKEConfig.ListenersEntry
+	nil,                               // 6: config.GKEConfig.ComponentIdentityEntry
+	(*GKEConfig_Components)(nil),      // 7: config.GKEConfig.Components
+	nil,                               // 8: config.GKEConfig.IdentityAllowlistEntry
+	(*protos.Deployment)(nil),         // 9: runtime.Deployment
+	(*durationpb.Duration)(nil),       // 10: google.protobuf.Duration
 }
 var file_internal_config_config_proto_depIdxs = []int32{
-	4, // 0: config.GKEConfig.listeners:type_name -> config.GKEConfig.ListenersEntry
-	8, // 1: config.GKEConfig.deployment:type_name -> runtime.Deployment
-	5, // 2: config.GKEConfig.component_identity:type_name -> config.GKEConfig.ComponentIdentityEntry
-	7, // 3: config.GKEConfig.identity_allowlist:type_name -> config.GKEConfig.IdentityAllowlistEntry
-	2, // 4: config.GKEConfig.telemetry:type_name -> config.Telemetry
-	9, // 5: config.MetricsOptions.export_interval:type_name -> google.protobuf.Duration
-	1, // 6: config.Telemetry.metrics:type_name -> config.MetricsOptions
-	3, // 7: config.GKEConfig.ListenersEntry.value:type_name -> config.GKEConfig.ListenerOptions
-	6, // 8: config.GKEConfig.IdentityAllowlistEntry.value:type_name -> config.GKEConfig.Components
-	9, // [9:9] is the sub-list for method output_type
-	9, // [9:9] is the sub-list for method input_type
-	9, // [9:9] is the sub-list for extension type_name
-	9, // [9:9] is the sub-list for extension extendee
-	0, // [0:9] is the sub-list for field type_name
+	5,  // 0: config.GKEConfig.listeners:type_name -> config.GKEConfig.ListenersEntry
+	9,  // 1: config.GKEConfig.deployment:type_name -> runtime.Deployment
+	6,  // 2: config.GKEConfig.component_identity:type_name -> config.GKEConfig.ComponentIdentityEntry
+	8,  // 3: config.GKEConfig.identity_allowlist:type_name -> config.GKEConfig.IdentityAllowlistEntry
+	3,  // 4: config.GKEConfig.telemetry:type_name -> config.Telemetry
+	10, // 5: config.MetricsOptions.export_interval:type_name -> google.protobuf.Duration
+	1,  // 6: config.Telemetry.metrics:type_name -> config.MetricsOptions
+	2,  // 7: config.Telemetry.logging:type_name -> config.LoggingOptions
+	4,  // 8: config.GKEConfig.ListenersEntry.value:type_name -> config.GKEConfig.ListenerOptions
+	7,  // 9: config.GKEConfig.IdentityAllowlistEntry.value:type_name -> config.GKEConfig.Components
+	10, // [10:10] is the sub-list for method output_type
+	10, // [10:10] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_internal_config_config_proto_init() }
@@ -574,7 +645,7 @@ func file_internal_config_config_proto_init() {
 			}
 		}
 		file_internal_config_config_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Telemetry); i {
+			switch v := v.(*LoggingOptions); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -586,6 +657,18 @@ func file_internal_config_config_proto_init() {
 			}
 		}
 		file_internal_config_config_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*Telemetry); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_internal_config_config_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GKEConfig_ListenerOptions); i {
 			case 0:
 				return &v.state
@@ -597,7 +680,7 @@ func file_internal_config_config_proto_init() {
 				return nil
 			}
 		}
-		file_internal_config_config_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+		file_internal_config_config_proto_msgTypes[7].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*GKEConfig_Components); i {
 			case 0:
 				return &v.state
@@ -616,7 +699,7 @@ func file_internal_config_config_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_internal_config_config_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
