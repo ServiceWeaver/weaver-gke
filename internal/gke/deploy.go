@@ -36,7 +36,6 @@ import (
 	"cloud.google.com/go/iam/apiv1/iampb"
 	privateca "cloud.google.com/go/security/privateca/apiv1"
 	"cloud.google.com/go/security/privateca/apiv1/privatecapb"
-	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny/controller"
@@ -59,7 +58,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	vautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
-	backendconfigv1 "k8s.io/ingress-gce/pkg/apis/backendconfig/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
@@ -1069,6 +1067,11 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 				Resources: []string{"gateways", "httproutes"},
 				Verbs:     []string{"*"},
 			},
+			{
+				APIGroups: []string{"networking.gke.io"}, // Health-check APIs.
+				Resources: []string{"healthcheckpolicies"},
+				Verbs:     []string{"*"},
+			},
 		},
 	}); err != nil {
 		return nil, "", err
@@ -1171,6 +1174,11 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 			{
 				APIGroups: []string{"net.gke.io"}, // Networking APIs.
 				Resources: []string{"serviceexports"},
+				Verbs:     []string{"*"},
+			},
+			{
+				APIGroups: []string{"networking.gke.io"}, // Health-check APIs.
+				Resources: []string{"healthcheckpolicies"},
 				Verbs:     []string{"*"},
 			},
 		},
@@ -1393,21 +1401,6 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 			Name: namespaceName,
 			Labels: map[string]string{
 				"name": namespaceName,
-			},
-		},
-	}); err != nil {
-		return nil, err
-	}
-
-	// Add a Service Weaver backend-config resource to the cluster.
-	if err := patchBackendConfig(ctx, cluster, patchOptions{}, &backendconfigv1.BackendConfig{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      backendConfigName,
-			Namespace: namespaceName,
-		},
-		Spec: backendconfigv1.BackendConfigSpec{
-			HealthCheck: &backendconfigv1.HealthCheckConfig{
-				RequestPath: ptrOf(weaver.HealthzURL),
 			},
 		},
 	}); err != nil {
