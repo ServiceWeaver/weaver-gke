@@ -33,7 +33,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	vautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
-	backendconfigv1 "k8s.io/ingress-gce/pkg/apis/backendconfig/v1"
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
@@ -377,27 +376,6 @@ func patchHTTPRoute(ctx context.Context, cluster *ClusterInfo, opts patchOptions
 	}.Run(ctx, route)
 }
 
-// patchBackendConfig updates the backend config with the new configuration.
-func patchBackendConfig(ctx context.Context, cluster *ClusterInfo, opts patchOptions, bc *backendconfigv1.BackendConfig) error {
-	cli := cluster.ingressClientset.CloudV1().BackendConfigs(getNamespace(bc.ObjectMeta))
-	return kubePatcher{
-		cluster: cluster,
-		desc:    "backend config",
-		opts:    opts,
-		get: func(ctx context.Context) (metav1.Object, error) {
-			return cli.Get(ctx, bc.Name, metav1.GetOptions{})
-		},
-		create: func(ctx context.Context) error {
-			_, err := cli.Create(ctx, bc, metav1.CreateOptions{})
-			return err
-		},
-		update: func(ctx context.Context) error {
-			_, err := cli.Update(ctx, bc, metav1.UpdateOptions{})
-			return err
-		},
-	}.Run(ctx, bc)
-}
-
 // patchServiceExport updates the service export with the new configuration.
 func patchServiceExport(ctx context.Context, cluster *ClusterInfo, opts patchOptions, seJSON string) error {
 	var se unstructured.Unstructured
@@ -426,6 +404,36 @@ func patchServiceExport(ctx context.Context, cluster *ClusterInfo, opts patchOpt
 			return err
 		},
 	}.Run(ctx, &se)
+}
+
+// patchHealthCheckPolicy updates the health-check policy with the new configuration.
+func patchHealthCheckPolicy(ctx context.Context, cluster *ClusterInfo, opts patchOptions, hcpJSON string) error {
+	var hcp unstructured.Unstructured
+	if err := hcp.UnmarshalJSON([]byte(hcpJSON)); err != nil {
+		return fmt.Errorf("internal error: cannot parse health check policy: %v", err)
+	}
+	hcp.SetAPIVersion("networking.gke.io/v1")
+	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
+		Group:    "networking.gke.io",
+		Version:  "v1",
+		Resource: "healthcheckpolicies",
+	}).Namespace(hcp.GetNamespace())
+	return kubePatcher{
+		cluster: cluster,
+		desc:    "health check policy",
+		opts:    opts,
+		get: func(ctx context.Context) (metav1.Object, error) {
+			return cli.Get(ctx, hcp.GetName(), metav1.GetOptions{})
+		},
+		create: func(ctx context.Context) error {
+			_, err := cli.Create(ctx, &hcp, metav1.CreateOptions{})
+			return err
+		},
+		update: func(ctx context.Context) error {
+			_, err := cli.Update(ctx, &hcp, metav1.UpdateOptions{})
+			return err
+		},
+	}.Run(ctx, &hcp)
 }
 
 // patchVerticalPodAutoscaler updates the vertical pod autoscaler with the

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/compute/apiv1/computepb"
+	"github.com/ServiceWeaver/weaver"
 	"github.com/ServiceWeaver/weaver-gke/internal/config"
 	"github.com/ServiceWeaver/weaver-gke/internal/nanny"
 	"github.com/ServiceWeaver/weaver-gke/internal/proto"
@@ -47,7 +48,6 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -71,10 +71,6 @@ const (
 
 	// Name of the deprecated Service Weaver config cluster.
 	deprecatedConfigClusterName = "serviceweaver-config"
-
-	// Name of the backend config used for configuring application listener
-	// backends.
-	backendConfigName = "serviceweaver"
 
 	// Key in a Kubernetes resource's label map that corresponds to the
 	// application name that the resource is associated with. Used when looking
@@ -127,10 +123,6 @@ const (
 	// Multiplier for the traffic fraction values (in the range [0, 1])
 	// used for their conversion into HTTPRoute weights (in the range [0, 1000]).
 	routeFractionMultiplier = 1000
-
-	// Key in Service's annotation map that stores the name of the BackendConfig
-	// associated with the service.
-	backendConfigServiceAnnotationKey = "cloud.google.com/backend-config"
 
 	// Prefix for the temporary spare-capacity jobs.
 	tempSpareCapacityJobPrefix = "temp-spare-capacity"
@@ -406,10 +398,6 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 var autoJSONTmpl = template.Must(template.New("auto").Parse(`{
 "kind":"MultidimPodAutoscaler",
 "metadata":{
-	"labels":{
-		"serviceweaver/app_name":"{{.AppName}}",
-		"serviceweaver/deployment_id":"{{.DeploymentID}}"
-	},
 	"name":"{{.Name}}",
 	"namespace":"{{.Namespace}}"
 },
@@ -451,8 +439,8 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 	if err := autoJSONTmpl.Execute(&b, struct {
 		Name             string
 		Namespace        string
-		AppName          string
-		DeploymentID     string
+		AppNameLabel     string
+		AppVersionLabel  string
 		AppContainerName string
 		MinMemory        string
 		MinReplicas      int32
@@ -461,8 +449,8 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 	}{
 		Name:             aName,
 		Namespace:        namespaceName,
-		AppName:          name{dep.App.Name}.DNSLabel(),
-		DeploymentID:     name{dep.Id}.DNSLabel(),
+		AppNameLabel:     name{dep.App.Name}.DNSLabel(),
+		AppVersionLabel:  name{dep.Id}.DNSLabel(),
 		AppContainerName: appContainerName,
 		MinMemory:        memoryUnit.String(),
 		MinReplicas:      cfg.MinReplicas,
@@ -539,13 +527,33 @@ func appContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig, repli
 var serviceExportTmpl = template.Must(template.New("se").Parse(`{
 "metadata":{
 	"name":"{{.Name}}",
-	"namespace":"{{.Namespace}}",
-	"annotations":{
-		"{{.BackendConfigAnnotationKey}}":"{\"default\": \"{{.BackendConfigName}}\"}"
-	}
+	"namespace":"{{.Namespace}}"
 },
 "kind":"ServiceExport"
 }`))
+
+var healthCheckPolicyTmpl = template.Must(template.New("healthcheck").Parse(`{
+	"kind":"HealthCheckPolicy",
+	"metadata":{
+		"name":"{{.Name}}",
+		"namespace":"{{.Namespace}}"
+	},
+	"spec":{
+		"default":{
+			"config":{
+				"type":"HTTP",
+				"httpHealthCheck":{
+					"port": {{.TargetPort}},
+					"requestPath":"{{.URLPath}}"
+				}
+			}
+		},
+		"targetRef":{
+			"group":"{{.TargetGroup}}",
+			"kind":"{{.TargetKind}}",
+			"name":"{{.TargetName}}"
+		}	
+	}}`))
 
 // ensureListenerService ensures that a service that exposes the given network
 // listener is running in the given cluster.
@@ -573,8 +581,7 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *sl
 				versionKey: name{dep.Id}.DNSLabel(),
 			},
 			Annotations: map[string]string{
-				serviceListenerKey:                lisEnc,
-				backendConfigServiceAnnotationKey: fmt.Sprintf(`{"default": "%s"}`, backendConfigName),
+				serviceListenerKey: lisEnc,
 			},
 		},
 		Spec: v1.ServiceSpec{
@@ -596,27 +603,50 @@ func ensureListenerService(ctx context.Context, cluster *ClusterInfo, logger *sl
 		return nil
 	}
 
-	// Create service export.
-	// NOTE: the BackendConfig attached to this resource isn't currently
-	// propagated to the corresponding ServiceImport. As a temporary
-	// workaround, we also attach the backend config annotation to
-	// the ServiceImport in the config cluster, as soon as it is auto-created.
+	// Create service export, in case the listener is accessed from the
+	// global LB.
 	var b strings.Builder
 	if err := serviceExportTmpl.Execute(&b, struct {
-		Name                       string
-		Namespace                  string
-		BackendConfigAnnotationKey string
-		BackendConfigName          string
+		Name      string
+		Namespace string
 	}{
-		Name:                       svcName,
-		Namespace:                  namespaceName,
-		BackendConfigAnnotationKey: backendConfigServiceAnnotationKey,
-		BackendConfigName:          backendConfigName,
+		Name:      svcName,
+		Namespace: namespaceName,
 	}); err != nil {
 		return err
 	}
-	return patchServiceExport(
-		ctx, cluster, patchOptions{logger: logger}, b.String())
+	if err := patchServiceExport(
+		ctx, cluster, patchOptions{logger: logger}, b.String()); err != nil {
+		return err
+	}
+
+	// Create a custom health-check policy, in case the listener is accessed
+	// from the local (i.e., regional) LB.
+	b.Reset()
+	if err := healthCheckPolicyTmpl.Execute(&b, struct {
+		Name        string
+		Namespace   string
+		TargetPort  string
+		URLPath     string
+		TargetGroup string
+		TargetKind  string
+		TargetName  string
+	}{
+		Name:        svcName,
+		Namespace:   namespaceName,
+		TargetPort:  portStr,
+		URLPath:     weaver.HealthzURL,
+		TargetGroup: "",
+		TargetKind:  "Service",
+		TargetName:  svcName,
+	}); err != nil {
+		return err
+	}
+	if err := patchHealthCheckPolicy(
+		ctx, cluster, patchOptions{logger: logger}, b.String()); err != nil {
+		return err
+	}
+	return nil
 }
 
 // deleteListenerServices deletes all of the listener services for a given
@@ -653,6 +683,17 @@ func deleteListenerService(ctx context.Context, cluster *ClusterInfo, svcName st
 		Resource: "serviceexports",
 	}).Namespace(namespaceName).Delete(ctx, svcName, metav1.DeleteOptions{}); err != nil {
 		return err
+	}
+
+	// Delete the regional and global health-check policies for this Service, if any.
+	for _, name := range []string{svcName, fmt.Sprintf("%s-global", svcName)} {
+		if err := cluster.dynamicClient.Resource(schema.GroupVersionResource{
+			Group:    "networking.gke.io",
+			Version:  "v1",
+			Resource: "healthcheckpolicies",
+		}).Namespace(namespaceName).Delete(ctx, name, metav1.DeleteOptions{}); err != nil && !kerrors.IsNotFound(err) {
+			return err
+		}
 	}
 	return nil
 }
@@ -717,18 +758,23 @@ func sanitizeGlobalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logg
 	//       removed from the traffic assignments. (This is okay because the
 	//       external load-balancer anyway isn't able to forward traffic to the
 	//       listener until the ServiceImport resource is created.)
-	//   (2) Ensure that the Service Weaver BackendConfig is attached to the
+	//   (2) Ensure that the Service Weaver HealthCheckPolicy is attached to the
 	//       corresponding ServiceImport resource. This config contains
-	//       some Service Weaver related backend customizations (e.g., perform
-	//       health checks on the /healtz path).
+	//       some Service Weaver related health-check customizations (e.g., perform
+	//       health checks on the specific weaver healtz path).
 	// Note that (1) can be performed without updating the traffic fractions,
 	// since GKE traffic weights don't need to add up to a fixed value.
-	backendConfigSpec := fmt.Sprintf(`{"default": "%s"}`, backendConfigName)
+
+	svcImportCli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
+		Group:    "net.gke.io",
+		Version:  "v1",
+		Resource: "serviceimports",
+	}).Namespace(namespaceName)
 
 	// ensureAlloc returns true iff the traffic allocation is ready to
 	// receive traffic, or an error if the allocation is invalid.
-	// If the traffic allocation is ready, we also ensure that a Service Weaver backend
-	// configuration is attached to it.
+	// If the traffic allocation is ready, we also ensure that a global health-check
+	// policy resource is attached to it.
 	ensureAlloc := func(alloc *nanny.TrafficAllocation) (bool, error) {
 		if alloc.Location == "" {
 			return false, fmt.Errorf("no location specified for traffic allocation %+v", alloc)
@@ -738,18 +784,50 @@ func sanitizeGlobalTrafficRoutes(ctx context.Context, cluster *ClusterInfo, logg
 		}
 		svcName := name{alloc.Location, alloc.AppName, alloc.Listener.Name, alloc.VersionId[:8]}.DNSLabel()
 
-		if err := modifyServiceImport(ctx, logger, cluster, svcName, func(u *unstructured.Unstructured) bool {
-			annotations := u.GetAnnotations()
-			if annotations[backendConfigServiceAnnotationKey] == backendConfigSpec {
-				return false // modified
+		// Get a listener port number inside the Pods. The health-check policy is supposed to use
+		// this port number, instead of the Service/ServiceImport ports.
+		_, portStr, err := net.SplitHostPort(alloc.Listener.Addr)
+		if err != nil {
+			return false, err
+		}
+
+		// See if the service import exists, and if so, create the health-check policy
+		// that's attached to it.
+		for r := retry.Begin(); r.Continue(ctx); {
+			_, err := svcImportCli.Get(ctx, svcName, metav1.GetOptions{})
+			if err == nil { // exists
+				break
 			}
-			annotations[backendConfigServiceAnnotationKey] = backendConfigSpec
-			u.SetAnnotations(annotations)
-			return true // modified
-		}); err != nil {
-			if kerrors.IsNotFound(err) { // ServiceImport doesn't exist (yet)
+			if kerrors.IsNotFound(err) {
 				return false, nil
 			}
+			if !isRetriableKubeError(err) {
+				return false, err
+			}
+			// retry
+		}
+		var b strings.Builder
+		if err := healthCheckPolicyTmpl.Execute(&b, struct {
+			Name        string
+			Namespace   string
+			TargetPort  string
+			URLPath     string
+			TargetGroup string
+			TargetKind  string
+			TargetName  string
+		}{
+			Name:        fmt.Sprintf("%s-global", svcName),
+			Namespace:   namespaceName,
+			TargetPort:  portStr,
+			URLPath:     weaver.HealthzURL,
+			TargetGroup: "net.gke.io",
+			TargetKind:  "ServiceImport",
+			TargetName:  svcName,
+		}); err != nil {
+			return false, err
+		}
+		if err := patchHealthCheckPolicy(
+			ctx, cluster, patchOptions{logger: logger}, b.String()); err != nil {
 			return false, err
 		}
 		return true, nil
