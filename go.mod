@@ -12,7 +12,7 @@ require (
 	cloud.google.com/go/monitoring v1.15.1
 	cloud.google.com/go/security v1.15.1
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.11.0
-	github.com/ServiceWeaver/weaver v0.24.1
+	github.com/ServiceWeaver/weaver v0.24.2
 	github.com/golang/protobuf v1.5.3
 	github.com/google/cel-go v0.17.1
 	github.com/google/go-cmp v0.5.9
@@ -73,7 +73,7 @@ require (
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kballard/go-shellquote v0.0.0-20180428030007-95032a82bc51 // indirect
-	github.com/lightstep/varopt v1.3.0 // indirect
+	github.com/lightstep/varopt v1.4.0 // indirect
 	github.com/mailru/easyjson v0.7.6 // indirect
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2 // indirect
@@ -91,12 +91,12 @@ require (
 	go.opentelemetry.io/otel/metric v1.19.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	go.uber.org/multierr v1.8.0 // indirect
-	golang.org/x/crypto v0.17.0 // indirect
+	golang.org/x/crypto v0.21.0 // indirect
 	golang.org/x/mod v0.13.0 // indirect
-	golang.org/x/net v0.17.0 // indirect
+	golang.org/x/net v0.23.0 // indirect
 	golang.org/x/sync v0.4.0 // indirect
-	golang.org/x/sys v0.15.0 // indirect
-	golang.org/x/term v0.15.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/term v0.18.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/time v0.0.0-20220210224613-90d013bbcef8 // indirect
 	golang.org/x/tools v0.14.0 // indirect
