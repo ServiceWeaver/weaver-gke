@@ -24,7 +24,7 @@ import (
 	"net"
 	"net/http"
 	"os"
-	sync "sync"
+	"sync"
 	"time"
 
 	"github.com/ServiceWeaver/weaver-gke/internal/babysitter"
@@ -44,6 +44,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 )
+
+const systemServicesName = "nanny"
 
 func getNannyContainerMetadata() (*ContainerMetadata, error) {
 	for _, v := range []string{
@@ -71,7 +73,7 @@ func getNannyLogger(ctx context.Context, meta *ContainerMetadata, id, service st
 		return nil, nil, err
 	}
 	return lc.Logger(logging.Options{
-		App:       "nanny",
+		App:       systemServicesName,
 		Component: service,
 		Weavelet:  id,
 		Attrs:     []string{"serviceweaver/system", ""},

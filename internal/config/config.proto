@@ -103,7 +103,20 @@ message MetricsOptions {
   // How often to export the metrics to Google Cloud.
   google.protobuf.Duration export_interval = 2;
 }
+
+// Options to configure how the logs are handled by the deployer.
+message LoggingOptions {
+  // Minimum level for a log entry to be exported to Google Cloud Logging.
+  //
+  // Acceptable values are: "DEBUG", "INFO", "WARN", "ERROR". Note that these
+  // are the acceptable values by slog [1].
+  //
+  // [1] https://pkg.go.dev/log/slog#Level
+  string min_export_level = 1;
+}
+
 // Options to control how the telemetry is being manipulated.
 message Telemetry {
   MetricsOptions metrics = 1;
+  LoggingOptions logging = 2;
 }

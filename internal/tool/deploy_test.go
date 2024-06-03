@@ -56,6 +56,7 @@ regions = ["us-central1"]`,
 				Regions:     []string{"us-central1"},
 				Telemetry: &config.Telemetry{
 					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+					Logging: &config.LoggingOptions{MinExportLevel: "DEBUG"},
 				},
 			},
 		},
@@ -74,6 +75,7 @@ regions = ["us-central1"]
 				Regions:     []string{"us-central1"},
 				Telemetry: &config.Telemetry{
 					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+					Logging: &config.LoggingOptions{MinExportLevel: "DEBUG"},
 				},
 			},
 		},
@@ -90,6 +92,7 @@ regions = ["us-central1"]
 				Regions:     []string{"us-central1"},
 				Telemetry: &config.Telemetry{
 					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+					Logging: &config.LoggingOptions{MinExportLevel: "DEBUG"},
 				},
 			},
 		},
@@ -107,6 +110,7 @@ regions = ["us-central1"]
 				Regions:     []string{"us-central1"},
 				Telemetry: &config.Telemetry{
 					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+					Logging: &config.LoggingOptions{MinExportLevel: "DEBUG"},
 				},
 			},
 		},
@@ -128,6 +132,7 @@ regions = ["us-central1"]
 				Regions: []string{"us-central1"},
 				Telemetry: &config.Telemetry{
 					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+					Logging: &config.LoggingOptions{MinExportLevel: "DEBUG"},
 				},
 			},
 		},
@@ -151,15 +156,17 @@ regions = ["us-central1"]
 				Regions: []string{"us-central1"},
 				Telemetry: &config.Telemetry{
 					Metrics: &config.MetricsOptions{ExportInterval: durationpb.New(30 * time.Second)},
+					Logging: &config.LoggingOptions{MinExportLevel: "DEBUG"},
 				},
 			},
 		},
 		{
-			name: "metrics",
+			name: "custom-telemetry",
 			config: `
 [gke]
 regions = ["us-central1"]
 telemetry.metrics = {auto_generate_metrics = true, export_interval = "1h"}
+telemetry.logging = {min_export_level = "ERROR"}
 `,
 			expect: &config.GKEConfig{
 				Image:       defaultBaseImage,
@@ -170,6 +177,7 @@ telemetry.metrics = {auto_generate_metrics = true, export_interval = "1h"}
 						AutoGenerateMetrics: true,
 						ExportInterval:      durationpb.New(1 * time.Hour),
 					},
+					Logging: &config.LoggingOptions{MinExportLevel: "ERROR"},
 				},
 			},
 		},
