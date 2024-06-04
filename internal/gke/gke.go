@@ -48,6 +48,7 @@ import (
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -278,6 +279,21 @@ func stop(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, app, v
 		}
 	}
 
+	// Delete any autoscalers.
+	deleter := cluster.dynamicClient.Resource(schema.GroupVersionResource{
+		Group:    "autoscaling.gke.io",
+		Version:  "v1beta1",
+		Resource: "multidimpodautoscalers",
+	}).Namespace(namespaceName)
+	opts := metav1.DeleteOptions{}
+	selector = labels.SelectorFromSet(labels.Set{
+		appKey:     name{app}.DNSLabel(),
+		versionKey: name{version}.DNSLabel()})
+	listOpts = metav1.ListOptions{LabelSelector: selector.String()}
+	if err := deleter.DeleteCollection(ctx, opts, listOpts); err != nil {
+		return err
+	}
+
 	// Stop any jobs.
 	jobsClient := cluster.Clientset.BatchV1().Jobs(namespaceName)
 	jobs, err := jobsClient.List(ctx, listOpts)
@@ -439,8 +455,6 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 	if err := autoJSONTmpl.Execute(&b, struct {
 		Name             string
 		Namespace        string
-		AppNameLabel     string
-		AppVersionLabel  string
 		AppContainerName string
 		MinMemory        string
 		MinReplicas      int32
@@ -449,8 +463,6 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 	}{
 		Name:             aName,
 		Namespace:        namespaceName,
-		AppNameLabel:     name{dep.App.Name}.DNSLabel(),
-		AppVersionLabel:  name{dep.Id}.DNSLabel(),
 		AppContainerName: appContainerName,
 		MinMemory:        memoryUnit.String(),
 		MinReplicas:      cfg.MinReplicas,
@@ -459,7 +471,18 @@ func ensureReplicaSetAutoscaler(ctx context.Context, cluster *ClusterInfo, logge
 	}); err != nil {
 		return err
 	}
-	return patchMultidimPodAutoscaler(ctx, cluster, patchOptions{logger: logger}, b.String())
+
+	// Add labels. Note that this is a bit hacky. However, if we set the labels in
+	// the template, things don't really work.
+	var auto unstructured.Unstructured
+	if err := auto.UnmarshalJSON([]byte(b.String())); err != nil {
+		return fmt.Errorf("internal error: cannot parse multidimensional pod autoscaler: %v", err)
+	}
+	auto.SetLabels(map[string]string{
+		appKey:     name{dep.App.Name}.DNSLabel(),
+		versionKey: name{dep.Id}.DNSLabel(),
+	})
+	return patchMultidimPodAutoscaler(ctx, cluster, patchOptions{logger: logger}, auto)
 }
 
 func appContainer(app string, cluster *ClusterInfo, cfg *config.GKEConfig, replicaSet string) (v1.Container, error) {

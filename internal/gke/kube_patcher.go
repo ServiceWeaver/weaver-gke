@@ -460,12 +460,7 @@ func patchVerticalPodAutoscaler(ctx context.Context, cluster *ClusterInfo, opts 
 
 // patchMultidimPodAutoscaler updates the multidimensional pod autoscaler with
 // the new configuration.
-func patchMultidimPodAutoscaler(ctx context.Context, cluster *ClusterInfo, opts patchOptions, autoJSON string) error {
-	var auto unstructured.Unstructured
-	if err := auto.UnmarshalJSON([]byte(autoJSON)); err != nil {
-		return fmt.Errorf("internal error: cannot parse multidimensional pod autoscaler: %v", err)
-
-	}
+func patchMultidimPodAutoscaler(ctx context.Context, cluster *ClusterInfo, opts patchOptions, auto unstructured.Unstructured) error {
 	auto.SetAPIVersion("autoscaling.gke.io/v1beta1")
 	cli := cluster.dynamicClient.Resource(schema.GroupVersionResource{
 		Group:    "autoscaling.gke.io",
