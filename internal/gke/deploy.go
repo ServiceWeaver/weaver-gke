@@ -452,8 +452,10 @@ func prepareProject(ctx context.Context, config CloudConfig, cfg *config.GKEConf
 	}
 
 	// Setup the Certificate Authority.
-	if err := ensureCA(ctx, config); err != nil {
-		return nil, "", err
+	if cfg.Mtls {
+		if err := ensureCA(ctx, config); err != nil {
+			return nil, "", err
+		}
 	}
 
 	// Ensure the Service Weaver configuration cluster is setup.
@@ -481,8 +483,14 @@ func buildRolloutRequest(cfg *config.GKEConfig) *controller.RolloutRequest {
 	for _, region := range cfg.Regions {
 		// NOTE: distributor address must be resolvable from anywhere inside
 		// the project's VPC.
-		distributorAddr :=
-			fmt.Sprintf("https://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
+		var distributorAddr string
+		if cfg.Mtls {
+			distributorAddr =
+				fmt.Sprintf("https://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
+		} else {
+			distributorAddr =
+				fmt.Sprintf("http://distributor.%s.svc.%s-%s:80", namespaceName, applicationClusterName, region)
+		}
 		req.Locations = append(req.Locations, &controller.RolloutRequest_Location{
 			Name:            region,
 			DistributorAddr: distributorAddr,
@@ -1042,7 +1050,7 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 	if err != nil {
 		return nil, "", err
 	}
-	cluster, err := ensureManagedCluster(ctx, config, name, region)
+	cluster, err := ensureManagedCluster(ctx, config, name, region, cfg.Mtls)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1110,7 +1118,7 @@ func ensureConfigCluster(ctx context.Context, config CloudConfig, cfg *config.GK
 // It returns the cluster information and the IP address of the gateway that
 // routes internal traffic to Service Weaver applications in the cluster.
 func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *config.GKEConfig, region string) (*ClusterInfo, string, error) {
-	cluster, err := ensureManagedCluster(ctx, config, applicationClusterName, region)
+	cluster, err := ensureManagedCluster(ctx, config, applicationClusterName, region, cfg.Mtls)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1254,7 +1262,7 @@ func ensureApplicationCluster(ctx context.Context, config CloudConfig, cfg *conf
 
 // ensureManagedCluster ensures that a Service Weaver managed cluster is available
 // and running in the given region.
-func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region string) (*ClusterInfo, error) {
+func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region string, mtlsEnabled bool) (*ClusterInfo, error) {
 	exists, err := hasCluster(ctx, config, name, region)
 	if err != nil {
 		return nil, err
@@ -1380,14 +1388,16 @@ func ensureManagedCluster(ctx context.Context, config CloudConfig, name, region 
 		return nil, err
 	}
 
-	// Setup the workload certificate config in the cluster.
-	if err := ensureWorkloadCertificateConfig(ctx, cluster); err != nil {
-		return nil, err
-	}
+	if mtlsEnabled {
+		// Setup the workload certificate config in the cluster.
+		if err := ensureWorkloadCertificateConfig(ctx, cluster); err != nil {
+			return nil, err
+		}
 
-	// Setup the trust config in the cluster.
-	if err := ensureTrustConfig(ctx, cluster); err != nil {
-		return nil, err
+		// Setup the trust config in the cluster.
+		if err := ensureTrustConfig(ctx, cluster); err != nil {
+			return nil, err
+		}
 	}
 
 	// Scale down resources used by system services.
@@ -1848,7 +1858,7 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 	if err != nil {
 		return err
 	}
-	if err := ensureController(ctx, config, name, region, cfg.Telemetry, toolImageURL); err != nil {
+	if err := ensureController(ctx, config, name, region, cfg.Telemetry, cfg.Mtls, toolImageURL); err != nil {
 		return err
 	}
 	for _, region := range cfg.Regions {
@@ -1856,10 +1866,10 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 		if err != nil {
 			return err
 		}
-		if err := ensureDistributor(ctx, cluster, cfg.Telemetry, toolImageURL); err != nil {
+		if err := ensureDistributor(ctx, cluster, cfg.Telemetry, cfg.Mtls, toolImageURL); err != nil {
 			return err
 		}
-		if err := ensureManager(ctx, cluster, cfg.Telemetry, toolImageURL); err != nil {
+		if err := ensureManager(ctx, cluster, cfg.Telemetry, cfg.Mtls, toolImageURL); err != nil {
 			return err
 		}
 	}
@@ -1868,13 +1878,13 @@ func ensureWeaverServices(ctx context.Context, config CloudConfig, cfg *config.G
 
 // ensureController ensures that a controller is running in the config cluster.
 func ensureController(ctx context.Context, config CloudConfig, clusterName, region string,
-	telemetry *config.Telemetry, toolImageURL string) error {
+	telemetry *config.Telemetry, mtlsEnabled bool, toolImageURL string) error {
 	cluster, err := GetClusterInfo(ctx, config, clusterName, region)
 	if err != nil {
 		return err
 	}
 	const name = "controller"
-	if err := ensureNannyDeployment(ctx, cluster, name, controllerKubeServiceAccount, telemetry, toolImageURL); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, controllerKubeServiceAccount, telemetry, mtlsEnabled, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1885,9 +1895,9 @@ func ensureController(ctx context.Context, config CloudConfig, clusterName, regi
 
 // ensureDistributor ensures that a distributor is running in the given cluster.
 func ensureDistributor(ctx context.Context, cluster *ClusterInfo,
-	telemetry *config.Telemetry, toolImageURL string) error {
+	telemetry *config.Telemetry, mtlsEnabled bool, toolImageURL string) error {
 	const name = "distributor"
-	if err := ensureNannyDeployment(ctx, cluster, name, distributorKubeServiceAccount, telemetry, toolImageURL); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, distributorKubeServiceAccount, telemetry, mtlsEnabled, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1898,9 +1908,9 @@ func ensureDistributor(ctx context.Context, cluster *ClusterInfo,
 
 // ensureManager ensures that a manager is running in the given cluster.
 func ensureManager(ctx context.Context, cluster *ClusterInfo,
-	telemetry *config.Telemetry, toolImageURL string) error {
+	telemetry *config.Telemetry, mtlsEnabled bool, toolImageURL string) error {
 	const name = "manager"
-	if err := ensureNannyDeployment(ctx, cluster, name, managerKubeServiceAccount, telemetry, toolImageURL); err != nil {
+	if err := ensureNannyDeployment(ctx, cluster, name, managerKubeServiceAccount, telemetry, mtlsEnabled, toolImageURL); err != nil {
 		return err
 	}
 	if err := ensureNannyVerticalPodAutoscaler(ctx, cluster, name); err != nil {
@@ -1912,7 +1922,7 @@ func ensureManager(ctx context.Context, cluster *ClusterInfo,
 // ensureNannyDeployment ensures that a nanny deployment with the given name
 // and service account is running in the given cluster.
 func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name string,
-	serviceAccount string, telemetry *config.Telemetry, toolImageURL string) error {
+	serviceAccount string, telemetry *config.Telemetry, mtlsEnabled bool, toolImageURL string) error {
 	meta := ContainerMetadata{
 		Project:       cluster.CloudConfig.Project,
 		ClusterName:   cluster.Name,
@@ -1921,6 +1931,7 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name strin
 		ContainerName: nannyContainerName,
 		App:           name,
 		Telemetry:     telemetry,
+		MtlsEnabled:   mtlsEnabled,
 	}
 	metaStr, err := proto.ToEnv(&meta)
 	if err != nil {
@@ -1950,6 +1961,16 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name strin
 		}
 		return oldTag < newTag, nil
 	}
+
+	objectMetaTmpl := metav1.ObjectMeta{
+		Labels: map[string]string{"app": name},
+	}
+	if mtlsEnabled {
+		objectMetaTmpl.Annotations = map[string]string{
+			"security.cloud.google.com/use-workload-certificates": "",
+		}
+	}
+
 	return patchDeployment(ctx, cluster, patchOptions{}, shouldUpdate, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -1960,12 +1981,7 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name strin
 				MatchLabels: map[string]string{"app": name},
 			},
 			Template: v1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{"app": name},
-					Annotations: map[string]string{
-						"security.cloud.google.com/use-workload-certificates": "",
-					},
-				},
+				ObjectMeta: objectMetaTmpl,
 				Spec: v1.PodSpec{
 					PriorityClassName: controlPriorityClassName,
 					Containers: []v1.Container{
@@ -1973,7 +1989,7 @@ func ensureNannyDeployment(ctx context.Context, cluster *ClusterInfo, name strin
 							Name:  name,
 							Image: toolImageURL,
 							Args: []string{
-								fmt.Sprintf("/weaver/weaver-gke %s --port=%d", name, nannyServingPort),
+								fmt.Sprintf("/weaver/weaver-gke %s --port=%d --mtls=%v", name, nannyServingPort, mtlsEnabled),
 							},
 							Resources: v1.ResourceRequirements{
 								Requests: v1.ResourceList{

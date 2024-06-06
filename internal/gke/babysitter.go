@@ -16,6 +16,8 @@ package gke
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -137,16 +139,22 @@ func RunBabysitter(ctx context.Context) error {
 		return metricsExporter.Export(ctx, metrics, cfg.Telemetry.Metrics.AutoGenerateMetrics)
 	}
 
-	caCert, getSelfCert, err := getPodCerts()
-	if err != nil {
-		return err
+	var caCert *x509.Certificate
+	var getSelfCert func() ([]byte, []byte, error)
+	var tlsConfig *tls.Config
+	if meta.MtlsEnabled {
+		caCert, getSelfCert, err = getPodCerts()
+		if err != nil {
+			return err
+		}
+		tlsConfig = mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager")
 	}
 
 	// Create an unique http client to the manager, that will be reused across all
 	// the http requests to the manager.
 	m := &manager.HttpClient{
 		Addr:   cfg.ManagerAddr,
-		Client: makeHttpClient(mtls.ClientTLSConfig(meta.Project, caCert, getSelfCert, "manager")),
+		Client: makeHttpClient(tlsConfig),
 	}
 	mux := http.NewServeMux()
 	host, err := os.Hostname()
@@ -158,17 +166,25 @@ func RunBabysitter(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	selfAddr := fmt.Sprintf("https://%s", lis.Addr())
+	var selfAddr string
+	if meta.MtlsEnabled {
+		selfAddr = fmt.Sprintf("https://%s", lis.Addr())
+	} else {
+		selfAddr = fmt.Sprintf("http://%s", lis.Addr())
+	}
 	_, err = babysitter.Start(ctx, logger, cfg, replicaSet, meta.Project, meta.PodName, internalAddress, mux, selfAddr, m, caCert, getSelfCert, logSaver, traceSaver, metricSaver)
 	if err != nil {
 		return err
 	}
 
 	server := &http.Server{
-		Handler:   mux,
-		TLSConfig: mtls.ServerTLSConfig(meta.Project, caCert, getSelfCert, "manager", "distributor"),
+		Handler: mux,
 	}
-	return server.ServeTLS(lis, "", "")
+	if meta.MtlsEnabled {
+		server.TLSConfig = mtls.ServerTLSConfig(meta.Project, caCert, getSelfCert, "manager", "distributor")
+		return server.ServeTLS(lis, "", "")
+	}
+	return server.Serve(lis)
 }
 
 // gkeConfigFromEnv reads config.GKEConfig from the Service Weaver internal

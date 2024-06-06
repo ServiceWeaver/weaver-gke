@@ -145,7 +145,7 @@ func Controller(ctx context.Context, config CloudConfig) (string, *http.Client, 
 }
 
 // RunController creates and runs a controller.
-func RunController(ctx context.Context, port int) error {
+func RunController(ctx context.Context, port int, mtlsEnabled bool) error {
 	id := uuid.New().String()
 	cluster, err := inClusterInfo(ctx)
 	if err != nil {
@@ -172,14 +172,19 @@ func RunController(ctx context.Context, port int) error {
 	if err != nil {
 		return err
 	}
-	caCert, getSelfCert, err := getPodCerts()
-	if err != nil {
-		return err
-	}
+	var tlsConfig *tls.Config
+	if mtlsEnabled {
+		caCert, getSelfCert, err := getPodCerts()
+		if err != nil {
+			return err
+		}
+		tlsConfig = mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "distributor")
 
-	// Create unique http client s.t., all the http requests from the controller to
-	// the distributor use the same underlying http client.
-	httpClient := makeHttpClient(mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "distributor"))
+		// Create unique http client s.t., all the http requests from the controller to
+		// the distributor use the same underlying http client.
+	}
+	httpClient := makeHttpClient(tlsConfig)
+
 	mux := http.NewServeMux()
 	if _, err := controller.Start(ctx,
 		mux,
@@ -214,7 +219,7 @@ func RunController(ctx context.Context, port int) error {
 }
 
 // RunDistributor creates and runs a distributor.
-func RunDistributor(ctx context.Context, port int) error {
+func RunDistributor(ctx context.Context, port int, mtlsEnabled bool) error {
 	id := uuid.New().String()
 	cluster, err := inClusterInfo(ctx)
 	if err != nil {
@@ -242,9 +247,20 @@ func RunDistributor(ctx context.Context, port int) error {
 	if err != nil {
 		return err
 	}
-	caCert, getSelfCert, err := getPodCerts()
-	if err != nil {
-		return err
+
+	var caCert *x509.Certificate
+	var getSelfCert func() ([]byte, []byte, error)
+	var tlsConfig *tls.Config
+	var managerAddr string
+	if mtlsEnabled {
+		caCert, getSelfCert, err = getPodCerts()
+		if err != nil {
+			return err
+		}
+		tlsConfig = mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "manager")
+		managerAddr = fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
+	} else {
+		managerAddr = fmt.Sprintf("http://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
 	}
 
 	// Track http clients to the babysitters, keyed by replica set and the babysitter address.
@@ -255,14 +271,13 @@ func RunDistributor(ctx context.Context, port int) error {
 	bsHttpClients := map[clientKey]endpoints.Babysitter{}
 
 	mux := http.NewServeMux()
-	managerAddr := fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
 	if _, err := distributor.Start(ctx,
 		mux,
 		s,
 		logger,
 		&manager.HttpClient{
 			Addr:   managerAddr,
-			Client: makeHttpClient(mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "manager")),
+			Client: makeHttpClient(tlsConfig),
 		},
 		cluster.Region,
 		func(cfg *config.GKEConfig, replicaSet, addr string) (endpoints.Babysitter, error) {
@@ -279,7 +294,11 @@ func RunDistributor(ctx context.Context, port int) error {
 			defer mu.Unlock()
 			httpClient, ok := bsHttpClients[httpClientId]
 			if !ok {
-				httpClient = babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity))
+				var tlsConfig *tls.Config
+				if mtlsEnabled {
+					tlsConfig = mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity)
+				}
+				httpClient = babysitter.NewHttpClient(addr, tlsConfig)
 				bsHttpClients[httpClientId] = httpClient
 			}
 			return httpClient, nil
@@ -303,15 +322,18 @@ func RunDistributor(ctx context.Context, port int) error {
 	}
 
 	logger.Info("Distributor listening", "address", lis.Addr())
+
 	server := &http.Server{
-		Handler:   mux,
-		TLSConfig: mtls.ServerTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "controller"),
+		Handler: mux,
+	}
+	if mtlsEnabled {
+		server.TLSConfig = mtls.ServerTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, "controller")
 	}
 	return runNannyServer(ctx, server, lis)
 }
 
 // RunManager creates and runs a manager.
-func RunManager(ctx context.Context, port int) error {
+func RunManager(ctx context.Context, port int, mtlsEnabled bool) error {
 	id := uuid.New().String()
 	cluster, err := inClusterInfo(ctx)
 	if err != nil {
@@ -339,9 +361,18 @@ func RunManager(ctx context.Context, port int) error {
 	if err != nil {
 		return err
 	}
-	caCert, getSelfCert, err := getPodCerts()
-	if err != nil {
-		return err
+
+	var caCert *x509.Certificate
+	var getSelfCert func() ([]byte, []byte, error)
+	var managerAddr string
+	if mtlsEnabled {
+		caCert, getSelfCert, err = getPodCerts()
+		if err != nil {
+			return err
+		}
+		managerAddr = fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
+	} else {
+		managerAddr = fmt.Sprintf("http://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region)
 	}
 
 	// Track http clients to the babysitters, keyed by replica set and the babysitter address.
@@ -355,7 +386,7 @@ func RunManager(ctx context.Context, port int) error {
 	m := manager.NewManager(ctx,
 		s,
 		logger,
-		fmt.Sprintf("https://manager.%s.svc.%s-%s:80", namespaceName, applicationClusterName, cluster.Region),
+		managerAddr,
 		2*time.Second, /*updateRoutingInterval*/
 		// getHealthyPods
 		func(ctx context.Context, cfg *config.GKEConfig, replicaSet string) ([]*nanny.Pod, error) {
@@ -372,7 +403,11 @@ func RunManager(ctx context.Context, port int) error {
 				defer mu.Unlock()
 				httpClient, ok := bsHttpClients[httpClientId]
 				if !ok {
-					httpClient = babysitter.NewHttpClient(addr, mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity))
+					var tlsConfig *tls.Config
+					if mtlsEnabled {
+						tlsConfig = mtls.ClientTLSConfig(cluster.CloudConfig.Project, caCert, getSelfCert, replicaSetIdentity)
+					}
+					httpClient = babysitter.NewHttpClient(addr, tlsConfig)
 					bsHttpClients[httpClientId] = httpClient
 				}
 				return httpClient
@@ -425,8 +460,12 @@ func RunManager(ctx context.Context, port int) error {
 	)
 
 	logger.Info("Manager listening", "address", lis.Addr())
-	verifyPeerCert := func(peer []*x509.Certificate) (string, error) {
-		return mtls.VerifyCertificateChain(cluster.CloudConfig.Project, caCert, peer)
+
+	var verifyPeerCert func(peer []*x509.Certificate) (string, error)
+	if mtlsEnabled {
+		verifyPeerCert = func(peer []*x509.Certificate) (string, error) {
+			return mtls.VerifyCertificateChain(cluster.CloudConfig.Project, caCert, peer)
+		}
 	}
 	return manager.RunHTTPServer(m, logger, lis, getSelfCert, verifyPeerCert)
 }
@@ -483,7 +522,13 @@ func getHealthyPods(ctx context.Context, cfg *config.GKEConfig, logger *slog.Log
 				<-ch
 				wait.Done()
 			}()
-			babysitterAddr := fmt.Sprintf("https://%s:%d", ip, babysitterPort)
+			var babysitterAddr string
+			if cfg.Mtls {
+				babysitterAddr = fmt.Sprintf("https://%s:%d", ip, babysitterPort)
+			} else {
+				babysitterAddr = fmt.Sprintf("http://%s:%d", ip, babysitterPort)
+			}
+
 			babysitter := newBabysitter(babysitterAddr)
 			reply, err := babysitter.GetLoad(ctx, &endpoints.GetLoadRequest{})
 			if err != nil {

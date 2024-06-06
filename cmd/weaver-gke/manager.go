@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	managerFlags = flag.NewFlagSet("manager", flag.ContinueOnError)
-	managerPort  = managerFlags.Int("port", 0, "Manager port")
+	managerFlags       = flag.NewFlagSet("manager", flag.ContinueOnError)
+	managerPort        = managerFlags.Int("port", 0, "Manager port")
+	managerMtlsEnabled = managerFlags.Bool("mtls", false, "Whether manager uses MTLS")
 )
 
 var managerCmd = tool.Command{
@@ -37,7 +38,7 @@ var managerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return gke.RunManager(ctx, *managerPort)
+		return gke.RunManager(ctx, *managerPort, *managerMtlsEnabled)
 	},
 	Hidden: true,
 }
