@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	distributorFlags = flag.NewFlagSet("distributor", flag.ContinueOnError)
-	distributorPort  = distributorFlags.Int("port", 0, "Distributor port")
+	distributorFlags       = flag.NewFlagSet("distributor", flag.ContinueOnError)
+	distributorPort        = distributorFlags.Int("port", 0, "Distributor port")
+	distributorMtlsEnabled = distributorFlags.Bool("mtls", false, "Whether distributor uses MTLS")
 )
 
 var distributorCmd = tool.Command{
@@ -37,7 +38,7 @@ var distributorCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return gke.RunDistributor(ctx, *distributorPort)
+		return gke.RunDistributor(ctx, *distributorPort, *distributorMtlsEnabled)
 	},
 	Hidden: true,
 }

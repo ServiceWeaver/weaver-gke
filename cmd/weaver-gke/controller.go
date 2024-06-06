@@ -23,8 +23,9 @@ import (
 )
 
 var (
-	controllerFlags = flag.NewFlagSet("controller", flag.ContinueOnError)
-	controllerPort  = controllerFlags.Int("port", 0, "Controller port")
+	controllerFlags       = flag.NewFlagSet("controller", flag.ContinueOnError)
+	controllerPort        = controllerFlags.Int("port", 0, "Controller port")
+	controllerMtlsEnabled = controllerFlags.Bool("mtls", false, "Whether controller uses MTLS")
 )
 
 var controllerCmd = tool.Command{
@@ -37,7 +38,7 @@ var controllerCmd = tool.Command{
 Flags:
   -h, --help   Print this help message.`,
 	Fn: func(ctx context.Context, args []string) error {
-		return gke.RunController(ctx, *controllerPort)
+		return gke.RunController(ctx, *controllerPort, *controllerMtlsEnabled)
 	},
 	Hidden: true,
 }

@@ -200,7 +200,7 @@ func multiplyQuantity(mult int64, x resource.Quantity) resource.Quantity {
 
 // deploy deploys the Kubernetes ReplicaSet in the given cluster.
 func deploy(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
-	if err := ensureReplicaSet(ctx, cluster, logger, cfg, replicaSet); err != nil {
+	if err := ensureReplicaSet(ctx, cluster, logger, cfg, replicaSet, cfg.Mtls); err != nil {
 		return err
 	}
 
@@ -363,7 +363,7 @@ func Store(cluster *ClusterInfo) store.Store {
 	return newKubeStore(cluster.Clientset.CoreV1().ConfigMaps(namespaceName))
 }
 
-func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string) error {
+func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Logger, cfg *config.GKEConfig, replicaSet string, mtlsEnabled bool) error {
 	dep := cfg.Deployment
 	kubeName := name{dep.App.Name, replicaSet, dep.Id[:8]}.DNSLabel()
 	saName := cfg.ComponentIdentity[replicaSet]
@@ -372,6 +372,18 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 		return err
 	}
 
+	objectMetaTmpl := metav1.ObjectMeta{
+		Labels: map[string]string{
+			appKey:        name{dep.App.Name}.DNSLabel(),
+			versionKey:    name{dep.Id}.DNSLabel(),
+			replicaSetKey: name{replicaSet}.DNSLabel(),
+		},
+	}
+	if mtlsEnabled {
+		objectMetaTmpl.Annotations = map[string]string{
+			"security.cloud.google.com/use-workload-certificates": "",
+		}
+	}
 	return patchDeployment(ctx, cluster, patchOptions{logger: logger}, nil /*shouldUpdate*/, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kubeName,
@@ -391,16 +403,7 @@ func ensureReplicaSet(ctx context.Context, cluster *ClusterInfo, logger *slog.Lo
 				},
 			},
 			Template: v1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						appKey:        name{dep.App.Name}.DNSLabel(),
-						versionKey:    name{dep.Id}.DNSLabel(),
-						replicaSetKey: name{replicaSet}.DNSLabel(),
-					},
-					Annotations: map[string]string{
-						"security.cloud.google.com/use-workload-certificates": "",
-					},
-				},
+				ObjectMeta: objectMetaTmpl,
 				Spec: v1.PodSpec{
 					PriorityClassName:  applicationPriorityClassName,
 					Containers:         []v1.Container{container},

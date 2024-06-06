@@ -65,4 +65,5 @@ message ContainerMetadata {
   string container_name = 7;      // Kubernetes container name
   string app = 8;                 // Kubernetes app label
   config.Telemetry telemetry = 9; // Options to configure the telemetry
+  bool mtls_enabled = 10;         // Whether MTLS should be enabled
 }
