@@ -12,7 +12,7 @@ require (
 	cloud.google.com/go/monitoring v1.15.1
 	cloud.google.com/go/security v1.15.1
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/trace v1.11.0
-	github.com/ServiceWeaver/weaver v0.24.2
+	github.com/ServiceWeaver/weaver v0.24.3
 	github.com/golang/protobuf v1.5.3
 	github.com/google/cel-go v0.17.1
 	github.com/google/go-cmp v0.5.9

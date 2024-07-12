@@ -37,17 +37,33 @@ var (
 	requestLatencies = metrics.NewHistogramMap[storeLabels](
 		"serviceweaver_store_request_latency_micros",
 		"Latency of store requests, in microseconds, by operation",
-		metrics.NonNegativeBuckets,
+		generatedBuckets,
 	)
 	valueSizes = metrics.NewHistogramMap[storeLabels](
 		"serviceweaver_store_value_size_bytes",
 		"Size of values, in bytes, by operation",
-		metrics.NonNegativeBuckets,
+		generatedBuckets,
 	)
 	staleCounts = metrics.NewCounterMap[storeLabels](
 		"serviceweaver_store_stale_count",
 		"Number of stale puts",
 	)
+
+	// generatedBuckets provides rounded bucket boundaries for histograms
+	// that will only store non-negative values.
+	generatedBuckets = []float64{
+		// Adjacent buckets differ from each other by 2x or 2.5x.
+		1, 2, 5,
+		10, 20, 50,
+		100, 200, 500,
+		1000, 2000, 5000,
+		10000, 20000, 50000,
+		100000, 200000, 500000,
+		1000000, 2000000, 5000000,
+		10000000, 20000000, 50000000,
+		100000000, 200000000, 500000000,
+		1000000000, 2000000000, 5000000000, // i.e., 5e9
+	}
 )
 
 // WithMetrics returns the provided store, but with methods augmented to update
