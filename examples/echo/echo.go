@@ -20,6 +20,7 @@ import (
 	"regexp"
 
 	"github.com/ServiceWeaver/weaver"
+	"github.com/ServiceWeaver/weaver-gke/internal/store"
 	"github.com/ServiceWeaver/weaver/metrics"
 )
 
@@ -28,7 +29,7 @@ import (
 var stringLength = metrics.NewHistogram(
 	"echo_string_length",
 	"The length of strings passed to the Echo method",
-	metrics.NonNegativeBuckets,
+	store.GeneratedBuckets,
 )
 
 type echoOptions struct {
