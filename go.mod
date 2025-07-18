@@ -1,11 +1,11 @@
 module github.com/ServiceWeaver/weaver-gke
 
-go 1.21
+go 1.23.0
 
 require (
 	cloud.google.com/go/artifactregistry v1.14.1
 	cloud.google.com/go/compute v1.21.0
-	cloud.google.com/go/compute/metadata v0.2.3
+	cloud.google.com/go/compute/metadata v0.3.0
 	cloud.google.com/go/container v1.22.1
 	cloud.google.com/go/iam v1.1.1
 	cloud.google.com/go/logging v1.7.0
@@ -27,7 +27,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.19.0
 	go.opentelemetry.io/otel/trace v1.19.0
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1
-	golang.org/x/oauth2 v0.10.0
+	golang.org/x/oauth2 v0.27.0
 	google.golang.org/api v0.126.0
 	google.golang.org/genproto v0.0.0-20230711160842-782d3b101e98
 	google.golang.org/genproto/googleapis/api v0.0.0-20230717213848-3f92550aa753
